@@ -872,7 +872,7 @@ body {
                 </div> -->
                 <p class="hero-subtitle">Builds trust, then answers fast.</p>
                 <p class="hero-description">
-                    Demo travel assistant featuring Transformers.js NLP, Amadeus flight search, Vectara RAG for policy documents, 
+                    Production-ready travel assistant featuring Transformers.js NLP, Amadeus flight search, Vectara RAG for policy documents, 
                     intelligent web crawling with Playwright, and comprehensive anti-hallucination safeguards.
                 </p>
 
@@ -938,30 +938,30 @@ body {
 
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">travel_explore</span></div>
-                        <h3 class="feature-title">Web Search</h3>
-                        <p class="feature-description">Delivers standard and deep research modes with intelligent page <a href="https://github.com/apify/crawlee" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">crawling</a> for complex queries. Supports both Brave and Tavily search providers with automatic fallback for visa/policy questions when internal databases lack relevant information.</p>
+                        <h3 class="feature-title">Web Insights</h3>
+                        <p class="feature-description">Crawlee/Playwright crawling with anti-bot stealth for policy extraction. Brave/Tavily search with fallback when internal data insufficient.</p>
                     </div>
 
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">psychology</span></div>
-                        <h3 class="feature-title">Smart Routing <span style="background: var(--color-success); color: white; padding: 2px 6px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; margin-left: 4px; vertical-align: middle;">LIVE</span></h3>
-                                                <p class="feature-description"><a href="https://huggingface.co/Xenova/nli-deberta-v3-base" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Transformers</a>-powered multilingual NLP for smarter routing using zero-shot classification with Xenova/nli-deberta-v3-base model. Reduces LLM calls by 20–40% with a resilient cascade (Regex > Transformers > LLM) and handles multi-turn conversations naturally.</p>
+                        <h3 class="feature-title">Smart Routing</h3>
+                                                <p class="feature-description"><a href="https://huggingface.co/Xenova/nli-deberta-v3-base" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Transformers</a> multilingual NLP with zero-shot routing. 20-40% LLM reduction via Regex→Transformers→LLM cascade. Natural multi-turn support.</p>
                     </div>
 
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">public</span></div>
                         <h3 class="feature-title">Multi-Source Data Integration</h3>
-                        <p class="feature-description">Connects to <a href="https://open-meteo.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Open‑Meteo</a>, <a href="https://restcountries.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">REST Countries</a>, <a href="https://opentripmap.com/en/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">OpenTripMap</a>, and <a href="https://developers.amadeus.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Amadeus</a> for verified travel info, with robust retry/backoff and circuit breaker patterns.</p>
+                        <p class="feature-description">Connects to <a href="https://open-meteo.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Open‑Meteo</a>, <a href="https://restcountries.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">REST Countries</a>, <a href="https://opentripmap.com/en/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">OpenTripMap</a>, and <a href="https://developers.amadeus.com/" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Amadeus</a> for verified travel info.</p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">search</span></div>
-                        <h3 class="feature-title">Advanced RAG <span style="background: var(--color-success); color: white; padding: 2px 6px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; margin-left: 4px; vertical-align: middle;">LIVE</span></h3>
-                        <p class="feature-description">Advanced retrieval-augmented generation with <a href="https://docs.vectara.com/docs" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Vectara</a> integration for searching and retrieving information from internal knowledge bases, policy documents, and external data sources.</p>
+                        <h3 class="feature-title">Enterprise-grade RAG</h3>
+                        <p class="feature-description">Advanced retrieval-augmented generation with <a href="https://docs.vectara.com/docs" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Vectara</a> integration for searching and retrieving information from internal knowledge bases, policy documents, and enterprise data sources.</p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">bolt</span></div>
-                        <h3 class="feature-title">Demo Architecture</h3>
-                        <p class="feature-description">Interactive CLI and REST API with TypeScript validation, structured logging, comprehensive test suite (685+ tests), circuit breakers, rate limiting, and comprehensive observability with Prometheus metrics.</p>
+                        <h3 class="feature-title">Clean Architecture</h3>
+                        <p class="feature-description">CLI/REST API with TypeScript validation, 685+ tests, circuit breakers, rate limiting, and Prometheus observability.</p>
                     </div>
 
 
@@ -1455,6 +1455,72 @@ npm test
                                     <span class="message-author">User</span>
                                 </div>
                                 <div class="message-text">
+                                    What are the change fees for JetBlue flights? Get me the official policy with receipts.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="message agent-message">
+                            <div class="message-avatar"><span class="material-symbols-outlined">smart_toy</span></div>
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="message-author">AI Assistant</span>
+                                </div>
+                                <div class="message-text">
+                                    <p><strong>Change Fees for JetBlue Flights:</strong></p>
+                                    
+                                    <p><strong>Blue Basic fares:</strong></p>
+                                    <ul>
+                                        <li>Changes/cancellations: $100 (North America, Central America, Caribbean), $200 (other routes).</li>
+                                        <li>Fare difference and fare rules apply on date of change.</li>
+                                    </ul>
+                                    
+                                    <p><strong>Other fares (Blue, Blue Plus, Blue Extra, Mint, etc.):</strong></p>
+                                    <ul>
+                                        <li>No change/cancel fees.</li>
+                                    </ul>
+                                </div>
+                                <div class="sources-section">
+                                    <strong>Sources:</strong>
+                                    <ul>
+                                        <li>jetblue-fr.agentworld.com policy — <a href="https://jetblue-fr.agentworld.com/en/change-cancellation-policy/" target="_blank" style="color: var(--color-accent); text-decoration: none;">https://jetblue-fr.agentworld.com/en/change-cancellation-policy/</a></li>
+                                        <li>www.jetblue.com policy — <a href="https://www.jetblue.com/travel-agents/cancellation-policy" target="_blank" style="color: var(--color-accent); text-decoration: none;">https://www.jetblue.com/travel-agents/cancellation-policy</a></li>
+                                    </ul>
+                                    
+                                    <strong>Policy Receipts:</strong>
+                                    <div class="receipts-block">
+                                        <div class="receipts-content">
+                                            <div class="receipts-item">
+                                                <span class="receipts-label">Source:</span>
+                                                <span class="receipts-value"><a href="https://jetblue-fr.agentworld.com/en/change-cancellation-policy/" target="_blank" style="color: var(--color-accent); text-decoration: none;">https://jetblue-fr.agentworld.com/en/change-cancellation-policy/</a> (confidence: 90%)</span>
+                                            </div>
+                                            <div class="receipts-item">
+                                                <span class="receipts-label">Extract:</span>
+                                                <span class="receipts-value">"Change & Cancellation Policy Blue Basic fares: • Change/cancel fee: $100 (North America, Central America, Caribbean), $200 (other routes)..."</span>
+                                            </div>
+                                            <div class="receipts-item">
+                                                <span class="receipts-label">Source:</span>
+                                                <span class="receipts-value"><a href="https://www.jetblue.com/travel-agents/cancellation-policy" target="_blank" style="color: var(--color-accent); text-decoration: none;">https://www.jetblue.com/travel-agents/cancellation-policy</a> (confidence: 80%)</span>
+                                            </div>
+                                            <div class="receipts-item">
+                                                <span class="receipts-label">Extract:</span>
+                                                <span class="receipts-value">"## Change Policy: • Tickets are valid for one year from the date of original ticketing. • For nonrefundable fares (Blue, Blue Plus, Blue Extra, Mint),..."</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="message-group">
+                        <div class="message user-message">
+                            <div class="message-avatar"><span class="material-symbols-outlined">person</span></div>
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="message-author">User</span>
+                                </div>
+                                <div class="message-text">
                                     What is the timeframe for Delta's risk-free cancellation policy and what are the key conditions?
                                 </div>
                             </div>
@@ -1474,52 +1540,6 @@ npm test
                                     <ul>
                                         <li>Policy Document (delta-cancellation.txt)</li>
                                     </ul>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="message-group">
-                        <div class="message user-message">
-                            <div class="message-avatar"><span class="material-symbols-outlined">person</span></div>
-                            <div class="message-content">
-                                <div class="message-header">
-                                    <span class="message-author">User</span>
-                                </div>
-                                <div class="message-text">
-                                    My flight AA123 from JFK to LAX was cancelled, please help me rebook
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="message agent-message">
-                            <div class="message-avatar"><span class="material-symbols-outlined">smart_toy</span></div>
-                            <div class="message-content">
-                                <div class="message-header">
-                                    <span class="message-author">AI Assistant</span>
-                                </div>
-                                <div class="message-text">
-                                    <p>I found 3 rebooking options for your disruption:</p>
-
-                                    <ul>
-                                        <li><strong>Option 1 (keep partial):</strong><br>
-                                        Route: F92503 JFK-LAX<br>
-                                        Additional cost: $396.43 USD<br>
-                                        Confidence: 60%<br>
-                                        Rules: MCT validated for JFK, Same day changes only</li>
-                                        <li><strong>Option 2 (keep partial):</strong><br>
-                                        Route: AS21 JFK-LAX<br>
-                                        Additional cost: $478.94 USD<br>
-                                        Confidence: 60%<br>
-                                        Rules: MCT validated for JFK, Same day changes only</li>
-                                        <li><strong>Option 3 (keep partial):</strong><br>
-                                        Route: AS19 JFK-LAX<br>
-                                        Additional cost: $478.94 USD<br>
-                                        Confidence: 60%<br>
-                                        Rules: MCT validated for JFK, Same day changes only</li>
-                                    </ul>
-
-                                    <p>All options have been validated against airline policies and connection requirements. Would you like me to proceed with one of these options?</p>
                                 </div>
                             </div>
                         </div>
@@ -1573,17 +1593,17 @@ npm test
                     <div class="roadmap-list">
                         <ul class="detail-list">
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Router Optimization:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Transformers.js with 'Xenova/bert-base-multilingual-cased-ner-hrl' for multilingual NER, language detection with langdetect library, enhanced entity extraction (LOCATION, DATE, MONEY, DURATION), and Transformers > LLM > Rules cascade routing with 20-40% latency reduction.</span></li>
-                            <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Browser Fallback:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Crawlee (Cheerio/Playwright) for comprehensive web page content extraction and AI summarization when users request complex queries, providing detailed analysis beyond basic search snippets with source citations and receipts. Cheerio handles the fast/simple pages, Playwright handles the complex ones that need JavaScript rendering.</span></li>
+                            <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Web Insights:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Crawlee (Cheerio/Playwright) for comprehensive web page content extraction and AI summarization when users request complex queries, providing detailed analysis beyond basic search snippets with source citations and receipts. Cheerio handles the fast/simple pages, Playwright handles the complex ones that need JavaScript rendering.</span></li>
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Policy RAG & Anchored Citations:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Vectara RAG integration with PolicyAgent for airlines, hotels, and visas. Seeded 6 policy documents with paragraph-level citations including URL + snippet in receipts. Full cascade routing (Transformers > LLM > Rules) with robust error handling and Brave search fallbacks.</span></li>
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Flight Search Integration:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Amadeus API integration for live flight search with complete itineraries, pricing, connection details, and IATA code conversion. Features natural language date parsing and comprehensive flight information display.</span></li>
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Circuit Breaker & Rate Limiting:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented opossum circuit breaker with per-host configuration and Bottleneck rate limiter. Features configurable timeouts, error thresholds, and comprehensive metrics/stats collection with /metrics endpoint integration.</span></li>
-                            <li><strong>Policy Browser Mode v1:</strong> Headless Playwright navigation to official policy pages with screenshot+DOM evidence, verbatim citations, and content hashing for chain of custody.</li>
+                            <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Policy Browser Mode v1:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Headless Playwright navigation to official policy pages with screenshot+DOM evidence, verbatim citations, and content hashing for chain of custody.</span></li>
                             <li style="background: rgba(255, 193, 7, 0.15); border: 2px solid #FFC107; border-left: 6px solid #FFC107; padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;"><strong><span class="material-symbols-outlined" style="color: #FFC107; vertical-align: middle; margin-right: 4px;">construction</span>IRROPS & Partial-Leg Changes:</strong> <span style="background: #FFC107; color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">FOUNDATION READY</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Foundational components implemented: PNR schemas, constraint validators (MCT/fare/carrier), option ranking algorithms, and disruption classification. Ready for production workflow integration and policy rule engine connection.</span></li>
                             <li><strong>Hotels & Stays (Amadeus):</strong> City + dates + guests search with policy compliance filtering, loyalty integration, and unified itinerary view.</li>
                             <li><strong>Profile & Policy Guardrail Engine:</strong> YAML-based rules engine for corporate travel policy with IN-POLICY/OUT-OF-POLICY badges and exception workflows.</li>
                             <li><strong>Unified Itinerary & Smart Notifications:</strong> Merged flights+hotels+POIs with ICS export and proactive nudges (check-in, gate changes, cancellation windows).</li>
                             <li><strong>Trip Risk & Resilience Score:</strong> Predictive disruption scoring with Plan B recommendations based on MCT buffers, weather patterns, and carrier reliability.</li>
-                            <li><strong>Advanced Observability & Packaging:</strong> P95/P99 metrics, OpenAPI documentation, Docker/Lambda packaging, and cost guardrails with budget controls.</li>
+                            <li><strong>Enterprise Observability & Packaging:</strong> P95/P99 metrics, OpenAPI documentation, Docker/Lambda packaging, and cost guardrails with budget controls.</li>
                         </ul>
                     </div>
                 </div>
@@ -1593,7 +1613,7 @@ npm test
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2025 Voyant Travel Assistant. Built with modern AI and comprehensive reliability.</p>
+            <p>&copy; 2025 Voyant Travel Assistant. Built with modern AI and enterprise-grade reliability.</p>
             <div class="footer__link">
                 <a href="https://github.com/chernistry/voyant/" target="_blank">View on GitHub ↗</a>
             </div>
