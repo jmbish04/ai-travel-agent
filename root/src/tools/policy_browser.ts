@@ -103,6 +103,17 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Array;
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Promise;
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+      delete (window as any).__webdriver_evaluate;
+      delete (window as any).__selenium_evaluate;
+      delete (window as any).__webdriver_script_function;
+      delete (window as any).__webdriver_script_func;
+      delete (window as any).__webdriver_script_fn;
+      delete (window as any).__fxdriver_evaluate;
+      delete (window as any).__driver_unwrapped;
+      delete (window as any).__webdriver_unwrapped;
+      delete (window as any).__driver_evaluate;
+      delete (window as any).__selenium_unwrapped;
+      delete (window as any).__fxdriver_unwrapped;
       
       // Spoof plugins (from research)
       Object.defineProperty(navigator, 'plugins', {
@@ -110,6 +121,15 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
           { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', length: 1 },
           { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', length: 1 },
           { name: 'Native Client', filename: 'internal-nacl-plugin', length: 1 }
+        ]
+      });
+      
+      // Spoof mimeTypes
+      Object.defineProperty(navigator, 'mimeTypes', {
+        get: () => [
+          { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: navigator.plugins[0] },
+          { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: navigator.plugins[1] },
+          { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable', enabledPlugin: navigator.plugins[2] }
         ]
       });
       
@@ -131,24 +151,35 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
       Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
       Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
       
-      // Add chrome object
+      // Add chrome object with runtime
       if (!(window as any).chrome) {
         (window as any).chrome = { 
           runtime: { 
             onConnect: undefined,
-            onMessage: undefined 
+            onMessage: undefined,
+            connect: () => ({}),
+            sendMessage: () => ({})
           },
           app: {
-            isInstalled: false
+            isInstalled: false,
+            InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+            RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
           }
         };
       }
       
-      // Disable WebRTC and AudioContext (from research)
-      (window as any).RTCPeerConnection = undefined;
-      (window as any).AudioContext = undefined;
-      (window as any).webkitRTCPeerConnection = undefined;
-      (window as any).webkitAudioContext = undefined;
+      // Disable WebRTC IP leakage (from research)
+      const origRTC = (window as any).RTCPeerConnection || (window as any).webkitRTCPeerConnection;
+      if (origRTC) {
+        (window as any).RTCPeerConnection = class extends origRTC {
+          constructor(config: any) {
+            if (config && config.iceServers) {
+              config.iceServers = [];
+            }
+            super(config);
+          }
+        };
+      }
       
       // Spoof battery API (from research)
       if ((navigator as any).getBattery) {
@@ -177,6 +208,26 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
           return originalQuery.call(navigator.permissions, parameters);
         };
       }
+      
+      // Override toString methods to appear native
+      const nativeToStringFunctionString = Error.toString().replace(/Error/g, "toString");
+      const oldCall = Function.prototype.call;
+      function call(this: any) {
+        return oldCall.apply(this, arguments as any);
+      }
+      Function.prototype.call = call;
+      
+      const oldToString = Function.prototype.toString;
+      function functionToString(this: any) {
+        if (this === (navigator as any).webdriver) {
+          return 'function webdriver() { [native code] }';
+        }
+        if (this === functionToString) {
+          return nativeToStringFunctionString;
+        }
+        return oldCall.call(oldToString, this);
+      }
+      Function.prototype.toString = functionToString;
     });
     
     // Block resources based on config
@@ -347,8 +398,6 @@ async function extractClauseWithLLM(
     console.log(`- URL: ${sourceUrl}`);
     console.log(`- Text length: ${fullText.length} -> ${truncatedText.length}`);
     console.log(`- First 300 chars: "${truncatedText.slice(0, 300)}"`);
-    console.log(`- Contains "El Al": ${truncatedText.includes('El Al') || truncatedText.includes('EL AL')}`);
-    console.log(`- Contains "British Airways": ${truncatedText.includes('British Airways')}`);
     
     // Check for anti-bot indicators
     const antiBot = {
@@ -359,8 +408,6 @@ async function extractClauseWithLLM(
       salesforce: /builder_industries|flowengine|forceCommunity/g.test(truncatedText),
       hasRealContent: /baggage|policy|refund|size|weight|limit|dimension|fee|allow/gi.test(truncatedText)
     };
-    
-    console.log(`- Anti-bot check: math=${antiBot.mathQuestions}, cpp=${antiBot.cppCode}, js=${antiBot.jsGarbage}, real=${antiBot.hasRealContent}`);
     
     // Block garbage content
     const hasGarbageContent = antiBot.mathQuestions || antiBot.cppCode || antiBot.randomMath || antiBot.jsGarbage || antiBot.salesforce;
@@ -406,9 +453,6 @@ Extract the most relevant and specific policy text about ${clause} from the CORR
     
     console.log(`- LLM response length: ${decodedText.length}`);
     console.log(`- LLM response FULL: "${decodedText}"`);
-    console.log(`- Contains dimensions: ${/\d+cm|\d+in|dimensions|size/gi.test(decodedText)}`);
-    console.log(`- Contains 56cm: ${decodedText.includes('56cm')}`);
-    console.log(`- Contains 22in: ${decodedText.includes('22in')}`);
     
     if (!decodedText.trim() || decodedText.length < 10) {
       console.log(`❌ LLM response too short`);
