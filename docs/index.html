@@ -872,7 +872,7 @@ body {
                 </div> -->
                 <p class="hero-subtitle">Builds trust, then answers fast.</p>
                 <p class="hero-description">
-                    Production-ready travel assistant featuring Transformers.js NLP, Amadeus flight search, Vectara RAG for policy documents, 
+                    Demo travel assistant featuring Transformers.js NLP, Amadeus flight search, Vectara RAG for policy documents, 
                     intelligent web crawling with Playwright, and comprehensive anti-hallucination safeguards.
                 </p>
 
@@ -955,13 +955,13 @@ body {
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">search</span></div>
-                        <h3 class="feature-title">Enterprise-grade RAG <span style="background: var(--color-success); color: white; padding: 2px 6px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; margin-left: 4px; vertical-align: middle;">LIVE</span></h3>
-                        <p class="feature-description">Advanced retrieval-augmented generation with <a href="https://docs.vectara.com/docs" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Vectara</a> integration for searching and retrieving information from internal knowledge bases, policy documents, and enterprise data sources.</p>
+                        <h3 class="feature-title">Advanced RAG <span style="background: var(--color-success); color: white; padding: 2px 6px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; margin-left: 4px; vertical-align: middle;">LIVE</span></h3>
+                        <p class="feature-description">Advanced retrieval-augmented generation with <a href="https://docs.vectara.com/docs" target="_blank" style="color: var(--color-accent); text-decoration: none; font-weight: 600;">Vectara</a> integration for searching and retrieving information from internal knowledge bases, policy documents, and external data sources.</p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon"><span class="material-symbols-outlined">bolt</span></div>
-                        <h3 class="feature-title">Production Architecture</h3>
-                        <p class="feature-description">Interactive CLI and REST API with TypeScript validation, structured logging, comprehensive test suite (685+ tests), circuit breakers, rate limiting, and enterprise-grade observability with Prometheus metrics.</p>
+                        <h3 class="feature-title">Demo Architecture</h3>
+                        <p class="feature-description">Interactive CLI and REST API with TypeScript validation, structured logging, comprehensive test suite (685+ tests), circuit breakers, rate limiting, and comprehensive observability with Prometheus metrics.</p>
                     </div>
 
 
@@ -1479,6 +1479,52 @@ npm test
                         </div>
                     </div>
 
+                    <div class="message-group">
+                        <div class="message user-message">
+                            <div class="message-avatar"><span class="material-symbols-outlined">person</span></div>
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="message-author">User</span>
+                                </div>
+                                <div class="message-text">
+                                    My flight AA123 from JFK to LAX was cancelled, please help me rebook
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="message agent-message">
+                            <div class="message-avatar"><span class="material-symbols-outlined">smart_toy</span></div>
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="message-author">AI Assistant</span>
+                                </div>
+                                <div class="message-text">
+                                    <p>I found 3 rebooking options for your disruption:</p>
+
+                                    <ul>
+                                        <li><strong>Option 1 (keep partial):</strong><br>
+                                        Route: F92503 JFK-LAX<br>
+                                        Additional cost: $396.43 USD<br>
+                                        Confidence: 60%<br>
+                                        Rules: MCT validated for JFK, Same day changes only</li>
+                                        <li><strong>Option 2 (keep partial):</strong><br>
+                                        Route: AS21 JFK-LAX<br>
+                                        Additional cost: $478.94 USD<br>
+                                        Confidence: 60%<br>
+                                        Rules: MCT validated for JFK, Same day changes only</li>
+                                        <li><strong>Option 3 (keep partial):</strong><br>
+                                        Route: AS19 JFK-LAX<br>
+                                        Additional cost: $478.94 USD<br>
+                                        Confidence: 60%<br>
+                                        Rules: MCT validated for JFK, Same day changes only</li>
+                                    </ul>
+
+                                    <p>All options have been validated against airline policies and connection requirements. Would you like me to proceed with one of these options?</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </section>
@@ -1532,12 +1578,12 @@ npm test
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Flight Search Integration:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented Amadeus API integration for live flight search with complete itineraries, pricing, connection details, and IATA code conversion. Features natural language date parsing and comprehensive flight information display.</span></li>
                             <li style="background: rgba(126, 211, 33, 0.15); border: 2px solid var(--color-success); border-left: 6px solid var(--color-success); padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;" class="completed-item"><strong><span class="material-symbols-outlined" style="color: var(--color-success); vertical-align: middle; margin-right: 4px;">check_circle</span>Circuit Breaker & Rate Limiting:</strong> <span style="background: var(--color-success); color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">COMPLETED</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Implemented opossum circuit breaker with per-host configuration and Bottleneck rate limiter. Features configurable timeouts, error thresholds, and comprehensive metrics/stats collection with /metrics endpoint integration.</span></li>
                             <li><strong>Policy Browser Mode v1:</strong> Headless Playwright navigation to official policy pages with screenshot+DOM evidence, verbatim citations, and content hashing for chain of custody.</li>
-                            <li><strong>IRROPS & Partial-Leg Changes:</strong> Agentic flow for disruption handling with MCT/fare rule validation, A/B/C options with cited policy rules, and golden transcript validation.</li>
+                            <li style="background: rgba(255, 193, 7, 0.15); border: 2px solid #FFC107; border-left: 6px solid #FFC107; padding: var(--space-3); border-radius: var(--border-radius); margin-bottom: var(--space-3); color: var(--color-primary); position: relative;"><strong><span class="material-symbols-outlined" style="color: #FFC107; vertical-align: middle; margin-right: 4px;">construction</span>IRROPS & Partial-Leg Changes:</strong> <span style="background: #FFC107; color: white; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">FOUNDATION READY</span><br><span style="margin-top: var(--space-2); display: block; font-size: var(--fs-s); color: var(--color-secondary);">Foundational components implemented: PNR schemas, constraint validators (MCT/fare/carrier), option ranking algorithms, and disruption classification. Ready for production workflow integration and policy rule engine connection.</span></li>
                             <li><strong>Hotels & Stays (Amadeus):</strong> City + dates + guests search with policy compliance filtering, loyalty integration, and unified itinerary view.</li>
                             <li><strong>Profile & Policy Guardrail Engine:</strong> YAML-based rules engine for corporate travel policy with IN-POLICY/OUT-OF-POLICY badges and exception workflows.</li>
                             <li><strong>Unified Itinerary & Smart Notifications:</strong> Merged flights+hotels+POIs with ICS export and proactive nudges (check-in, gate changes, cancellation windows).</li>
                             <li><strong>Trip Risk & Resilience Score:</strong> Predictive disruption scoring with Plan B recommendations based on MCT buffers, weather patterns, and carrier reliability.</li>
-                            <li><strong>Enterprise Observability & Packaging:</strong> P95/P99 metrics, OpenAPI documentation, Docker/Lambda packaging, and cost guardrails with budget controls.</li>
+                            <li><strong>Advanced Observability & Packaging:</strong> P95/P99 metrics, OpenAPI documentation, Docker/Lambda packaging, and cost guardrails with budget controls.</li>
                         </ul>
                     </div>
                 </div>
@@ -1547,7 +1593,7 @@ npm test
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2025 Voyant Travel Assistant. Built with modern AI and enterprise-grade reliability.</p>
+            <p>&copy; 2025 Voyant Travel Assistant. Built with modern AI and comprehensive reliability.</p>
             <div class="footer__link">
                 <a href="https://github.com/chernistry/voyant/" target="_blank">View on GitHub ↗</a>
             </div>
