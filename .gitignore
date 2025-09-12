@@ -17,3 +17,4 @@ root/coverage/*
 docs/ROADMAP/*
 >>>>>>> dev
 docs/AMADEUS*
+.DS_Store
