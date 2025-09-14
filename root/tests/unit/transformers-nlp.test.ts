@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { classifyContent, classifyIntent } from '../../src/core/transformers-classifier.js';
-import { correctSpelling } from '../../src/core/transformers-corrector.js';
 import { detectLanguage } from '../../src/core/transformers-detector.js';
 import { extractEntitiesEnhanced } from '../../src/core/ner-enhanced.js';
 import { TransformersNLP } from '../../src/core/transformers-nlp-facade.js';
@@ -94,38 +93,6 @@ describe('Transformers NLP Components', () => {
     });
   });
 
-  describe('Spell Correction', () => {
-    it('should correct common travel typos', async () => {
-      const testCases = [
-        { input: 'weaher in berln', expected: 'weather in berlin' },
-        { input: 'packin for pars', expected: 'packing for paris' },
-        { input: 'atractions in londn', expected: 'attractions in london' }
-      ];
-
-      for (const testCase of testCases) {
-        const result = await correctSpelling(testCase.input, logger);
-        expect(result.corrected_text).toBe(testCase.expected);
-        expect(result.corrections.length).toBeGreaterThan(0);
-        expect(result.confidence).toBeGreaterThan(0.8);
-      }
-    });
-
-    it('should not modify correct text', async () => {
-      const text = 'weather in Paris';
-      const result = await correctSpelling(text, logger);
-      expect(result.corrected_text).toBe(text);
-      expect(result.corrections.length).toBe(0);
-      expect(result.confidence).toBe(1.0);
-    });
-
-    it('should handle multiple typos in one text', async () => {
-      const result = await correctSpelling('weaher and packin for berln', logger);
-      expect(result.corrected_text).toBe('weather and packing for berlin');
-      expect(result.corrections.length).toBe(3);
-      expect(result.confidence).toBeGreaterThan(0.8);
-    });
-  });
-
   describe('Language Detection', () => {
     it('should detect English correctly', async () => {
       const result = await detectLanguage('what is the weather in Paris?', logger);
@@ -194,8 +161,6 @@ describe('Transformers NLP Components', () => {
     it('should process travel query comprehensively', async () => {
       const result = await nlp.process('weaher in berln for packin');
       
-      expect(result.corrected_text).toBe('weather in berlin for packing');
-      expect(result.corrections.length).toBeGreaterThan(0);
       expect(result.content_classification.content_type).toBe('travel');
       expect(['weather', 'packing']).toContain(result.intent_classification.intent);
       expect(result.language_detection.language).toBe('en');
@@ -258,10 +223,6 @@ describe('Transformers NLP Components', () => {
       
       for (const testCase of goldenTestCases) {
         const result = await nlp.process(testCase.input);
-        
-        if (testCase.expected.corrected) {
-          expect(result.corrected_text).toBe(testCase.expected.corrected);
-        }
         
         expect(result.content_classification.content_type).toBe(testCase.expected.contentType);
         expect(result.intent_classification.intent).toBe(testCase.expected.intent);

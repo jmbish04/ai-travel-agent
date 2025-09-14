@@ -3,7 +3,7 @@
  * Validates G-E-R-A pattern and performance improvements
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { runGraphTurn } from '../../../src/core/graph.js';
 import pinoLib from 'pino';
 
@@ -87,7 +87,7 @@ describe('Optimized Graph', () => {
   });
 
   it('should handle guard stage YES/NO shortcuts', async () => {
-    const { checkYesNoShortcut, readConsentState } = await import('../../../src/core/graph.optimizers.js');
+    const { checkYesNoShortcut } = await import('../../../src/core/graph.optimizers.js');
     const { getThreadSlots } = await import('../../../src/core/slot_memory.js');
     
     // Mock consent state
