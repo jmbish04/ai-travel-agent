@@ -4,143 +4,101 @@ flowchart TD
 
     %% G-E-R-A Pattern: Guard → Extract → Route → Act
     %% GUARD STAGE: Fast micro-rules first
-    B --> G1{"Consent flags set?"}
+    B --> G1{"Consent flags set? (slot_memory.readConsentState)"}
     G1 -->|Yes| G2["checkYesNoShortcut()"]
     G2 --> G3{"Shortcut detected?"}
-    G3 -->|Yes| G4["Handle consent (yes/no)"]
+    G3 -->|Yes| G4["writeConsentState(clear) → perform pending action or refuse"]
     G3 -->|No| E
-    G1 -->|No| G5["Policy hit?"]
-    G5 -->|Yes| G6["Force policy intent"]
-    G5 -->|No| G7["Web-ish hit?"]
-    G7 -->|Yes| G8["Set web consent; return prompt"]
-    G7 -->|No| G9["Weather fast-path?"]
+    G1 -->|No| G5{"Policy hit? (/visa|passport|policy/)"}
+    G5 -->|Yes| G6["Force policy intent (router skip)"]
+    G5 -->|No| G7{"Web-ish hit? explicit search"}
+    G7 -->|Yes| G8["writeConsentState(web) → ask user to confirm web search"]
+    G7 -->|No| G9{"Weather fast-path today?"}
     G9 -->|Yes| G10["extractCityLite()"]
     G10 --> G11{"City found?"}
-    G11 -->|Yes| G12["weatherNode() → return"]
+    G11 -->|Yes| G12["weatherNode() (Open‑Meteo) → return"]
     G11 -->|No| E
     G9 -->|No| E
 
     %% EXTRACT STAGE: Single-pass cached extraction
     E["Extract Stage"] --> E1["buildTurnCache()"]
-    E1 --> E2["routeIntent() - single call"]
-    E2 --> E3{"Need NER for flights?"}
-    E3 -->|Yes| E4["extractEntitiesEnhanced()"]
-    E3 -->|No| E5["Lightweight extraction"]
+    E1 --> E2["routeIntent() — transformers‑first + heuristics → single LLM router"]
+    E2 --> E3{"Intent === flights?"}
+    E3 -->|Yes| E4["extractEntitiesEnhanced(); preserve relative dates"]
+    E3 -->|No| E5["Lightweight extraction (city, etc.)"]
     E5 --> E6{"Need content classification?"}
-    E6 -->|Yes| E7["classifyContent() (transformers)"]
+    E6 -->|Yes| E7["classifyContent (transformers)"]
     E6 -->|No| R
 
-    %% ROUTE STAGE: Decision table
-    R["Route Stage"] --> R1{"Unrelated content?"}
-    R1 -->|Yes| R2["Return travel focus message"]
-    R1 -->|No| R3["Use cached router result"]
-
-    %% SLOT PROCESSING
-    R3 --> S1["normalizeSlots()"]
-    S1 --> S2["checkMissingSlots()"]
-    S2 --> S3{"Missing slots?"}
+    %% ROUTE STAGE: Decision table + slots
+    R["Route Stage"] --> R3["normalizeSlots(); checkMissingSlots"]
+    R3 --> S3{"Missing slots?"}
     S3 -->|Yes| S4["buildClarifyingQuestion() → return"]
     S3 -->|No| S5["updateThreadSlots(); setLastIntent()"]
 
-    %% ACT STAGE: Route to domain nodes
+    %% ACT STAGE: Domain nodes
     S5 --> N{"Intent"}
-    N -->|weather| Q["weatherNode()"]
-    N -->|destinations| RD["destinationsNode()"]
-    N -->|packing| S["packingNode()"]
-    N -->|attractions| T["attractionsNode()"]
-    N -->|policy| P["policyNode()"]
-    N -->|flights| F["flightsNode()"]
+    N -->|weather| Q["weatherNode() → Open‑Meteo"]
+    N -->|destinations| RD["destinationsNode() with web fallback"]
+    N -->|packing| S["packingNode() → blendWithFacts"]
+    N -->|attractions| T["attractionsNode() → OpenTripMap"]
+    N -->|policy| P["policyNode() → PolicyAgent"]
+    N -->|flights| F["flightsNode() / IRROPS paths"]
     N -->|web_search| U["webSearchNode()"]
     N -->|system| SYS["systemNode()"]
-    N -->|unknown| V["unknownNode()"]
+    N -->|unknown| V["unknownNode() → blend"]
 
-    %% UNIFIED CONSENT HANDLING
-    B --> C1{"Awaiting consent?"}
-    C1 -->|Yes| C2["detectConsent()"]
-    C2 --> C3{"Consent clear?"}
-    C3 -->|Yes| C4["Handle consent (yes/no)"]
-    C3 -->|No| C5["Continue with normal flow"]
+    %% PolicyAgent internals (RAG → Browser receipts → Summarize)
+    P --> PA1["Query Vectara (semantic) with FCS filter"]
+    PA1 --> PA2{"Sufficient citations?"}
+    PA2 -->|Yes| PA3["Compose answer with citations"]
+    PA2 -->|No| PA4{"Visa question?"}
+    PA4 -->|Yes| U
+    PA4 -->|No| PA5["writeConsentState(web_after_rag) → ask for web search"]
+    %% Try browser-mode receipts (official policy pages)
+    PA1 --> PA6["If low quality, try Playwright receipts (stealth)"]
+    PA6 --> PA7{"Receipt confidence ≥ 0.6?"}
+    PA7 -->|Yes| PA8["Summarize receipts (policy_summarizer) → prefer receipts answer"]
+    PA7 -->|No| PA5
 
-    %% Domain Node Implementations
-    Q --> Q1["Open-Meteo API → reply + citations"]
-    Q1 --> Z
-    
-    RD --> R1["AI-enhanced destinations tool"]
-    R1 --> R2{"Success?"}
-    R2 -->|Yes| R3OUT["Return destinations + citations"]
-    R2 -->|No| R4["webSearchNode() fallback"]
-    
-    S --> S1["blendWithFacts()"]
-    S1 --> Z
-    
-    T --> T1["OpenTripMap API"]
-    T1 --> T2{"Success?"}
-    T2 -->|Yes| T3["Return attractions + citations"]
-    T2 -->|No| T4["webSearchNode() fallback"]
-    
-    F --> F1["Amadeus API"]
-    F1 --> F2{"Success?"}
-    F2 -->|Yes| F3["Return flights + citations"]
-    F2 -->|No| F4["blendWithFacts() fallback"]
-    
-    P --> P1["PolicyAgent (RAG)"]
-    P1 --> P2{"Results found?"}
-    P2 -->|Yes| P3["Format answer with sources"]
-    P2 -->|No| P4{"Visa question?"}
-    P4 -->|Yes| P5["webSearchNode() fallback"]
-    P4 -->|No| P6["Ask for web search consent"]
-    
-    U --> U1["performWebSearchNode()"]
-    U1 --> U2["searchTravelInfo() → summarize"]
-    U2 --> U3["Return reply + citations"]
-    
-    V --> V1["blendWithFacts()"]
-    V1 --> Z
+    %% IRROPS (separate subgraph)
+    F --> I1["IRROPS StateGraph: classify → workflow → completion"]
+    I1 --> I2["processIrrops(): Amadeus alternatives → constraint validate → rank"]
+    I2 --> I3["Compose top options + citations"]
 
-    %% Compose final answer
-    Z["Compose Final Answer"] --> Z1["Validate citations"]
-    Z1 --> Z2{"Facts collected?"}
-    Z2 -->|Yes| Z3["setLastReceipts()"]
-    Z2 -->|No| Z4["Continue without receipts"]
-    Z3 --> Z5["Append source if missing"]
-    Z4 --> Z5
-    Z5 --> Z6{"Language warning set?"}
-    Z6 -->|Yes| Z7["Prefix language warning"]
-    Z6 -->|No| Z8["Return final reply"]
+    %% Web search
+    U --> U1["searchTravelInfo() (Brave/Tavily) → summarize"]
 
-%% Key Implementation Details:
-%% 
-%% 1. G-E-R-A Pattern (Guard → Extract → Route → Act):
-%%    - Guard: Fast micro-rules for early exits
-%%    - Extract: Single-pass cached extraction with intent-gated extractors
-%%    - Route: Decision table using cached router results
-%%    - Act: Domain-specific nodes
-%%
-%% 2. Performance Optimizations:
-%%    - Single router call per turn
-%%    - Intent-gated extractors (only run when needed)
-%%    - Fast-path optimizations (weather, policy, web-ish)
-%%    - Cached results for extraction
-%%    - Unified consent handling
-%%
-%% 3. Domain Nodes:
-%%    - weather: Open-Meteo API with fallback
-%%    - destinations: AI-enhanced catalog with web search fallback
-%%    - packing: blendWithFacts approach
-%%    - attractions: OpenTripMap with web search fallback
-%%    - flights: Amadeus API with blend fallback
-%%    - policy: PolicyAgent (RAG) with web search fallback
-%%    - web_search: Brave search with summarization
-%%    - system: Static responses
-%%    - unknown: blendWithFacts approach
-%%
-%% 4. Consent Handling:
-%%    - Unified consent state management
-%%    - Micro-rules for obvious yes/no responses
-%%    - LLM fallback for ambiguous responses
-%%
-%% 5. Error Handling:
-%%    - Tool-specific fallbacks
-%%    - Graceful degradation to web search
-%%    - Clear error messages to users
+    %% Compose final answer + receipts
+    PA3 --> Z
+    PA8 --> Z
+    Q --> Z
+    RD --> Z
+    S --> Z
+    T --> Z
+    U1 --> Z
+    V --> Z
+    I3 --> Z
+
+    Z["Compose Final Answer"] --> Z1["Validate citations; setLastReceipts (facts/decisions)"]
+    Z1 --> Z2{"/why or receipts flag?"}
+    Z2 -->|Yes| Z3["verifyAnswer() → adjust reply if fail"]
+    Z2 -->|No| Z4["Return ChatOutput"]
+
+    %% Resilience & Metrics (implicit around external calls)
+    subgraph Resilience
+      RLM[RateLimiter (server middleware)]
+      BRK[Opossum breaker per host (util/circuit)]
+      CBF[Custom breaker for Vectara]
+      MET[Metrics: externalAgg or Prom] 
+    end
 ```
+
+Implementation Map (code anchors)
+- Orchestrator G‑E‑R‑A: `src/core/graph.ts`
+- Router fast-paths and LLM router: `src/core/router.ts`
+- Consent state read/write: `src/core/slot_memory.ts`
+- PolicyAgent (RAG + browser receipts + summarizer): `src/core/policy_agent.ts`, `src/tools/policy_browser.ts`, `src/schemas/vectara.ts`
+- IRROPS subgraph and engine: `src/agent/graphs/irrops.graph.ts`, `src/core/irrops_engine.ts`
+- API `/chat` + receipts + self-check: `src/api/routes.ts`, `src/schemas/chat.ts`, `src/core/verify.ts`, `src/core/receipts.ts`
+- Resilience & Metrics: `src/util/limiter.ts`, `src/util/circuit.ts`, `src/core/circuit-breaker.ts`, `src/util/metrics.ts`, `src/api/server.ts`
