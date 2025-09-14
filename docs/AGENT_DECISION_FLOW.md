@@ -86,11 +86,11 @@ flowchart TD
     Z2 -->|No| Z4["Return ChatOutput"]
 
     %% Resilience & Metrics (implicit around external calls)
-    subgraph Resilience
-      RLM[RateLimiter (server middleware)]
-      BRK[Opossum breaker per host (util/circuit)]
-      CBF[Custom breaker for Vectara]
-      MET[Metrics: externalAgg or Prom] 
+    subgraph Resilience["Resilience & Metrics"]
+      RLM["RateLimiter (server middleware)"]
+      BRK["Opossum breaker per host (util/circuit)"]
+      CBF["Custom breaker for Vectara"]
+      MET["Metrics: externalAgg or Prom"]
     end
 ```
 
