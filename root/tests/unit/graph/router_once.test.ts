@@ -15,6 +15,7 @@ describe('Router Once Pattern', () => {
     mockRouteIntent.mockClear();
     mockRouteIntent.mockResolvedValue({
       intent: 'weather',
+      needExternal: true,
       confidence: 0.9,
       slots: { city: 'Barcelona' }
     });

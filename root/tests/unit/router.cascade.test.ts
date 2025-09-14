@@ -2,7 +2,6 @@ import pino from 'pino';
 import { RouterResult } from '../../src/schemas/router.js';
 import * as RouterModule from '../../src/core/router.js';
 import * as LlmModule from '../../src/core/llm.js';
-import * as RouterLLM from '../../src/core/router.llm.js';
 import * as Parsers from '../../src/core/parsers.js';
 
 const log = pino({ level: 'silent' });
@@ -13,8 +12,8 @@ describe('Router cascade: AI-First Approach with Confidence Scoring', () => {
     (global as any).__memory_store__?.clear?.();
   });
 
-  test('weather in Paris hits Transformers fast path (confidence ≥ 0.7)', async () => {
-    const tSpy = jest.spyOn(RouterModule, 'routeViaTransformersFirst').mockResolvedValue(
+  test('weather in Paris hits router intent (confidence ≥ 0.7)', async () => {
+    const tSpy = jest.spyOn(RouterModule, 'routeIntent').mockResolvedValue(
       RouterResult.parse({
         intent: 'weather',
         needExternal: true,
@@ -40,7 +39,7 @@ describe('Router cascade: AI-First Approach with Confidence Scoring', () => {
   test('AI-first routing with confidence thresholds', async () => {
     const callOrder: string[] = [];
 
-    jest.spyOn(RouterModule, 'routeViaTransformersFirst').mockImplementation(async () => {
+    jest.spyOn(RouterModule, 'routeIntent').mockImplementation(async () => {
       callOrder.push('transformers');
       return undefined; // below threshold or no match
     });
@@ -76,7 +75,7 @@ describe('Router cascade: AI-First Approach with Confidence Scoring', () => {
   });
 
   test('Unrelated/gibberish → final fallback is unknown with override', async () => {
-    jest.spyOn(RouterModule, 'routeViaTransformersFirst').mockResolvedValue(undefined);
+    jest.spyOn(RouterModule, 'routeIntent').mockResolvedValue(undefined);
 
     // Mark content as unrelated to trigger override logic
     jest.spyOn(LlmModule, 'classifyContent').mockResolvedValue({
@@ -100,7 +99,7 @@ describe('Router cascade: AI-First Approach with Confidence Scoring', () => {
 
   test('skips transformers when cascade disabled', async () => {
     process.env.TRANSFORMERS_CASCADE_ENABLED = 'false';
-    const tSpy = jest.spyOn(RouterModule, 'routeViaTransformersFirst');
+    const tSpy = jest.spyOn(RouterModule, 'routeIntent');
     jest.spyOn(LlmModule, 'classifyContent').mockResolvedValue(undefined as any);
     jest.spyOn(LlmModule, 'classifyIntent').mockResolvedValue({
       intent: 'weather',
