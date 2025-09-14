@@ -51,7 +51,7 @@ describe('Graph Optimization', () => {
     });
     
     mockExtractEntitiesEnhanced.mockResolvedValue({
-      locations: [{ text: 'Paris', score: 0.95, entity_type: 'location', confidence_score: 0.95, entity_group: 'LOC' }],
+      locations: [{ text: 'Paris', score: 0.95, entity_type: 'LOCATION', confidence_score: 0.95, entity_group: 'LOC' }],
       dates: [],
       durations: [],
       money: [],
@@ -85,7 +85,7 @@ describe('Graph Optimization', () => {
     });
     
     mockExtractEntitiesEnhanced.mockResolvedValue({
-      locations: [{ text: 'Tokyo', score: 0.95, entity_type: 'location', confidence_score: 0.95, entity_group: 'LOC' }],
+      locations: [{ text: 'Tokyo', score: 0.95, entity_type: 'LOCATION', confidence_score: 0.95, entity_group: 'LOC' }],
       dates: [],
       durations: [],
       money: [],
