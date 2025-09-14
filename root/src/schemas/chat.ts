@@ -15,7 +15,15 @@ export const ChatOutput = z.object({
   receipts: z
     .object({
       sources: z.array(z.string()),
-      decisions: z.array(z.string()),
+      decisions: z.array(z.union([
+        z.string(),
+        z.object({
+          action: z.string(),
+          rationale: z.string(),
+          alternatives: z.array(z.string()).optional(),
+          confidence: z.number().min(0).max(1).optional(),
+        })
+      ])),
       selfCheck: z.object({
         verdict: z.enum(['pass', 'warn', 'fail']),
         notes: z.array(z.string()),

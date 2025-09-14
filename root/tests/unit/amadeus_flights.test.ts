@@ -25,7 +25,11 @@ describe('Amadeus Flight Search', () => {
 
   describe('searchFlights function', () => {
     it('should return error for missing required fields', async () => {
-      const result = await searchFlights({});
+      const result = await searchFlights({
+        origin: '',
+        destination: '',
+        departureDate: ''
+      });
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('missing_required_fields');
