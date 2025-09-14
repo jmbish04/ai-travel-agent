@@ -72,7 +72,9 @@ export async function processIrrops(
           );
           const carrierResult = await validator.validateCarrierChange(
             segment.carrier,
-            alt.carrier
+            alt.carrier,
+            [], // policyReceipts
+            true // isIrrops
           );
 
           console.log('🔧 IRROPS: Validation results', { mctValid, fareResult, carrierResult });

@@ -67,7 +67,8 @@ export class ConstraintValidator {
   async validateCarrierChange(
     originalCarrier: string,
     newCarrier: string,
-    policyReceipts: string[] = []
+    policyReceipts: string[] = [],
+    isIrrops: boolean = false
   ): Promise<CarrierResult> {
     // Same carrier - no conditions needed
     if (originalCarrier === newCarrier) {
@@ -79,6 +80,14 @@ export class ConstraintValidator {
     
     const isAlliance = this.checkAlliance(originalCarrier, newCarrier);
     const hasPolicy = policyReceipts.some(r => r.includes('carrier_change_allowed'));
+    
+    // For IRROPS, allow cross-alliance changes with conditions
+    if (isIrrops && !isAlliance && !hasPolicy) {
+      return {
+        allowed: true,
+        conditions: ['IRROPS exception - cross-alliance change permitted']
+      };
+    }
     
     return {
       allowed: isAlliance || hasPolicy,
@@ -98,7 +107,7 @@ export class ConstraintValidator {
   }
 
   private checkAlliance(carrier1: string, carrier2: string): boolean {
-    const starAlliance = ['UA', 'LH', 'SG', 'AC', 'TK'];
+    const starAlliance = ['UA', 'LH', 'SG', 'AC', 'TK', 'SK'];
     const oneWorld = ['AA', 'BA', 'QF', 'JL', 'CX'];
     const skyTeam = ['DL', 'AF', 'KL', 'AZ', 'VS'];
     

@@ -1,12 +1,12 @@
 import pino from 'pino';
 
-jest.mock('../src/tools/weather.js', () => ({
+jest.mock('../../src/tools/weather.js', () => ({
   getWeather: async () => ({ ok: true, summary: 'High 30°C / Low 22°C; precip prob 20%' })
 }));
-jest.mock('../src/tools/country.js', () => ({
+jest.mock('../../src/tools/country.js', () => ({
   getCountryFacts: async () => ({ ok: true, summary: 'Japan • Region: Asia • Currency: JPY • Language: Japanese' })
 }));
-jest.mock('../src/tools/attractions.js', () => ({
+jest.mock('../../src/tools/attractions.js', () => ({
   getAttractions: async () => ({ ok: false, reason: 'no_pois' })
 }));
 
