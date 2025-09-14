@@ -24,9 +24,16 @@ export const FactSchema = z.object({
   latency_ms: z.number().optional(),
 });
 
+export const DecisionSchema = z.object({
+  action: z.string(),
+  rationale: z.string(),
+  alternatives: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
 export const ReceiptsSchema = z.object({
   sources: z.array(z.string()),
-  decisions: z.array(z.string()),
+  decisions: z.array(z.union([z.string(), DecisionSchema])),
   selfCheck: z.object({
     verdict: z.enum(['pass', 'warn', 'fail']),
     notes: z.array(z.string()),
@@ -38,11 +45,26 @@ export const ReceiptsSchema = z.object({
 });
 
 export type Fact = z.infer<typeof FactSchema>;
+export type Decision = z.infer<typeof DecisionSchema>;
 export type Receipts = z.infer<typeof ReceiptsSchema>;
+
+export function createDecision(
+  action: string,
+  rationale: string,
+  alternatives?: string[],
+  confidence?: number
+): Decision {
+  return {
+    action,
+    rationale,
+    ...(alternatives && { alternatives }),
+    ...(confidence !== undefined && { confidence })
+  };
+}
 
 export function buildReceiptsSkeleton(
   facts: Fact[],
-  decisions: string[],
+  decisions: Array<string | Decision>,
   token_estimate?: number,
 ): Receipts {
   const sources = Array.from(new Set(facts.map((f) => f.source)));

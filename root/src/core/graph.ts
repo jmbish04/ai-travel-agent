@@ -788,12 +788,18 @@ async function policyNode(
     
     // Store facts for /why command
     const { setLastReceipts } = await import('./slot_memory.js');
+    const { createDecision } = await import('./receipts.js');
     const facts = displayCitations.map((c, i) => ({
       key: `policy_citation_${i}`,
       value: c.snippet || c.title || 'Policy information',
       source: c.title || c.url || 'Internal Knowledge Base'
     }));
-    const decisions = [`Retrieved ${displayCitations.length} policy citations with receipts integration`];
+    const decisions = [createDecision(
+      `Retrieved ${displayCitations.length} policy citations`,
+      `User requested policy information, found ${displayCitations.length} relevant citations from internal knowledge base`,
+      ['Skip policy lookup', 'Use web search instead'],
+      0.9
+    )];
     setLastReceipts(ctx.threadId, facts, decisions, formattedAnswer);
     
     const citationTitles = displayCitations.map(c => c.title || c.url || 'Internal Knowledge Base');
@@ -889,6 +895,7 @@ async function performWebSearchNode(
   if (threadId) {
     try {
       const { setLastReceipts } = await import('./slot_memory.js');
+      const { createDecision } = await import('./receipts.js');
       const facts = searchResult.results.slice(0, 3).map(
         (result: SearchResult, index: number) => ({
           source: getSearchCitation(),
@@ -896,7 +903,12 @@ async function performWebSearchNode(
           value: `${result.title}: ${result.description.slice(0, 100)}...`,
         }),
       );
-      const decisions = [`Performed web search for: "${query}"`];
+      const decisions = [createDecision(
+        `Performed web search for: "${query}"`,
+        `User query required external web search as it couldn't be answered by travel APIs or internal knowledge`,
+        ['Use travel APIs only', 'Skip search'],
+        0.85
+      )];
       setLastReceipts(threadId, facts, decisions, reply);
     } catch {
       // ignore receipt storage errors
@@ -924,8 +936,14 @@ async function performDeepResearchNode(
     // Store receipts
     try {
       const { setLastReceipts } = await import('./slot_memory.js');
+      const { createDecision } = await import('./receipts.js');
       const facts = research.citations.map((c, i) => ({ source: c.source, key: `deep_${i}`, value: c.url }));
-      const decisions = [`Deep research performed for: "${query}"`];
+      const decisions = [createDecision(
+        `Deep research performed for: "${query}"`,
+        `User requested comprehensive travel information with specific constraints (family, budget, time), so performed deep web research across multiple sources to gather diverse options`,
+        ['Basic search only', 'Use travel APIs only'],
+        0.9
+      )];
       setLastReceipts(threadId, facts, decisions, research.summary);
     } catch {}
     

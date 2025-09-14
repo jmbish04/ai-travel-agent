@@ -66,7 +66,7 @@ describe('Amadeus Locations SDK Integration', () => {
       if (result.ok) {
         expect(result.confidence).toBeGreaterThanOrEqual(0);
       } else {
-        expect(['not_found', 'timeout', 'network']).toContain(result.reason);
+        expect(['not_found', 'timeout', 'network']).toContain((result as any).reason);
       }
     }, 10000);
 

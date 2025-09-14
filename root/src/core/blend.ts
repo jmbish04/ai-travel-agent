@@ -19,7 +19,7 @@ import type { SearchResult } from '../tools/search.js';
 import { validateNoCitation } from './citations.js';
 import type { Fact } from './receipts.js';
 import { getLastReceipts, setLastReceipts, updateThreadSlots } from './slot_memory.js';
-import { buildReceiptsSkeleton, ReceiptsSchema } from './receipts.js';
+import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
@@ -118,7 +118,12 @@ async function performWebSearch(
           value: `${result.title}: ${result.description}`,
         }),
       );
-      const decisions = ['Used web search because user requested search or question couldn\'t be answered by travel APIs.'];
+      const decisions = [createDecision(
+        'Used web search for travel information',
+        'User requested search or question couldn\'t be answered by travel APIs, so performed web search to find relevant information',
+        ['Use travel APIs only', 'Skip search'],
+        0.8
+      )];
       setLastReceipts(threadId, facts, decisions, reply);
     } catch {
       // ignore
@@ -168,7 +173,11 @@ export async function handleChat(
       const safe = ReceiptsSchema.parse(merged);
       
       // For /why commands, return only receipts content as reply
-      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.join(' ')}\n\nSelf-Check: ${audit.verdict}${audit.notes.length > 0 ? ` (${audit.notes.join(', ')})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
+      const formatDecision = (d: string | Decision) => {
+        if (typeof d === 'string') return d;
+        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+      };
+      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit.verdict}${audit.notes.length > 0 ? ` (${audit.notes.join(', ')})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -176,7 +185,11 @@ export async function handleChat(
       
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources, receipts: safe });
     } catch {
-      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.join(' ')}\n\nSelf-Check: not available\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
+      const formatDecision = (d: string | Decision) => {
+        if (typeof d === 'string') return d;
+        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+      };
+      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: not available\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -393,7 +406,7 @@ export async function blendWithFacts(
   const cits: string[] = [];
   let facts = '';
   const factsArr: Fact[] = [];
-  const decisions: string[] = [];
+  const decisions: Array<string | Decision> = [];
   try {
     if (input.route.intent === 'weather') {
       ctx.onStatus?.('Checking weather data...');
@@ -409,7 +422,12 @@ export async function blendWithFacts(
         // Store facts for receipts
         if (input.threadId) {
           const factsArr: Fact[] = [{ source, key: 'weather_summary', value: wx.summary }];
-          const decisions = ['Used weather API because user asked about weather.'];
+          const decisions = [createDecision(
+            'Used weather API for forecast',
+            'User asked about weather conditions, so retrieved weather data from Open-Meteo API',
+            ['Skip weather lookup', 'Use web search instead'],
+            0.95
+          )];
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
@@ -447,7 +465,12 @@ export async function blendWithFacts(
             { source, key: 'weather_summary', value: wx.summary },
             { source, key: 'packing_items', value: items }
           ];
-          const decisions = ['Used weather to tailor packing items.'];
+          const decisions = [createDecision(
+            'Used weather data to tailor packing recommendations',
+            'User asked for packing advice, so retrieved weather forecast and matched temperature ranges to appropriate clothing items',
+            ['Generic packing list', 'Skip weather lookup'],
+            0.9
+          )];
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
@@ -469,7 +492,12 @@ export async function blendWithFacts(
         // Add context-specific facts for the existing destination
         const contextFact = `EXISTING CONTEXT: Traveling from ${cityHint} in ${whenHint}. User requested refinement: ${input.message}`;
         facts += `${contextFact}\n`;
-        decisions.push('Detected refinement request - preserving existing travel context and adding specific adjustments.');
+        decisions.push(createDecision(
+          'Detected refinement request',
+          'User is refining existing travel context rather than starting fresh, so preserved existing destination context and added specific adjustments',
+          ['Start fresh search', 'Ignore refinement'],
+          0.85
+        ));
       } else {
         // Use destinations catalog for new recommendations
         ctx.onStatus?.('Finding destinations...');
@@ -487,12 +515,22 @@ export async function blendWithFacts(
           ).join('; ');
           facts += `DESTINATION OPTIONS: ${destinations}\n`;
           factsArr.push(...destinationFacts);
-          decisions.push('Filtered destinations catalog by month/profile with factual anchors.');
+          decisions.push(createDecision(
+            'Filtered destinations catalog by month/profile',
+            'User requested destination recommendations, so filtered catalog by travel month and profile preferences with factual anchors from REST Countries API',
+            ['Use web search only', 'Generic recommendations'],
+            0.9
+          ));
           ctx.log.debug({ destinationCount: destinationFacts.length, destinations }, 'destinations_facts_added');
         }
       } catch (e) {
         ctx.log.debug({ error: e }, 'destinations_catalog_failed');
-        decisions.push('Destinations catalog unavailable; using generic guidance.');
+        decisions.push(createDecision(
+          'Destinations catalog unavailable',
+          'Destinations catalog lookup failed due to API error, so falling back to generic travel guidance',
+          ['Use web search instead', 'Skip recommendations'],
+          0.6
+        ));
       }
       }
       
@@ -509,7 +547,12 @@ export async function blendWithFacts(
           cits.push(source);
           facts += `Weather for ${originCity}: ${wx.summary} (${source})\n`;
           factsArr.push({ source, key: 'weather_summary', value: wx.summary });
-          decisions.push('Considered origin weather/season for destination suggestions.');
+          decisions.push(createDecision(
+            'Considered origin weather/season for destination suggestions',
+            'User requested destination recommendations, so retrieved origin city weather to provide seasonally-appropriate suggestions',
+            ['Skip weather context', 'Use generic recommendations'],
+            0.8
+          ));
         } else {
           ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
           // Handle unknown city specifically
@@ -546,7 +589,12 @@ export async function blendWithFacts(
           cits.push(source);
           facts += `Country: ${cf.summary} (${source})\n`;
           factsArr.push({ source, key: 'country_summary', value: cf.summary });
-          decisions.push('Added country context (currency, language, region).');
+          decisions.push(createDecision(
+            'Added country context (currency, language, region)',
+            'User asked about destination, so retrieved country information to provide relevant context about currency, language, and regional details',
+            ['Skip country lookup', 'Use generic information'],
+            0.85
+          ));
         } else {
           ctx.log.debug({ reason: cf.reason }, 'country_adapter_failed');
         }
@@ -566,7 +614,14 @@ export async function blendWithFacts(
         // Store facts for receipts
         if (input.threadId) {
           const factsArr: Fact[] = [{ source, key: 'poi_list', value: at.summary }];
-          const decisions = [wantsKid ? 'Listed kid-friendly attractions from travel APIs.' : 'Listed top attractions from travel APIs.'];
+          const decisions = [createDecision(
+            wantsKid ? 'Listed kid-friendly attractions from travel APIs' : 'Listed top attractions from travel APIs',
+            wantsKid 
+              ? 'User requested family-friendly attractions, so filtered results for kid-friendly venues using OpenTripMap API'
+              : 'User asked for attractions, so retrieved top-rated points of interest using OpenTripMap API',
+            ['Use web search instead', 'Skip attractions lookup'],
+            0.9
+          )];
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
@@ -580,7 +635,12 @@ export async function blendWithFacts(
     }
   } catch (e) {
     ctx.log.warn({ err: e }, 'facts retrieval failed');
-    decisions.push('Facts retrieval encountered an error; kept response generic.');
+    decisions.push(createDecision(
+      'Facts retrieval encountered an error',
+      'External API calls failed during fact gathering, so kept response generic to avoid providing incorrect information',
+      ['Use cached data', 'Retry API calls'],
+      0.7
+    ));
   }
   
   ctx.onStatus?.('Preparing your response...');

@@ -1,4 +1,4 @@
-import type { Fact } from './receipts.js';
+import type { Fact, Decision } from './receipts.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -16,7 +16,7 @@ type SlotState = {
   expectedMissing: string[];
   lastIntent?: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system';
   lastFacts?: Fact[];
-  lastDecisions?: string[];
+  lastDecisions?: Array<string | Decision>;
   lastReply?: string;
 };
 
@@ -125,14 +125,14 @@ export function getLastIntent(threadId: string): 'weather'|'destinations'|'packi
 export function setLastReceipts(
   threadId: string,
   facts: Fact[],
-  decisions: string[],
+  decisions: Array<string | Decision>,
   reply?: string,
 ): void {
   const prev = slotStore.get(threadId) ?? { slots: {}, expectedMissing: [] };
   slotStore.set(threadId, { ...prev, lastFacts: facts, lastDecisions: decisions, lastReply: reply });
 }
 
-export function getLastReceipts(threadId: string): { facts?: Fact[]; decisions?: string[]; reply?: string } {
+export function getLastReceipts(threadId: string): { facts?: Fact[]; decisions?: Array<string | Decision>; reply?: string } {
   const s = slotStore.get(threadId);
   return { facts: s?.lastFacts, decisions: s?.lastDecisions, reply: s?.lastReply };
 }

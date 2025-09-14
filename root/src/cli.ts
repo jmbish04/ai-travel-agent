@@ -9,6 +9,7 @@ import { silenceNoisyLibLogs } from './util/noise_filter.js';
 import { RateLimiter } from './core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from './config/resilience.js';
 import { clearCliSlots } from './core/slot_memory.js';
+import type { Decision } from './core/receipts.js';
 
 const rl = readline.createInterface({ input, output });
 const log = createLogger();
@@ -294,7 +295,10 @@ async function main() {
       if (res.receipts && !wantReceipts) {
         outputText += '\n\n--- RECEIPTS ---\n';
         outputText += `Sources: ${(res.sources || []).join(', ')}\n`;
-        outputText += `Decisions: ${res.receipts.decisions.join(' ')}\n`;
+        outputText += `Decisions: ${res.receipts.decisions.map(d => {
+          if (typeof d === 'string') return d;
+          return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+        }).join(' ')}\n`;
         outputText += `Self-Check: ${res.receipts.selfCheck.verdict}`;
         if (res.receipts.selfCheck.notes.length > 0) {
           outputText += ` (${res.receipts.selfCheck.notes.join(', ')})`;
