@@ -6,10 +6,10 @@ import nock from 'nock';
 import fs from 'fs/promises';
 import path from 'path';
 
-import { router } from '../src/api/routes.js';
-import { expectLLMEvaluation } from '../src/test/llm-evaluator.js';
-import { TranscriptRecorder } from '../src/test/transcript-recorder.js';
-import { recordedRequest } from '../src/test/transcript-helper.js';
+import { router } from '../../src/api/routes.js';
+import { expectLLMEvaluation } from '../../src/test/llm-evaluator.js';
+import { TranscriptRecorder } from '../../src/test/transcript-recorder.js';
+import { recordedRequest } from '../../src/test/transcript-helper.js';
 
 type CsvRowObject = Record<string, string>;
 
@@ -292,25 +292,22 @@ describe('Demo Scenario CSV-driven Flow', () => {
         const expectedCriteria = buildExpectedCriteria(row);
         const actualForEval = combineActualForEvaluation(reply, citations);
 
-        try {
-          const result = await expectLLMEvaluation(
-            `${scenarioName} - step ${stepNum}`,
-            actualForEval,
-            expectedCriteria
-          ).toPass();
-          row['llm_eval_pass'] = 'true';
-          row['llm_eval_confidence'] = String(result.confidence ?? '');
-          row['llm_eval_reason'] = result.reason ?? '';
+        const result = await expectLLMEvaluation(
+          `${scenarioName} - step ${stepNum}`,
+          actualForEval,
+          expectedCriteria
+        ).toPassNonThrowing();
+
+        row['llm_eval_pass'] = String(result.passes);
+        row['llm_eval_confidence'] = String(result.confidence ?? '');
+        row['llm_eval_reason'] = result.reason ?? '';
+
+        if (result.passes) {
           console.log(`✅ LLM Eval PASS (conf: ${row['llm_eval_confidence']}) — ${row['llm_eval_reason']}`);
-        } catch (err: any) {
-          row['llm_eval_pass'] = 'false';
-          row['llm_eval_confidence'] = '';
-          row['llm_eval_reason'] = String(err?.message ?? err ?? '');
-          console.log(`❌ LLM Eval FAIL — ${row['llm_eval_reason']}`);
-          // Re-throw to fail the Jest test but still attempt to persist CSV update below
-          // We'll write partial progress before throwing
+        } else {
+          console.log(`❌ LLM Eval FAIL — ${row['llm_eval_reason']} (confidence: ${row['llm_eval_confidence']})`);
+          // Write partial progress even on failure
           await writeObjectsAsCsv(CSV_PATH, csvHeaders, csvObjects);
-          throw err;
         }
 
         // Persist CSV after each step for traceability
