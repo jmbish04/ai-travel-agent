@@ -2,7 +2,7 @@ import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
 import { callLLM, optimizeSearchQuery, classifyContent, classifyIntent } from './llm.js';
 import { extractEntities } from './ner.js';
-import { getThreadSlots, updateThreadSlots } from './slot_memory.js';
+import { getThreadSlots, updateThreadSlots, normalizeSlots } from './slot_memory.js';
 import { extractSlots } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
@@ -144,32 +144,36 @@ export async function routeIntent({ message, threadId, logger }: {
   const json = JSON.parse(raw);
   const llm = RouterResult.parse(json);
 
+  // Normalize slots to handle null values from LLM
+  const normalizedSlots = normalizeSlots(ctxSlots, llm.slots, llm.intent);
+  const llmNormalized = { ...llm, slots: normalizedSlots };
+
   // 5) Post-LLM slot enhancement for flights
-  if (llm.intent === 'flights') {
+  if (llmNormalized.intent === 'flights') {
     try {
       const enhancedSlots = await extractSlots(m, ctxSlots, logger?.log);
       
       // Preserve relative dates from LLM (today, tomorrow, etc.) over enhanced parsing
       const preservedSlots = { ...enhancedSlots };
-      if (llm.slots?.dates && /^(today|tomorrow|tonight|now)$/i.test(llm.slots.dates)) {
-        preservedSlots.dates = llm.slots.dates;
-        preservedSlots.departureDate = llm.slots.dates;
+      if (llmNormalized.slots?.dates && /^(today|tomorrow|tonight|now)$/i.test(llmNormalized.slots.dates)) {
+        preservedSlots.dates = llmNormalized.slots.dates;
+        preservedSlots.departureDate = llmNormalized.slots.dates;
         // Don't override month for relative dates
         delete preservedSlots.month;
       }
       
       // Merge LLM slots with enhanced slots, prioritizing preserved relative dates
-      const mergedSlots = { ...enhancedSlots, ...llm.slots, ...preservedSlots };
+      const mergedSlots = { ...enhancedSlots, ...llmNormalized.slots, ...preservedSlots };
       
       logger?.log?.debug({ 
-        llmSlots: llm.slots, 
+        llmSlots: llmNormalized.slots, 
         enhancedSlots, 
         preservedSlots,
         mergedSlots 
       }, 'flights_slot_enhancement');
       
       const enhanced = RouterResult.parse({
-        ...llm,
+        ...llmNormalized,
         slots: mergedSlots
       });
       
@@ -181,12 +185,12 @@ export async function routeIntent({ message, threadId, logger }: {
   }
   
   // 6) Post-LLM heuristics (cheap)
-  if (llm.intent === 'flights' && !RE.dateish.test(m)) {
+  if (llmNormalized.intent === 'flights' && !RE.dateish.test(m)) {
     logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
   }
   
-  logger?.log?.debug({ intent: llm.intent, confidence: llm.confidence }, 'router_final_result');
-  return llm;
+  logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
+  return llmNormalized;
 }
 
 // Make classifyIntentFromTransformers LLM-free

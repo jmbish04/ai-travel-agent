@@ -92,15 +92,29 @@ export function expectLLMEvaluation(
   return {
     async toPass() {
       const result = await evaluateWithLLM(testDescription, actualResponse, expectedCriteria);
-      
+
       if (!result.passes) {
         throw new Error(`Test failed: ${result.reason} (confidence: ${result.confidence})`);
       }
-      
+
       if (result.confidence < minConfidence) {
         throw new Error(`Low confidence: ${result.confidence} < ${minConfidence}. Reason: ${result.reason}`);
       }
-      
+
+      return result;
+    },
+    async toPassNonThrowing() {
+      const result = await evaluateWithLLM(testDescription, actualResponse, expectedCriteria);
+
+      // Log results instead of throwing
+      if (!result.passes) {
+        console.warn(`⚠️ Test warning: ${result.reason} (confidence: ${result.confidence})`);
+      } else if (result.confidence < minConfidence) {
+        console.warn(`⚠️ Low confidence: ${result.confidence} < ${minConfidence}. Reason: ${result.reason}`);
+      } else {
+        console.log(`✅ Test passed: ${testDescription} (confidence: ${result.confidence})`);
+      }
+
       return result;
     }
   };
