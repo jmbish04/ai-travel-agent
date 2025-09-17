@@ -24,17 +24,26 @@ const slotStore = new Map<string, SlotState>();
 
 // File-based persistence for CLI
 const CLI_SLOTS_FILE = path.join(os.tmpdir(), 'voyant-cli-slots.json');
-const isCliMode = process.argv.some(arg => arg.includes('cli.ts') || arg.includes('cli.js'));
+
+function isCliMode(): boolean {
+  return process.argv.some(arg => arg.includes('cli.ts') || arg.includes('cli.js')) || 
+         process.env.NODE_ENV === 'cli' ||
+         process.title.includes('cli');
+}
 
 function loadCliSlots(): Map<string, SlotState> {
   try {
     if (fs.existsSync(CLI_SLOTS_FILE)) {
       const data = fs.readFileSync(CLI_SLOTS_FILE, 'utf8');
       const parsed = JSON.parse(data);
-      return new Map(Object.entries(parsed));
+      const loaded = new Map(Object.entries(parsed)) as Map<string, SlotState>;
+      debugLog('🔧 SLOTS: Loaded CLI slots from file', { path: CLI_SLOTS_FILE, entries: loaded.size });
+      return loaded;
+    } else {
+      debugLog('🔧 SLOTS: CLI slots file does not exist, starting fresh', { path: CLI_SLOTS_FILE });
     }
   } catch (error) {
-    debugLog('🔧 SLOTS: Failed to load CLI slots, starting fresh');
+    debugLog('🔧 SLOTS: Failed to load CLI slots, starting fresh', { error: String(error), path: CLI_SLOTS_FILE });
   }
   return new Map();
 }
@@ -43,13 +52,14 @@ function saveCliSlots(store: Map<string, SlotState>): void {
   try {
     const data = Object.fromEntries(store);
     fs.writeFileSync(CLI_SLOTS_FILE, JSON.stringify(data, null, 2));
+    debugLog('🔧 SLOTS: Saved CLI slots to file', { path: CLI_SLOTS_FILE, entries: store.size });
   } catch (error) {
-    debugLog('🔧 SLOTS: Failed to save CLI slots');
+    debugLog('🔧 SLOTS: Failed to save CLI slots', { error: String(error), path: CLI_SLOTS_FILE });
   }
 }
 
 export function clearCliSlots(): void {
-  if (isCliMode) {
+  if (isCliMode()) {
     try {
       if (fs.existsSync(CLI_SLOTS_FILE)) {
         fs.unlinkSync(CLI_SLOTS_FILE);
@@ -64,12 +74,16 @@ export function clearCliSlots(): void {
 export function getThreadSlots(threadId: string): Record<string, string> {
   let store = slotStore;
   
-  if (isCliMode) {
+  if (isCliMode()) {
     store = loadCliSlots();
+    // Sync main store with file store
+    for (const [id, state] of store.entries()) {
+      slotStore.set(id, state);
+    }
   }
   
   const slots = store.get(threadId)?.slots ?? {};
-  debugLog('🔧 SLOTS: getThreadSlots', { threadId, slots, storeSize: store.size, isCliMode });
+  debugLog('🔧 SLOTS: getThreadSlots', { threadId, slots, storeSize: store.size, isCliMode: isCliMode() });
   return slots;
 }
 
@@ -79,32 +93,40 @@ export function getExpectedMissing(threadId: string): string[] {
 
 export function updateThreadSlots(
   threadId: string,
-  slots: Record<string, string>,
+  slots: Record<string, string | null>,
   expectedMissing: string[] = [],
 ): void {
+  // Filter out null values
+  const filteredSlots: Record<string, string> = {};
+  for (const [k, v] of Object.entries(slots)) {
+    if (typeof v === 'string' && v.trim().length > 0) {
+      filteredSlots[k] = v;
+    }
+  }
+
   let store = slotStore;
   
-  if (isCliMode) {
+  if (isCliMode()) {
     store = loadCliSlots();
   }
   
   const prev = store.get(threadId) ?? { slots: {}, expectedMissing: [] };
-  const merged: Record<string, string> = { ...prev.slots };
-  for (const [k, v] of Object.entries(slots)) {
-    if (typeof v === 'string' && v.trim().length > 0) merged[k] = v;
-  }
+  const merged: Record<string, string> = { ...prev.slots, ...filteredSlots };
   
   debugLog('🔧 SLOTS: updateThreadSlots', { 
     threadId, 
-    newSlots: slots, 
+    newSlots: filteredSlots, 
     prevSlots: prev.slots, 
     mergedSlots: merged,
-    isCliMode
+    isCliMode: isCliMode()
   });
   
-  store.set(threadId, { ...prev, slots: merged, expectedMissing });
+  const newState = { ...prev, slots: merged, expectedMissing };
+  store.set(threadId, newState);
   
-  if (isCliMode) {
+  // Also update the main store in CLI mode for consistency
+  if (isCliMode()) {
+    slotStore.set(threadId, newState);
     saveCliSlots(store);
   }
 }
@@ -139,11 +161,18 @@ export function getLastReceipts(threadId: string): { facts?: Fact[]; decisions?:
 
 export function normalizeSlots(
   prior: Record<string, string>, 
-  extracted: Record<string, string>,
+  extracted: Record<string, string | null>,
   intent?: string
 ): Record<string, string> {
   const out = { ...prior };
-  const safe = { ...extracted };
+  const safe: Record<string, string> = {};
+
+  // Convert null values to empty strings and filter out
+  for (const [key, value] of Object.entries(extracted)) {
+    if (value !== null && typeof value === 'string' && value.trim()) {
+      safe[key] = value;
+    }
+  }
 
   // 1) Strip "today/now" from city/destination fields
   for (const k of ['city', 'destinationCity', 'originCity']) {

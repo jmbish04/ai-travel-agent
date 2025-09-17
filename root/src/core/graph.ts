@@ -160,9 +160,17 @@ export async function runGraphTurn(
         threadId: threadId, 
         logger: { log: ctx.log }
       });
+      // Filter out null values from slots
+      const filteredSlots: Record<string, string> = {};
+      for (const [key, value] of Object.entries(routed.slots || {})) {
+        if (typeof value === 'string') {
+          filteredSlots[key] = value;
+        }
+      }
+      
       C.route = { 
         intent: routed.intent, 
-        slots: routed.slots || {}, 
+        slots: filteredSlots, 
         confidence: routed.confidence 
       };
       llmCallsThisTurn++;
@@ -354,7 +362,16 @@ function checkMissingSlots(intent: string, slots: Record<string, string>, messag
 
 async function routeIntentNode(ctx: NodeCtx, logger?: { log: pino.Logger }): Promise<NodeOut> {
   const r = await routeIntent({ message: ctx.msg, threadId: ctx.threadId, logger });
-  return { next: r.intent, slots: r.slots };
+  
+  // Filter out null values from slots
+  const filteredSlots: Record<string, string> = {};
+  for (const [key, value] of Object.entries(r.slots || {})) {
+    if (typeof value === 'string') {
+      filteredSlots[key] = value;
+    }
+  }
+  
+  return { next: r.intent, slots: filteredSlots };
 }
 
 async function routeToDomainNode(
