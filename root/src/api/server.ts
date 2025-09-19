@@ -5,9 +5,19 @@ import { router } from './routes.js';
 import { preloadPrompts } from '../core/prompts.js';
 import { RateLimiter } from '../core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from '../config/resilience.js';
+import { loadSessionConfig } from '../config/session.js';
+import { createStore, initSessionStore } from '../core/session_store.js';
+import { ping } from '../core/stores/redis.js';
 
 const log = createLogger();
 const app = express();
+
+// Initialize session store
+const sessionConfig = loadSessionConfig();
+const sessionStore = createStore(sessionConfig);
+initSessionStore(sessionStore);
+
+log.info({ sessionStore: sessionConfig.kind, ttlSec: sessionConfig.ttlSec }, 'Session store initialized');
 
 // Rate limiter for API endpoints
 const apiRateLimiter = new RateLimiter(RATE_LIMITER_CONFIG);
@@ -65,7 +75,14 @@ function resOnFinish(res: express.Response, cb: () => void) {
   res.on('close', cb);
 }
 
-app.get('/healthz', (_req, res) => res.status(200).json({ ok: true }));
+app.get('/healthz', async (_req, res) => {
+  let storeHealth = 'ok';
+  if (sessionConfig.kind === 'redis') {
+    const isHealthy = await ping(sessionConfig);
+    storeHealth = isHealthy ? 'ok' : 'degraded';
+  }
+  res.status(200).json({ ok: true, store: storeHealth });
+});
 app.use('/', router(log));
 
 const port = Number(process.env.PORT ?? 3000);

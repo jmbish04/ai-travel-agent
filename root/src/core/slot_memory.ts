@@ -1,7 +1,5 @@
 import type { Fact, Decision } from './receipts.js';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { getSessionStore } from './session_store.js';
 
 const isDebugMode = process.env.LOG_LEVEL === 'debug';
 
@@ -20,82 +18,24 @@ type SlotState = {
   lastReply?: string;
 };
 
-const slotStore = new Map<string, SlotState>();
-
-// File-based persistence for CLI
-const CLI_SLOTS_FILE = path.join(os.tmpdir(), 'voyant-cli-slots.json');
-
-function isCliMode(): boolean {
-  return process.argv.some(arg => arg.includes('cli.ts') || arg.includes('cli.js')) || 
-         process.env.NODE_ENV === 'cli' ||
-         process.title.includes('cli');
-}
-
-function loadCliSlots(): Map<string, SlotState> {
-  try {
-    if (fs.existsSync(CLI_SLOTS_FILE)) {
-      const data = fs.readFileSync(CLI_SLOTS_FILE, 'utf8');
-      const parsed = JSON.parse(data);
-      const loaded = new Map(Object.entries(parsed)) as Map<string, SlotState>;
-      debugLog('🔧 SLOTS: Loaded CLI slots from file', { path: CLI_SLOTS_FILE, entries: loaded.size });
-      return loaded;
-    } else {
-      debugLog('🔧 SLOTS: CLI slots file does not exist, starting fresh', { path: CLI_SLOTS_FILE });
-    }
-  } catch (error) {
-    debugLog('🔧 SLOTS: Failed to load CLI slots, starting fresh', { error: String(error), path: CLI_SLOTS_FILE });
-  }
-  return new Map();
-}
-
-function saveCliSlots(store: Map<string, SlotState>): void {
-  try {
-    const data = Object.fromEntries(store);
-    fs.writeFileSync(CLI_SLOTS_FILE, JSON.stringify(data, null, 2));
-    debugLog('🔧 SLOTS: Saved CLI slots to file', { path: CLI_SLOTS_FILE, entries: store.size });
-  } catch (error) {
-    debugLog('🔧 SLOTS: Failed to save CLI slots', { error: String(error), path: CLI_SLOTS_FILE });
-  }
-}
-
-export function clearCliSlots(): void {
-  if (isCliMode()) {
-    try {
-      if (fs.existsSync(CLI_SLOTS_FILE)) {
-        fs.unlinkSync(CLI_SLOTS_FILE);
-        debugLog('🔧 SLOTS: Cleared CLI slots for fresh start');
-      }
-    } catch (error) {
-      debugLog('🔧 SLOTS: Failed to clear CLI slots');
-    }
-  }
-}
-
-export function getThreadSlots(threadId: string): Record<string, string> {
-  let store = slotStore;
-  
-  if (isCliMode()) {
-    store = loadCliSlots();
-    // Sync main store with file store
-    for (const [id, state] of store.entries()) {
-      slotStore.set(id, state);
-    }
-  }
-  
-  const slots = store.get(threadId)?.slots ?? {};
-  debugLog('🔧 SLOTS: getThreadSlots', { threadId, slots, storeSize: store.size, isCliMode: isCliMode() });
+export async function getThreadSlots(threadId: string): Promise<Record<string, string>> {
+  const store = getSessionStore();
+  const slots = await store.getSlots(threadId);
+  debugLog('🔧 SLOTS: getThreadSlots', { threadId, slots });
   return slots;
 }
 
-export function getExpectedMissing(threadId: string): string[] {
-  return slotStore.get(threadId)?.expectedMissing ?? [];
+export async function getExpectedMissing(threadId: string): Promise<string[]> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return state?.expectedMissing ?? [];
 }
 
-export function updateThreadSlots(
+export async function updateThreadSlots(
   threadId: string,
   slots: Record<string, string | null>,
   expectedMissing: string[] = [],
-): void {
+): Promise<void> {
   // Filter out null values
   const filteredSlots: Record<string, string> = {};
   for (const [k, v] of Object.entries(slots)) {
@@ -104,59 +44,55 @@ export function updateThreadSlots(
     }
   }
 
-  let store = slotStore;
-  
-  if (isCliMode()) {
-    store = loadCliSlots();
-  }
-  
-  const prev = store.get(threadId) ?? { slots: {}, expectedMissing: [] };
-  const merged: Record<string, string> = { ...prev.slots, ...filteredSlots };
+  const store = getSessionStore();
+  const prevState = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
   
   debugLog('🔧 SLOTS: updateThreadSlots', { 
     threadId, 
     newSlots: filteredSlots, 
-    prevSlots: prev.slots, 
-    mergedSlots: merged,
-    isCliMode: isCliMode()
+    prevSlots: prevState.slots, 
   });
   
-  const newState = { ...prev, slots: merged, expectedMissing };
-  store.set(threadId, newState);
+  // Update slots
+  await store.setSlots(threadId, filteredSlots);
   
-  // Also update the main store in CLI mode for consistency
-  if (isCliMode()) {
-    slotStore.set(threadId, newState);
-    saveCliSlots(store);
-  }
+  // Update state
+  const newState = { ...prevState, expectedMissing };
+  await store.setJson('state', threadId, newState);
 }
 
-export function clearThreadSlots(threadId: string): void {
-  slotStore.delete(threadId);
+export async function clearThreadSlots(threadId: string): Promise<void> {
+  const store = getSessionStore();
+  await store.clear(threadId);
 }
 
-export function setLastIntent(threadId: string, intent: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'): void {
-  const prev = slotStore.get(threadId) ?? { slots: {}, expectedMissing: [] };
-  slotStore.set(threadId, { ...prev, lastIntent: intent });
+export async function setLastIntent(threadId: string, intent: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'): Promise<void> {
+  const store = getSessionStore();
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  await store.setJson('state', threadId, { ...prev, lastIntent: intent });
 }
 
-export function getLastIntent(threadId: string): 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'|undefined {
-  return slotStore.get(threadId)?.lastIntent;
+export async function getLastIntent(threadId: string): Promise<'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'|undefined> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return state?.lastIntent;
 }
 
-export function setLastReceipts(
+export async function setLastReceipts(
   threadId: string,
   facts: Fact[],
   decisions: Array<string | Decision>,
   reply?: string,
-): void {
-  const prev = slotStore.get(threadId) ?? { slots: {}, expectedMissing: [] };
-  slotStore.set(threadId, { ...prev, lastFacts: facts, lastDecisions: decisions, lastReply: reply });
+): Promise<void> {
+  const store = getSessionStore();
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  await store.setJson('state', threadId, { ...prev, lastFacts: facts, lastDecisions: decisions, lastReply: reply });
 }
 
-export function getLastReceipts(threadId: string): { facts?: Fact[]; decisions?: Array<string | Decision>; reply?: string } {
-  const s = slotStore.get(threadId);
-  return { facts: s?.lastFacts, decisions: s?.lastDecisions, reply: s?.lastReply };
+export async function getLastReceipts(threadId: string): Promise<{ facts?: Fact[]; decisions?: Array<string | Decision>; reply?: string }> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return { facts: state?.lastFacts, decisions: state?.lastDecisions, reply: state?.lastReply };
 }
 
 export function normalizeSlots(
@@ -243,7 +179,7 @@ export function readConsentState(slots: Record<string, string>) {
   };
 }
 
-export function writeConsentState(threadId: string, next: { type: 'web' | 'deep' | 'web_after_rag' | '', pending: string }) {
+export async function writeConsentState(threadId: string, next: { type: 'web' | 'deep' | 'web_after_rag' | '', pending: string }): Promise<void> {
   const updates: Record<string, string> = {
     awaiting_search_consent: '',
     pending_search_query: '',
@@ -264,6 +200,6 @@ export function writeConsentState(threadId: string, next: { type: 'web' | 'deep'
     updates.pending_web_search_query = next.pending;
   }
   
-  updateThreadSlots(threadId, updates, []);
+  await updateThreadSlots(threadId, updates, []);
 }
 

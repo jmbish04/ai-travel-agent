@@ -101,14 +101,14 @@ export async function runGraphTurn(
   const C = await buildTurnCache(message, ctx.log);
   
   // Check for YES/NO shortcuts if any consent flags are set
-  const earlySlots = getThreadSlots(threadId);
+  const earlySlots = await await getThreadSlots(threadId);
   const consentState = readConsentState(earlySlots);
   
   if (consentState.awaiting) {
     const yesNo = checkYesNoShortcut(message);
     if (yesNo) {
       ctx.log.debug({ yesNo, fastpath: 'consent' }, 'guard_yes_no_hit');
-      writeConsentState(threadId, { type: '', pending: '' }); // Clear
+      await await writeConsentState(threadId, { type: '', pending: '' }); // Clear
       
       if (yesNo === 'yes' && consentState.pending) {
         if (consentState.type === 'deep') {
@@ -126,28 +126,36 @@ export async function runGraphTurn(
   if (checkPolicyHit(message)) {
     C.forced = 'policy';
     // Clear any pending consent state since this is a new, unrelated query
-    writeConsentState(threadId, { type: '', pending: '' });
+    await writeConsentState(threadId, { type: '', pending: '' });
     ctx.log.debug({ fastpath: 'policy' }, 'guard_policy_hit');
   }
   
   // Web-ish hit → set consent and return
   if (checkWebishHit(message)) {
-    writeConsentState(threadId, { type: 'web', pending: message });
+    await writeConsentState(threadId, { type: 'web', pending: message });
     ctx.log.debug({ fastpath: 'webish' }, 'guard_webish_hit');
     return { done: true, reply: 'I can look this up on the web. Want me to search now?' };
   }
   
-  // Weather fast-path guard - before any LLM calls
-  if (/\bweather\b/i.test(message) && /\btoday\b/i.test(message)) {
-    const { extractCityLite } = await import('./graph.optimizers.js');
-    const city = await extractCityLite(message, ctx.log);
-    if (city) {
-      ctx.log.debug({ city, fastpath: 'weather_guard' }, 'guard_weather_hit');
-      return await weatherNode(
-        { msg: message, threadId, onStatus: ctx.onStatus },
-        { city },
-        ctx
-      );
+  // Weather fast-path guard - AI-first city extraction
+  if (/\bweather\b/i.test(message) && (/\btoday\b/i.test(message) || /\bthere\b/i.test(message))) {
+    const slots = await getThreadSlots(threadId);
+    const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
+    
+    try {
+      const cityResult = await callLLM('city_parser', { text: message, context }, ctx.log);
+      const parsed = JSON.parse(cityResult);
+      
+      if (parsed.confidence >= 0.6 && parsed.city) {
+        ctx.log.debug({ city: parsed.city, confidence: parsed.confidence, fastpath: 'weather_guard' }, 'guard_weather_hit');
+        return await weatherNode(
+          { msg: message, threadId, onStatus: ctx.onStatus },
+          { city: parsed.city },
+          ctx
+        );
+      }
+    } catch (error) {
+      ctx.log.debug({ error: String(error) }, 'weather_guard_llm_failed');
     }
   }
   
@@ -225,14 +233,14 @@ export async function runGraphTurn(
   const { maybeFastWeather } = await import('./graph.optimizers.js');
   const fastWeather = await maybeFastWeather({
     C, 
-    slots: getThreadSlots(threadId), 
+    slots: await getThreadSlots(threadId), 
     threadId, 
     log: ctx.log
   });
   
   if (fastWeather && 'next' in fastWeather) {
     ctx.log.debug({ fastpath: 'weather', llmCallsThisTurn }, 'fastpath_hit');
-    updateThreadSlots(threadId, fastWeather.slots || {}, []);
+    await updateThreadSlots(threadId, fastWeather.slots || {}, []);
     return await weatherNode(
       { msg: message, threadId, onStatus: ctx.onStatus },
       fastWeather.slots || {},
@@ -247,7 +255,7 @@ export async function runGraphTurn(
                         (C.route?.intent === 'web_search' && C.route?.confidence === 0.9);
                         
   if (!isGuardHandled) {
-    const currentSlots = getThreadSlots(threadId);
+    const currentSlots = await getThreadSlots(threadId);
     const currentConsentState = readConsentState(currentSlots);
     
     if (currentConsentState.awaiting && currentConsentState.pending) {
@@ -255,7 +263,7 @@ export async function runGraphTurn(
       llmCallsThisTurn++;
       
       if (consent !== 'unclear') {
-        writeConsentState(threadId, { type: '', pending: '' }); // Clear
+        await writeConsentState(threadId, { type: '', pending: '' }); // Clear
         
         if (consent === 'yes') {
           if (currentConsentState.type === 'deep') {
@@ -283,21 +291,21 @@ export async function runGraphTurn(
   let intent = C.forced ?? C.route?.intent;
   
   // === SLOT PROCESSING ===
-  const prior = getThreadSlots(threadId);
+  const prior = await getThreadSlots(threadId);
   const extractedSlots = C.route?.slots || {};
   const slots = normalizeSlots(prior, extractedSlots, intent);
   
   // Check for missing required slots
   const missing = intent ? checkMissingSlots(intent, slots, message) : [];
   if (missing.length > 0) {
-    updateThreadSlots(threadId, slots, missing);
+    await updateThreadSlots(threadId, slots, missing);
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
   }
   
   // Update slots and set intent
-  updateThreadSlots(threadId, slots, []);
-  setLastIntent(threadId, intent as any);
+  await updateThreadSlots(threadId, slots, []);
+  await setLastIntent(threadId, intent as any);
   
   // Log metrics
   ctx.log.debug({ 
@@ -833,7 +841,7 @@ async function policyNode(
 
 async function systemNode(ctx: NodeCtx): Promise<NodeOut> {
   // Check if deep research consent is needed
-  const slots = getThreadSlots(ctx.threadId);
+  const slots = await getThreadSlots(ctx.threadId);
   const consentState = readConsentState(slots);
   
   if (consentState.awaiting && consentState.type === 'deep' && consentState.pending) {
@@ -929,7 +937,7 @@ async function performWebSearchNode(
         ['Use travel APIs only', 'Skip search'],
         0.85
       )];
-      setLastReceipts(threadId, facts, decisions, reply);
+      await setLastReceipts(threadId, facts, decisions, reply);
     } catch {
       // ignore receipt storage errors
     }
@@ -964,7 +972,7 @@ async function performDeepResearchNode(
         ['Basic search only', 'Use travel APIs only'],
         0.9
       )];
-      setLastReceipts(threadId, facts, decisions, research.summary);
+      await setLastReceipts(threadId, facts, decisions, research.summary);
     } catch {}
     
     return { done: true, reply: research.summary, citations: research.sources };
