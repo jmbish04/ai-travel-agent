@@ -24,6 +24,7 @@ npm run dev
 - **Web Search**: `BRAVE_SEARCH_API_KEY` or `TAVILY_API_KEY` for fallback research
 - **Optional APIs**: `OPENTRIPMAP_API_KEY` for enhanced attraction data
 - **Features**: `DEEP_RESEARCH_ENABLED=true`, `POLICY_RAG=on`, `SEARCH_PROVIDER=brave|tavily`
+- **Session Store**: `SESSION_STORE=memory|redis`, `SESSION_TTL_SEC=3600`, `SESSION_REDIS_URL=redis://localhost:6379` (if using Redis)
 - **Monitoring**: `METRICS=json|prom` for observability
 
 ## Highlights
