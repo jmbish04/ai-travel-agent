@@ -8,12 +8,20 @@ import { createLogger } from './util/logging.js';
 import { silenceNoisyLibLogs } from './util/noise_filter.js';
 import { RateLimiter } from './core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from './config/resilience.js';
-import { clearCliSlots } from './core/slot_memory.js';
+import { loadSessionConfig } from './config/session.js';
+import { createStore, initSessionStore } from './core/session_store.js';
 import type { Decision } from './core/receipts.js';
 
 const rl = readline.createInterface({ input, output });
 const log = createLogger();
 let threadId = 'local';
+
+// Initialize session store
+const sessionConfig = loadSessionConfig();
+const sessionStore = createStore(sessionConfig);
+initSessionStore(sessionStore);
+
+log.info({ sessionStore: sessionConfig.kind, ttlSec: sessionConfig.ttlSec }, 'Session store initialized');
 
 // Rate limiter for CLI commands
 const cliRateLimiter = new RateLimiter(RATE_LIMITER_CONFIG);
@@ -206,9 +214,6 @@ class Spinner {
 }
 
 async function main() {
-  // Clear any persisted CLI slots for fresh start
-  clearCliSlots();
-  
   // Log startup information for debugging
   log.debug({ logLevel: process.env.LOG_LEVEL || 'error' }, 'CLI starting with log level');
   // Suppress noisy third‑party logs (e.g., Transformers dtype warnings) for non‑debug levels
