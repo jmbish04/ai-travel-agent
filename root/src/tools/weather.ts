@@ -1,4 +1,5 @@
 import { fetchJSON, ExternalFetchError } from '../util/fetch.js';
+import { incAnswersWithCitations } from '../util/metrics.js';
 import {
   searchTravelInfo,
   extractWeatherFromResults,
@@ -89,6 +90,7 @@ async function tryPrimaryWeatherAPI(city: string): Promise<Out> {
       const min = j.daily?.temperature_2m_min?.[0];
       const pp = j.daily?.precipitation_probability_mean?.[0];
       const summary = `High ${max}°C / Low ${min}°C; precip prob ${pp}%`;
+      incAnswersWithCitations(); // Track weather citation
       return { ok: true, summary, source: 'open-meteo' };
     } catch (e) {
       if (e instanceof ExternalFetchError) {
@@ -116,6 +118,7 @@ async function tryWeatherFallback(city: string, datesOrMonth?: string): Promise<
   // LLM-first extraction
   const weatherInfoLLM = await llmExtractWeatherFromResults(searchResult.results, city);
   if (weatherInfoLLM) {
+    incAnswersWithCitations(); // Track weather citation from search
     return { ok: true, summary: weatherInfoLLM, source: getSearchSource() };
   }
 

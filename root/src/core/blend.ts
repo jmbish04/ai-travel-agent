@@ -24,6 +24,7 @@ import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
+import { incFallback, incAnswersWithCitations } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
   results: Array<{ title: string; url: string; description: string }>
@@ -53,6 +54,9 @@ async function performWebSearch(
     try {
       const { performDeepResearch } = await import('./deep_research.js');
       const research = await performDeepResearch(query, { threadId }, ctx.log);
+      
+      incFallback('browser'); // Deep research uses browser automation
+      
       // Verify answer using existing verifier
       try {
         const facts = research.citations.map((c, i) => ({ source: c.source, key: `deep_${i}`, value: c.url }));
@@ -75,6 +79,8 @@ async function performWebSearch(
   ctx.log.debug({ query, isComplexQuery, queryLength: query.length }, 'complex_query_detection');
   
   ctx.onStatus?.('Searching the web...');
+  
+  incFallback('web'); // Regular web search fallback
   
   const searchResult = await searchTravelInfo(query, ctx.log, isComplexQuery);
   
@@ -725,6 +731,11 @@ export async function blendWithFacts(
         validateNoCitation(replyWithSource, cits.length > 0);
       } catch (err) {
         ctx.log.warn({ reply: replyWithSource, cits, hasExternal: cits.length > 0 }, 'citation_validation_failed');
+      }
+      
+      // Track citations metric
+      if (cits.length > 0) {
+        incAnswersWithCitations();
       }
       
       return { reply: replyWithSource, citations: cits.length ? cits : undefined };
