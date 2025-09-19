@@ -5,6 +5,10 @@ import { fetch as undiciFetch } from 'undici';
 import { getPrompt } from './prompts.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
+import type { Logger } from 'pino';
+
+// Declare global process for Node.js environment
+declare const process: NodeJS.Process;
 
 // Circuit breaker for LLM API calls
 const llmCircuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_CONFIG, 'llm');
@@ -52,7 +56,7 @@ export async function callLLM(
     'meta-llama/llama-3.2-3b-instruct:free',
     'microsoft/phi-3-mini-128k-instruct:free'
   ];
-  const models = process.env.LLM_MODELS?.split(',').map(m => m.trim()) || defaultModels;
+  const models = process.env.LLM_MODELS?.split(',').map((m: string) => m.trim()) || defaultModels;
   
   // Try configured provider first
   const baseUrl = process.env.LLM_PROVIDER_BASEURL;
