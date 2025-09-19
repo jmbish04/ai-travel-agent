@@ -9,9 +9,12 @@
  * - Decision table for routing logic
  */
 
-import type pino from 'pino';
+import type { Logger } from 'pino';
 import pinoLib from 'pino';
 import { routeIntent } from './router.js';
+
+// Declare global process for Node.js environment
+declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
 import { 
@@ -82,7 +85,7 @@ function sanitizeSearchQuery(input: string): string {
 export async function runGraphTurn(
   message: string,
   threadId: string,
-  ctx: { log: pino.Logger; onStatus?: (status: string) => void },
+  ctx: { log: Logger; onStatus?: (status: string) => void },
 ): Promise<NodeOut> {
   let llmCallsThisTurn = 0;
   
@@ -312,7 +315,7 @@ export async function runGraphTurn(
 
 async function detectConsent(
   message: string,
-  ctx: { log: pino.Logger }
+  ctx: { log: Logger }
 ): Promise<'yes' | 'no' | 'unclear'> {
   // Stage 1: Micro rules for obvious responses
   const msg = message.toLowerCase().trim();
@@ -360,7 +363,7 @@ function checkMissingSlots(intent: string, slots: Record<string, string>, messag
   return missing;
 }
 
-async function routeIntentNode(ctx: NodeCtx, logger?: { log: pino.Logger }): Promise<NodeOut> {
+async function routeIntentNode(ctx: NodeCtx, logger?: { log: Logger }): Promise<NodeOut> {
   const r = await routeIntent({ message: ctx.msg, threadId: ctx.threadId, logger });
   
   // Filter out null values from slots
@@ -378,7 +381,7 @@ async function routeToDomainNode(
   intent: string,
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const mergedSlots = slots;
   
@@ -412,7 +415,7 @@ async function routeToDomainNode(
 async function weatherNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -440,7 +443,7 @@ async function weatherNode(
 async function destinationsNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -471,7 +474,7 @@ async function destinationsNode(
 async function packingNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -495,7 +498,7 @@ async function packingNode(
 async function attractionsNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -530,7 +533,7 @@ async function attractionsNode(
 async function flightsNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -615,7 +618,7 @@ async function flightsNode(
 async function irropsNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
@@ -696,7 +699,7 @@ async function irropsNode(
         ? `Refund: $${Math.abs(option.priceChange.amount)} ${option.priceChange.currency}`
         : 'No additional cost';
       
-      const routeText = option.segments.map(seg => 
+      const routeText = option.segments.map((seg: any) => 
         `${seg.carrier}${seg.flightNumber.replace(seg.carrier, '')} ${seg.origin}-${seg.destination}`
       ).join(', ');
 
@@ -724,7 +727,7 @@ async function irropsNode(
 async function policyNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   try {
     const { PolicyAgent } = await import('./policy_agent.js');
@@ -849,7 +852,7 @@ async function systemNode(ctx: NodeCtx): Promise<NodeOut> {
 async function webSearchNode(
   ctx: NodeCtx,
   slots: Record<string, string>,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const searchQuery = sanitizeSearchQuery(slots.search_query || ctx.msg);
   const optimizedQuery = slots.search_query 
@@ -861,7 +864,7 @@ async function webSearchNode(
 
 async function unknownNode(
   ctx: NodeCtx,
-  logger: { log: pino.Logger; onStatus?: (status: string) => void }
+  logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
   const { reply, citations } = await blendWithFacts(
     {
@@ -883,7 +886,7 @@ async function unknownNode(
 
 async function performWebSearchNode(
   query: string,
-  ctx: { log: pino.Logger },
+  ctx: { log: Logger },
   threadId: string,
 ): Promise<NodeOut> {
   ctx.log.debug({ query }, 'performing_web_search_node');
@@ -941,7 +944,7 @@ async function performWebSearchNode(
 
 async function performDeepResearchNode(
   query: string,
-  ctx: { log: pino.Logger },
+  ctx: { log: Logger },
   threadId: string,
 ): Promise<NodeOut> {
   try {
@@ -974,7 +977,7 @@ async function performDeepResearchNode(
 async function summarizeSearchResults(
   results: Array<{ title: string; url: string; description: string }>,
   query: string,
-  ctx: { log: pino.Logger },
+  ctx: { log: Logger },
 ): Promise<{ reply: string; citations: string[] }> {
   // Feature flag check
   if (process.env.SEARCH_SUMMARY === 'off') {
