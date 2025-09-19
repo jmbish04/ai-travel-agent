@@ -124,7 +124,7 @@ async function performWebSearch(
         ['Use travel APIs only', 'Skip search'],
         0.8
       )];
-      setLastReceipts(threadId, facts, decisions, reply);
+      await setLastReceipts(threadId, facts, decisions, reply);
     } catch {
       // ignore
     }
@@ -154,7 +154,7 @@ export async function handleChat(
   const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
     /^\s*\/why\b/i.test(input.message);
   if (wantReceipts) {
-    const stored = getLastReceipts(threadId) || {};
+    const stored = await getLastReceipts(threadId) || {};
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
     let reply = stored.reply || 'No previous answer to explain.';
@@ -197,17 +197,17 @@ export async function handleChat(
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources });
     }
   }
-  pushMessage(threadId, { role: 'user', content: input.message });
+  await pushMessage(threadId, { role: 'user', content: input.message });
   ctx.onStatus?.('Processing your travel request...');
   const result = await runGraphTurn(input.message, threadId, ctx);
   if ('done' in result) {
-    pushMessage(threadId, { role: 'assistant', content: result.reply });
+    await pushMessage(threadId, { role: 'assistant', content: result.reply });
 
     // Handle receipts if requested
     const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
       /^\s*\/why\b/i.test(input.message);
     if (wantReceipts) {
-      const stored = getLastReceipts(threadId) || {};
+      const stored = await await getLastReceipts(threadId) || {};
       const facts = stored.facts || [];
       const decisions = stored.decisions || [];
       let reply = result.reply;
@@ -237,7 +237,7 @@ export async function handleChat(
     });
   }
   // Fallback if graph doesn't complete
-  pushMessage(threadId, {
+  await pushMessage(threadId, {
     role: 'assistant',
     content: 'I need more information to help you.',
   });

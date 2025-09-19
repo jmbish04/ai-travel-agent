@@ -9,9 +9,9 @@ import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizer
 import type pino from 'pino';
 
 // Helper function to clear consent state for unrelated queries
-function clearConsentState(threadId?: string) {
+async function clearConsentState(threadId?: string) {
   if (!threadId) return;
-  updateThreadSlots(threadId, {
+  await updateThreadSlots(threadId, {
     awaiting_deep_research_consent: '',
     pending_deep_research_query: '',
     awaiting_web_search_consent: '',
@@ -45,13 +45,13 @@ export async function routeIntent({ message, threadId, logger }: {
   }
 
   // Handle flight clarification responses (no recursion)
-  const ctxSlots = threadId ? getThreadSlots(threadId) : {};
+  const ctxSlots = threadId ? await await getThreadSlots(threadId) : {};
   if (ctxSlots.awaiting_flight_clarification === 'true' && threadId) {
     const userResponse = m.toLowerCase();
     const pendingQuery = ctxSlots.pending_flight_query || '';
     
     // Clear the clarification state
-    updateThreadSlots(threadId, {}, [
+    await await updateThreadSlots(threadId, {}, [
       'awaiting_flight_clarification',
       'pending_flight_query',
       'clarification_reasoning'
@@ -85,6 +85,7 @@ export async function routeIntent({ message, threadId, logger }: {
   if (RE.flights.test(m)) {
     const { isDirect } = isDirectFlightHeuristic(m);
     if (isDirect) {
+      await clearConsentState(threadId); // Clear any pending consent for unrelated queries
       const slots = await extractSlots(m, ctxSlots, logger?.log);
       logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic)');
       return RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
@@ -96,7 +97,7 @@ export async function routeIntent({ message, threadId, logger }: {
     clearConsentState(threadId);
     const q = await optimizeSearchQuery(
       m,
-      threadId ? getThreadSlots(threadId) : {},
+      threadId ? await getThreadSlots(threadId) : {},
       'web_search',
       logger?.log
     );
@@ -112,7 +113,7 @@ export async function routeIntent({ message, threadId, logger }: {
   if (process.env.DEEP_RESEARCH_ENABLED === 'true') {
     const cx = cheapComplexity(m);
     if (cx.complex) {
-      threadId && updateThreadSlots(threadId, {
+      threadId && await updateThreadSlots(threadId, {
         awaiting_deep_research_consent:'true',
         pending_deep_research_query:m,
         complexity_reasoning:cx.reason
@@ -261,7 +262,7 @@ async function tryRouteViaTransformers(message: string, threadId?: string, log?:
     const intentResult = await classifyIntent(message, log);
 
     // Get thread context for slot merging
-    const ctxSlots = threadId ? getThreadSlots(threadId) : {};
+    const ctxSlots = threadId ? await getThreadSlots(threadId) : {};
     
     // Extract slots using our parsers
     const extractedSlots = await extractSlots(message, ctxSlots, log);

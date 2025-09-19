@@ -24,7 +24,7 @@ export const router = (log: pino.Logger): Router => {
       if (!wantReceipts) {
         return res.json(out);
       }
-      const receiptsData = getLastReceipts(out.threadId) || {};
+      const receiptsData = await getLastReceipts(out.threadId) || {};
       const facts = receiptsData.facts || [];
       const decisions = receiptsData.decisions || [];
       const lastReply = receiptsData.reply;

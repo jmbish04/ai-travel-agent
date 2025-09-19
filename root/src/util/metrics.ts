@@ -226,11 +226,17 @@ export function snapshot() {
     },
   }));
   
+  // Include session store config
+  const sessionStoreKind = process.env.SESSION_STORE || 'memory';
+  const sessionTtlSec = Number(process.env.SESSION_TTL_SEC || 3600);
+  
   return { 
     messages_total: messages, 
     external_requests: { targets },
     breaker: { byTarget: getAllBreakerStats() },
-    rate_limit: { byTarget: getAllLimiterStats() }
+    rate_limit: { byTarget: getAllLimiterStats() },
+    session_store_kind: sessionStoreKind,
+    session_ttl_sec: sessionTtlSec,
   };
 }
 
