@@ -9,6 +9,18 @@ const tavilyCircuitBreaker = new CircuitBreaker(
   'tavily-search',
 );
 
+interface TavilyResult {
+  title: string;
+  url: string;
+  content: string;
+  answer?: string;
+}
+
+interface TavilyResponse {
+  results: TavilyResult[];
+  answer?: string;
+}
+
 /**
  * Search for travel information using Tavily API
  */
@@ -26,10 +38,11 @@ export async function searchTravelInfo(
     log?.debug?.('❌ Tavily: no API key configured');
     return { ok: false, reason: 'no_api_key' };
   }
-  const client = new TavilyClient({ apiKey });
+  
   try {
+    const client = new TavilyClient({ apiKey });
     const start = Date.now();
-    const res = await tavilyCircuitBreaker.execute(() =>
+    const res: TavilyResponse = await tavilyCircuitBreaker.execute(() =>
       client.search({
         query,
         search_depth: 'advanced',
@@ -40,18 +53,13 @@ export async function searchTravelInfo(
     );
     const duration = Date.now() - start;
     log?.debug?.(`✅ Tavily success after ${duration}ms`);
-    interface TavilyResult {
-      title: string;
-      url: string;
-      content: string;
-      answer?: string;
-    }
   
     const results: SearchResult[] = res.results?.map((r: TavilyResult) => ({
       title: r.title || '',
       url: r.url || '',
       description: r.content || '',
     })) ?? [];
+    
     let deepSummary = res.answer?.trim();
     if (deepResearch && results.length > 0) {
       try {
@@ -66,6 +74,7 @@ export async function searchTravelInfo(
     return { ok: true, results, deepSummary };
   } catch (e: unknown) {
     log?.debug?.('❌ Tavily error', e);
+    
     if (e instanceof Error && e.name === 'CircuitBreakerError') {
       return { ok: false, reason: 'circuit_breaker_open' };
     }

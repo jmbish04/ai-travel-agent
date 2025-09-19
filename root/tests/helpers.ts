@@ -1,5 +1,8 @@
 import { expect } from '@jest/globals';
 import request from 'supertest';
+import nock from 'nock';
+import fs from 'fs/promises';
+import path from 'path';
 
 export async function chat(app: import('express').Express, message: string, threadId?: string) {
   const res = await request(app)
@@ -68,5 +71,77 @@ export function validateCitations(reply: string, citations?: string[]) {
       expect(citations.length).toBeGreaterThan(0);
     }
   }
+}
+
+// Fixture-based API mocking
+interface MockApiOptions {
+  weatherFixture?: string;
+  countryFixture?: string;
+  searchFixture?: string;
+}
+
+export async function mockExternalApis(opts: MockApiOptions = {}) {
+  // Mock weather API
+  if (opts.weatherFixture) {
+    const fixture = await loadFixture(`weather/${opts.weatherFixture}.json`);
+    
+    // Mock geocoding
+    nock('https://geocoding-api.open-meteo.com')
+      .get('/v1/search')
+      .query(true)
+      .reply(200, { 
+        results: [{ 
+          name: 'Berlin', 
+          latitude: fixture.latitude, 
+          longitude: fixture.longitude, 
+          country: 'Germany' 
+        }] 
+      });
+    
+    // Mock weather forecast
+    nock('https://api.open-meteo.com')
+      .get('/v1/forecast')
+      .query(true)
+      .reply(200, fixture);
+  }
+  
+  // Mock country API
+  if (opts.countryFixture) {
+    const fixture = await loadFixture(`country/${opts.countryFixture}.json`);
+    nock('https://restcountries.com')
+      .get(/v3\.1\/name/)
+      .reply(200, fixture);
+  }
+  
+  // Mock search API
+  if (opts.searchFixture) {
+    const fixture = await loadFixture(`search/${opts.searchFixture}.json`);
+    nock('https://api.search.brave.com')
+      .get(/v1\/web\/search/)
+      .query(true)
+      .reply(200, fixture);
+  }
+}
+
+async function loadFixture(relativePath: string): Promise<any> {
+  const fixturePath = path.resolve(process.cwd(), 'tests/fixtures', relativePath);
+  const content = await fs.readFile(fixturePath, 'utf-8');
+  return JSON.parse(content);
+}
+
+// LLM evaluator helper that skips when not configured
+export async function assertWithLLMOrSkip(
+  condition: () => Promise<boolean> | boolean,
+  message: string
+) {
+  const hasEvaluator = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
+  
+  if (!hasEvaluator) {
+    console.warn(`Skipping LLM evaluation: ${message} (no evaluator configured)`);
+    return;
+  }
+  
+  const result = await condition();
+  expect(result).toBe(true);
 }
 

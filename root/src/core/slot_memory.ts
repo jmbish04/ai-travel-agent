@@ -172,10 +172,10 @@ export function normalizeSlots(
 export function readConsentState(slots: Record<string, string>) {
   return {
     awaiting: !!(slots.awaiting_search_consent === 'true' || slots.awaiting_deep_research_consent === 'true' || slots.awaiting_web_search_consent === 'true'),
-    type: slots.awaiting_search_consent === 'true' ? 'web' : 
-          slots.awaiting_deep_research_consent === 'true' ? 'deep' : 
+    type: slots.awaiting_deep_research_consent === 'true' ? 'deep' :
+          slots.awaiting_search_consent === 'true' ? 'web' : 
           slots.awaiting_web_search_consent === 'true' ? 'web_after_rag' : '',
-    pending: slots.pending_search_query || slots.pending_deep_research_query || slots.pending_web_search_query || ''
+    pending: slots.pending_deep_research_query || slots.pending_search_query || slots.pending_web_search_query || ''
   };
 }
 

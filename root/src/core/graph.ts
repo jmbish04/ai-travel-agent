@@ -143,7 +143,7 @@ export async function runGraphTurn(
     const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
     
     try {
-      const cityResult = await callLLM('city_parser', { text: message, context }, ctx.log);
+      const cityResult = await callLLM('city_parser', { log: ctx.log });
       const parsed = JSON.parse(cityResult);
       
       if (parsed.confidence >= 0.6 && parsed.city) {
@@ -425,7 +425,7 @@ async function weatherNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
   
   const city = mergedSlots.city;
@@ -453,7 +453,7 @@ async function destinationsNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
 
   // Try AI-enhanced destinations tool first
@@ -484,7 +484,7 @@ async function packingNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
   
   const { reply, citations } = await blendWithFacts(
@@ -508,7 +508,7 @@ async function attractionsNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
 
   const city = mergedSlots.city;
@@ -543,7 +543,7 @@ async function flightsNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
   
   // Try Amadeus API first
@@ -628,7 +628,7 @@ async function irropsNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const threadSlots = sanitizeSlotsView(getThreadSlots(ctx.threadId));
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
 
   try {

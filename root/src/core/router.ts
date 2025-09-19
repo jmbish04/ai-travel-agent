@@ -11,14 +11,40 @@ import type pino from 'pino';
 // Helper function to clear consent state for unrelated queries
 async function clearConsentState(threadId?: string) {
   if (!threadId) return;
-  await updateThreadSlots(threadId, {
-    awaiting_deep_research_consent: '',
-    pending_deep_research_query: '',
-    awaiting_web_search_consent: '',
-    pending_web_search_query: '',
-    awaiting_search_consent: '',
-    pending_search_query: ''
-  }, []);
+  
+  // Clear all consent and conflicting travel data to prevent context pollution
+  await updateThreadSlots(threadId, {}, [
+    // Consent states
+    'awaiting_deep_research_consent',
+    'pending_deep_research_query', 
+    'awaiting_web_search_consent',
+    'pending_web_search_query',
+    'awaiting_search_consent',
+    'pending_search_query',
+    'deep_research_consent_needed',
+    
+    // Travel data that can conflict between queries
+    'originCity',
+    'destinationCity', 
+    'city',
+    'departureDate',
+    'returnDate',
+    'dates',
+    'month',
+    'passengers',
+    'cabinClass',
+    'travelerProfile',
+    'complexity_score',
+    'complexity_reasoning',
+    
+    // Flight-specific slots
+    'flight_clarification_needed',
+    'ambiguity_reason',
+    'clarification_options',
+    'awaiting_flight_clarification',
+    'pending_flight_query',
+    'clarification_reasoning'
+  ]);
 }
 
 export async function routeIntent({ message, threadId, logger }: {
@@ -113,6 +139,8 @@ export async function routeIntent({ message, threadId, logger }: {
   if (process.env.DEEP_RESEARCH_ENABLED === 'true') {
     const cx = cheapComplexity(m);
     if (cx.complex) {
+      // Clear stale slots when processing a new complex query
+      await clearConsentState(threadId);
       threadId && await updateThreadSlots(threadId, {
         awaiting_deep_research_consent:'true',
         pending_deep_research_query:m,
