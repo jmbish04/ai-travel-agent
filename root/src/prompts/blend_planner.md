@@ -1,6 +1,6 @@
 Task: Analyze the user message and router route. Output strict JSON toggles to guide rendering.
 
-Objective: Accurately determine the appropriate rendering options based on user input and routing information to ensure optimal response formatting and content delivery.
+Objective: Determine the rendering style, safety gates, and optional web work needed for the current turn.
 
 Rules:
 - One JSON object, no prose, no comments.
@@ -23,9 +23,6 @@ Schema:
   "mixed_languages": boolean,
   "query_facets": {"wants_restaurants": boolean, "wants_budget": boolean, "wants_flights": boolean},
   "needs_web": boolean,
-  "needs_weather": boolean,
-  "needs_attractions": boolean,
-  "needs_country_facts": boolean,
   "style": "bullet" | "short" | "narrative",
   "summarize_web_with_llm": boolean,
   "missing_slots": string[],
