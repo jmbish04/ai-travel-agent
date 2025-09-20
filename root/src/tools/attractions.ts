@@ -9,6 +9,16 @@ import { classifyAttractions, type AttractionItem } from '../core/transformers-a
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
 
+// Semantic attraction filtering
+function isValidAttraction(name: string): boolean {
+  const excluded = new Set([
+    'restaurant', 'cafe', 'pizzeria', 'bar', 'grill', 'fountain', 
+    'erg', '320 gradi', 'tōkaidō', 'road', 'street', 'avenue'
+  ]);
+  const lower = name.toLowerCase();
+  return !excluded.has(lower) && !Array.from(excluded).some(term => lower.includes(term));
+}
+
 type Out = { ok: true; summary: string; source?: string; reason?: string } | { ok: false; reason: string; source?: string };
 
 export async function getAttractions(input: {
@@ -95,8 +105,7 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
         
         if (name && name.length >= 3) {
           // Filter out obvious non-attractions
-          const lower = name.toLowerCase();
-          if (!/restaurant|cafe|pizzeria|bar|grill|fountain|erg|320\s*gradi|tōkaidō|road|street|avenue/i.test(lower)) {
+          if (isValidAttraction(name)) {
             attractions.push({ name, description });
           }
         }
@@ -133,10 +142,7 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
           .slice(0, Math.max(3, Math.min(limit, 6)))
           .map(p => ({ name: (p.name || '').trim(), description: '' }))
           .filter(a => a.name.length >= 5)
-          .filter(a => {
-            const lower = a.name.toLowerCase();
-            return !/restaurant|cafe|pizzeria|bar|grill|fountain|erg|320\s*gradi|tōkaidō|road|street|avenue/i.test(lower);
-          });
+          .filter(a => isValidAttraction(a.name));
           
         if (attractions.length > 0) {
           const classified = await classifyAttractions(attractions, profile);

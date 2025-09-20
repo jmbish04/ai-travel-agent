@@ -9,6 +9,12 @@ function debugLog(message: string, data?: any) {
   }
 }
 
+// Semantic temporal reference detection
+export function isTemporalReference(value: string): boolean {
+  const temporal = new Set(['today', 'now', 'currently', 'right now', 'this moment', 'present']);
+  return temporal.has(value.toLowerCase().trim());
+}
+
 type SlotState = {
   slots: Record<string, string>;
   expectedMissing: string[];
@@ -121,6 +127,40 @@ function normalizeLocationName(name: string): string {
     .replace(/[^a-z]/g, '');
 }
 
+const PLACEHOLDER_LOCATION_TOKENS = new Set([
+  'there',
+  'here',
+  'sameplace',
+  'samedestination',
+  'samecity',
+  'thesameplace',
+  'thesamedestination',
+  'thesamecity',
+  'samearea',
+  'thesamearea',
+  'samehotel',
+  'thesamehotel',
+  'thatplace',
+  'thatcity',
+  'thatdestination',
+]);
+
+export function isPlaceholderLocation(value?: string): boolean {
+  if (!value) return false;
+  const normalized = normalizeLocationName(value);
+  return normalized.length > 0 && PLACEHOLDER_LOCATION_TOKENS.has(normalized);
+}
+
+export function resolveLocationPlaceholder(value?: string, fallback?: string): string | undefined {
+  if (!value) return fallback?.trim();
+  const trimmed = value.trim();
+  if (!trimmed) return fallback?.trim();
+  if (isPlaceholderLocation(trimmed)) {
+    return fallback?.trim();
+  }
+  return trimmed;
+}
+
 function getPrimaryLocation(slots: Record<string, string>): string | undefined {
   for (const key of LOCATION_KEY_ORDER) {
     const value = slots[key];
@@ -144,25 +184,51 @@ export function normalizeSlots(
     }
   }
 
-  // 1) Strip "today/now" from city/destination fields
+  // 1) Clean temporal references from city fields using semantic detection
   for (const k of ['city', 'destinationCity', 'originCity']) {
     if (typeof safe[k] === 'string') {
-      safe[k] = safe[k].replace(/\b(today|now)\b/gi, '').trim();
-      // Reject if contains digits or is empty after cleanup
-      if (/\d/.test(safe[k]) || !safe[k]) delete safe[k];
+      const cleaned = safe[k].replace(/\b(today|now)\b/gi, '').trim();
+      // Use semantic validation instead of regex
+      if (!cleaned || isTemporalReference(cleaned)) {
+        delete safe[k];
+      } else {
+        safe[k] = cleaned;
+      }
+    }
+  }
+
+  const priorDestination = prior.destinationCity?.trim() || prior.city?.trim();
+  const priorOrigin = prior.originCity?.trim() || prior.city?.trim();
+  const priorCity = prior.city?.trim() || priorDestination || priorOrigin;
+
+  for (const key of ['destinationCity', 'city', 'originCity'] as const) {
+    const value = safe[key];
+    if (typeof value === 'string') {
+      const fallback = key === 'destinationCity'
+        ? priorDestination || priorCity
+        : key === 'originCity'
+          ? priorOrigin || priorDestination || priorCity
+          : priorCity || priorDestination || priorOrigin;
+      const resolved = resolveLocationPlaceholder(value, fallback);
+      if (resolved) {
+        safe[key] = resolved;
+      } else {
+        delete safe[key];
+      }
     }
   }
 
   // 2) Don't backfill month/dates from "today" for non-flight intents.
   // For flights we must preserve relative dates like "today"/"tomorrow".
   if (intent !== 'flights') {
-    if (safe.month && /today|now/i.test(safe.month)) delete safe.month;
-    if (safe.dates && /today|now/i.test(safe.dates)) delete safe.dates;
+    if (safe.month && isTemporalReference(safe.month)) delete safe.month;
+    if (safe.dates && isTemporalReference(safe.dates)) delete safe.dates;
   }
 
   // 2b) For flights, map relative dates into departureDate if missing
   if (intent === 'flights') {
-    if (safe.dates && !safe.departureDate && /^(today|tomorrow|tonight)$/i.test(safe.dates)) {
+    const relativeDates = new Set(['today', 'tomorrow', 'tonight']);
+    if (safe.dates && !safe.departureDate && relativeDates.has(safe.dates.toLowerCase())) {
       safe.departureDate = safe.dates;
     }
   }
@@ -186,10 +252,12 @@ export function normalizeSlots(
       
       if (key === 'city') {
         if (placeholderTokens.includes(v)) continue;
-        const looksProper = /^[A-Z][A-Za-z\- ]+$/.test(value);
-        const genericWords = ['city', 'destination', 'place'];
-        const containsGeneric = genericWords.some(w => v.includes(w));
-        if (!looksProper || containsGeneric) continue;
+        // Use semantic validation instead of regex
+        const genericWords = new Set(['city', 'destination', 'place', 'location', 'area']);
+        const containsGeneric = Array.from(genericWords).some(w => v.toLowerCase().includes(w));
+        const hasValidLength = value.length >= 2 && value.length <= 50;
+        const isNotEmpty = value.trim().length > 0;
+        if (!hasValidLength || !isNotEmpty || containsGeneric) continue;
         filtered[key] = value;
         continue;
       }
