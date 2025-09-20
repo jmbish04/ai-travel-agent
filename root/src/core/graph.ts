@@ -168,8 +168,13 @@ export async function runGraphTurn(
     
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
       ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_detected');
-      // Directly perform deep research for better search results
-      return await performDeepResearchNode(previousQuery, ctx, threadId);
+      // Deepen the user's current topic using their latest message + context,
+      // not the stale previousQuery, to avoid losing intent like "hotels".
+      const slotCtx = await getThreadSlots(threadId);
+      const optimizedCurrent = await optimizeSearchQuery(message, slotCtx, 'web_search', ctx.log);
+      // Persist the optimized query for continuity across turns
+      await updateThreadSlots(threadId, { last_search_query: optimizedCurrent }, []);
+      return await performDeepResearchNode(optimizedCurrent, ctx, threadId);
     }
   }
   
@@ -982,9 +987,11 @@ async function performDeepResearchNode(
   threadId: string,
 ): Promise<NodeOut> {
   try {
-    const optimizedQuery = await optimizeSearchQuery(query, {}, 'destinations', ctx.log);
-    // Persist the optimized query so subsequent "search deeper/more" upgrades
-    // maintain topic continuity across turns without re-routing.
+    // Optimize with full slot context and a neutral web_search intent so
+    // location pronouns (e.g., "there") resolve to the active city.
+    const slotCtx = await getThreadSlots(threadId);
+    const optimizedQuery = await optimizeSearchQuery(query, slotCtx, 'web_search', ctx.log);
+    // Persist the optimized query so subsequent upgrades keep continuity.
     await updateThreadSlots(threadId, { last_search_query: optimizedQuery }, []);
     
     const { performDeepResearch } = await import('./deep_research.js');

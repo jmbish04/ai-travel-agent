@@ -53,6 +53,7 @@ export type IntentClassification = {
   intent: 'weather' | 'packing' | 'attractions' | 'destinations' | 'flights' | 'web_search' | 'unknown';
   confidence: number;
   needExternal: boolean;
+  slots?: Record<string, unknown>;
 };
 
 // Simple token counter (approximate)
@@ -281,11 +282,13 @@ export async function classifyIntent(
       .replace('{context}', JSON.stringify(context));
     const response = await callLLM(prompt, { responseFormat: 'json', log });
     const parsed = JSON.parse(response);
-    return {
+    const out: IntentClassification = {
       intent: parsed.intent,
       confidence: parsed.confidence,
       needExternal: parsed.needExternal,
+      slots: typeof parsed.slots === 'object' && parsed.slots ? parsed.slots : undefined,
     };
+    return out;
   } catch (error) {
     if (log) log.debug('LLM intent classification failed');
     return null;

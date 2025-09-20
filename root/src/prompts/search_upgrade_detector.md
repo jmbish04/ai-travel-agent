@@ -11,6 +11,10 @@ Guidelines:
 - Return `upgrade = false` when the user provides a brand-new topic, gives a revised query containing new primary entities, declines further search, or changes to a different travel task.
 - When the message is ambiguous, prefer `upgrade = false` unless there is a direct reference to enhancing the same search.
 
+Topic continuity rules:
+- A domain shift is NOT an upgrade. Examples of domain shifts: general city guides → hotels/accommodation; hotels → restaurants; guides → flights; guides → visas/policies; attractions → weather.
+- If the latest message narrows or pivots to a different travel subdomain (e.g., "best hotels", "top restaurants", "visa rules", "find flights"), set `upgrade = false` unless the user explicitly asks to "search deeper" on the same subtopic.
+
 Output strict JSON with keys:
 {
   "upgrade": true|false,
@@ -29,3 +33,4 @@ Examples (informal, do not quote back):
 - "Thanks" → upgrade = false.
 - "Can you dig up more official sources on that?" → upgrade = true.
 - "Search better" → upgrade = true.
+ - "Best hotels there right now" after a "Paris travel guide" search → upgrade = false (domain shift: guide → hotels).

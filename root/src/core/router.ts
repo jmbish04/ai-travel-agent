@@ -481,6 +481,30 @@ export async function routeIntent({ message, threadId, logger }: {
     logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
   }
 
+  // 7) AI-first correction pass using nlp_intent_detection prompt when low confidence/unknown
+  if (llmNormalized.confidence < 0.6 || llmNormalized.intent === 'unknown') {
+    try {
+      const { classifyIntent } = await import('./llm.js');
+      const det = await classifyIntent(m, ctxSlots, logger?.log);
+      if (det && det.confidence >= 0.75 && det.intent !== 'unknown') {
+        const corrected = RouterResult.parse({
+          intent: det.intent,
+          needExternal: det.needExternal,
+          slots: normalizeSlots(ctxSlots, (det.slots as Record<string, string>) || {}, det.intent),
+          confidence: det.confidence,
+        });
+        incTurn(corrected.intent);
+        try { observeRouterConfidence(corrected.confidence); } catch {}
+        if (corrected.confidence < 0.6) incRouterLowConf(corrected.intent);
+        if (threadId) noteTurn(threadId, corrected.intent);
+        logger?.log?.debug({ intent: corrected.intent, confidence: corrected.confidence }, 'router_final_result');
+        return corrected;
+      }
+    } catch (e) {
+      logger?.log?.debug({ error: String(e) }, 'nlp_intent_detection_correction_failed');
+    }
+  }
+
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
   if (['system','policy'].includes(llmNormalized.intent)) {
     clearConsentState(threadId);
