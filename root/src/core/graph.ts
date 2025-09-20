@@ -12,7 +12,6 @@
 import type { Logger } from 'pino';
 import pinoLib from 'pino';
 import { routeIntent } from './router.js';
-import { incClarify, incClarifyResolved } from '../util/metrics.js';
 
 // Declare global process for Node.js environment
 declare const process: NodeJS.Process;
@@ -300,20 +299,8 @@ export async function runGraphTurn(
   const missing = intent ? checkMissingSlots(intent, slots, message) : [];
   if (missing.length > 0) {
     await updateThreadSlots(threadId, slots, missing);
-    
-    // Track clarification metrics
-    for (const slot of missing) {
-      incClarify(intent || 'unknown', slot);
-    }
-    
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
-  }
-  
-  // Track successful clarification resolution if we had missing slots before
-  const prevMissing = Object.keys(prior).filter(key => !prior[key] || prior[key] === '');
-  if (prevMissing.length > 0 && missing.length === 0 && intent) {
-    incClarifyResolved(intent);
   }
   
   // Update slots and set intent

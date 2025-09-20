@@ -3,7 +3,7 @@ import express from 'express';
 import type pino from 'pino';
 import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
-import { getPrometheusText, metricsMode, snapshot, incMessages, incVerifyFail } from '../util/metrics.js';
+import { getPrometheusText, metricsMode, snapshot, incMessages } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
 import { getLastReceipts } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
@@ -37,16 +37,6 @@ export const router = (log: pino.Logger): Router => {
           facts: facts as Array<{ key: string; value: unknown; source: string }>,
           log
         });
-        
-        // Track verification failures
-        if (audit.verdict === 'fail') {
-          const reason = audit.notes.length > 0 ? 
-            (audit.notes[0].includes('missing') ? 'missing_fact' :
-             audit.notes[0].includes('inconsistent') ? 'inconsistent_number' :
-             audit.notes[0].includes('date') ? 'date_mismatch' : 'other') : 'other';
-          incVerifyFail(reason);
-        }
-        
         const merged = {
           ...receipts,
           selfCheck: { verdict: audit.verdict, notes: audit.notes }

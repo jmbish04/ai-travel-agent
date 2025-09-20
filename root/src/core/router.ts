@@ -6,7 +6,6 @@ import { getThreadSlots, updateThreadSlots, normalizeSlots } from './slot_memory
 import { extractSlots } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
-import { incTurn, incRouterLowConf } from '../util/metrics.js';
 import type pino from 'pino';
 
 // Helper function to clear consent state for unrelated queries
@@ -57,22 +56,17 @@ export async function routeIntent({ message, threadId, logger }: {
   const m = message.trim();
 
   // 0) Guards (no LLM) - clear consent state for unrelated queries
-  if (!m) {
-    incRouterLowConf('unknown');
-    return RouterResult.parse({ intent:'unknown', needExternal:false, slots:{}, confidence:0.1 });
-  }
+  if (!m) return RouterResult.parse({ intent:'unknown', needExternal:false, slots:{}, confidence:0.1 });
   
   // Only use regex guards for very specific system queries, not general "help" requests
   if (/^(who are you|what can you do|how do you work)$/i.test(m)) {
     clearConsentState(threadId);
-    incTurn('system');
     return RouterResult.parse({ intent:'system', needExternal:false, slots:{}, confidence:0.9 });
   }
   
   // Only use policy regex for very specific visa/passport queries
   if (/\b(visa requirements?|passport requirements?|entry requirements?|immigration rules?)\b/i.test(m)) {
     clearConsentState(threadId);
-    incTurn('policy');
     return RouterResult.parse({ intent:'policy', needExternal:true, slots:{}, confidence:0.9 });
   }
 
@@ -93,7 +87,6 @@ export async function routeIntent({ message, threadId, logger }: {
     if (userResponse.includes('direct') || userResponse.includes('search') || userResponse.includes('booking')) {
       const flightSlots = await extractSlots(pendingQuery, ctxSlots, logger?.log);
       logger?.log?.debug({ choice: 'direct_search', slots: flightSlots }, 'flight_clarification_resolved');
-      incTurn('flights');
       return RouterResult.parse({
         intent: 'flights',
         needExternal: true,
@@ -102,7 +95,6 @@ export async function routeIntent({ message, threadId, logger }: {
       });
     } else if (userResponse.includes('research') || userResponse.includes('planning') || userResponse.includes('advice')) {
       logger?.log?.debug({ choice: 'web_research' }, 'flight_clarification_resolved');
-      incTurn('web_search');
       return RouterResult.parse({
         intent: 'web_search',
         needExternal: true,
@@ -122,7 +114,6 @@ export async function routeIntent({ message, threadId, logger }: {
       await clearConsentState(threadId); // Clear any pending consent for unrelated queries
       const slots = await extractSlots(m, ctxSlots, logger?.log);
       logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic)');
-      incTurn('flights');
       return RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
     }
   }
@@ -136,7 +127,6 @@ export async function routeIntent({ message, threadId, logger }: {
       'web_search',
       logger?.log
     );
-    incTurn('web_search');
     return RouterResult.parse({
       intent: 'web_search',
       needExternal: true,
@@ -217,13 +207,6 @@ export async function routeIntent({ message, threadId, logger }: {
       });
       
       logger?.log?.debug({ intent: enhanced.intent, confidence: enhanced.confidence }, 'router_final_result');
-      
-      // Track metrics
-      incTurn(enhanced.intent);
-      if (enhanced.confidence < 0.6) {
-        incRouterLowConf(enhanced.intent);
-      }
-      
       return enhanced;
     } catch (error) {
       logger?.log?.debug({ error: String(error) }, 'flights_slot_enhancement_failed');
@@ -236,13 +219,6 @@ export async function routeIntent({ message, threadId, logger }: {
   }
   
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
-  
-  // Track metrics
-  incTurn(llmNormalized.intent);
-  if (llmNormalized.confidence < 0.6) {
-    incRouterLowConf(llmNormalized.intent);
-  }
-  
   return llmNormalized;
 }
 

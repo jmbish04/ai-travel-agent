@@ -21,13 +21,6 @@ export const metricsEnabled = IS_PROM || IS_JSON;
 
 // JSON fallback counters
 let messages = 0;
-let chatTurns = new Map<string, number>(); // intent -> count
-let routerLowConf = new Map<string, number>(); // intent -> count
-let clarifyRequests = new Map<string, number>(); // intent:slot -> count
-let clarifyResolved = new Map<string, number>(); // intent -> count
-let fallbacks = new Map<string, number>(); // kind -> count
-let answersWithCitations = 0;
-let verifyFails = new Map<string, number>(); // reason -> count
 
 // Lightweight JSON aggregation for external requests (works even when METRICS=off)
 type ExtAgg = {
@@ -51,13 +44,6 @@ let histExtLatency: HistogramT | undefined;
 let gaugeBreakerState: GaugeT | undefined;
 let counterBreakerEvents: CounterT | undefined;
 let counterRateLimitThrottled: CounterT | undefined;
-let counterChatTurns: CounterT | undefined;
-let counterRouterLowConf: CounterT | undefined;
-let counterClarify: CounterT | undefined;
-let counterClarifyResolved: CounterT | undefined;
-let counterFallback: CounterT | undefined;
-let counterAnswersWithCitations: CounterT | undefined;
-let counterVerifyFail: CounterT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -110,47 +96,6 @@ async function ensureProm(): Promise<void> {
       labelNames: ['target'],
       registers: [register],
     }) as CounterT;
-    counterChatTurns = new Counter({
-      name: 'chat_turn_total',
-      help: 'Total chat turns by intent',
-      labelNames: ['intent'],
-      registers: [register],
-    }) as CounterT;
-    counterRouterLowConf = new Counter({
-      name: 'router_low_conf_total',
-      help: 'Router low confidence decisions',
-      labelNames: ['intent'],
-      registers: [register],
-    }) as CounterT;
-    counterClarify = new Counter({
-      name: 'clarify_total',
-      help: 'Clarification requests',
-      labelNames: ['intent', 'slot'],
-      registers: [register],
-    }) as CounterT;
-    counterClarifyResolved = new Counter({
-      name: 'clarify_resolved_total',
-      help: 'Clarification resolved',
-      labelNames: ['intent'],
-      registers: [register],
-    }) as CounterT;
-    counterFallback = new Counter({
-      name: 'fallback_total',
-      help: 'Fallback usage',
-      labelNames: ['kind'],
-      registers: [register],
-    }) as CounterT;
-    counterAnswersWithCitations = new Counter({
-      name: 'answers_with_citations_total',
-      help: 'Answers with citations',
-      registers: [register],
-    }) as CounterT;
-    counterVerifyFail = new Counter({
-      name: 'verify_fail_total',
-      help: 'Verification failures',
-      labelNames: ['reason'],
-      registers: [register],
-    }) as CounterT;
   })();
   return initPromise;
 }
@@ -162,48 +107,6 @@ void ensureProm().catch(() => undefined);
 export function incMessages() {
   messages += 1;
   if (counterMessages) counterMessages.inc();
-}
-
-export function incTurn(intent: string): void {
-  const prev = chatTurns.get(intent) ?? 0;
-  chatTurns.set(intent, prev + 1);
-  if (counterChatTurns) counterChatTurns.inc({ intent });
-}
-
-export function incRouterLowConf(intent: string): void {
-  const prev = routerLowConf.get(intent) ?? 0;
-  routerLowConf.set(intent, prev + 1);
-  if (counterRouterLowConf) counterRouterLowConf.inc({ intent });
-}
-
-export function incClarify(intent: string, slot: string): void {
-  const key = `${intent}:${slot}`;
-  const prev = clarifyRequests.get(key) ?? 0;
-  clarifyRequests.set(key, prev + 1);
-  if (counterClarify) counterClarify.inc({ intent, slot });
-}
-
-export function incClarifyResolved(intent: string): void {
-  const prev = clarifyResolved.get(intent) ?? 0;
-  clarifyResolved.set(intent, prev + 1);
-  if (counterClarifyResolved) counterClarifyResolved.inc({ intent });
-}
-
-export function incFallback(kind: 'web' | 'browser'): void {
-  const prev = fallbacks.get(kind) ?? 0;
-  fallbacks.set(kind, prev + 1);
-  if (counterFallback) counterFallback.inc({ kind });
-}
-
-export function incAnswersWithCitations(): void {
-  answersWithCitations += 1;
-  if (counterAnswersWithCitations) counterAnswersWithCitations.inc();
-}
-
-export function incVerifyFail(reason: string): void {
-  const prev = verifyFails.get(reason) ?? 0;
-  verifyFails.set(reason, prev + 1);
-  if (counterVerifyFail) counterVerifyFail.inc({ reason });
 }
 
 export function observeExternal(labels: Labels, durationMs: number) {
@@ -334,13 +237,6 @@ export function snapshot() {
     rate_limit: { byTarget: getAllLimiterStats() },
     session_store_kind: sessionStoreKind,
     session_ttl_sec: sessionTtlSec,
-    chat_turns: Object.fromEntries(chatTurns),
-    router_low_conf: Object.fromEntries(routerLowConf),
-    clarify_requests: Object.fromEntries(clarifyRequests),
-    clarify_resolved: Object.fromEntries(clarifyResolved),
-    fallbacks: Object.fromEntries(fallbacks),
-    answers_with_citations_total: answersWithCitations,
-    verify_fails: Object.fromEntries(verifyFails),
   };
 }
 

@@ -4,7 +4,6 @@ import {
   getSearchSource,
 } from './search.js';
 import { fetchJSON, ExternalFetchError } from '../util/fetch.js';
-import { incAnswersWithCitations } from '../util/metrics.js';
 import { searchPOIs, getPOIDetail } from './opentripmap.js';
 import { classifyAttractions, type AttractionItem } from '../core/transformers-attractions-classifier.js';
 import { callLLM } from '../core/llm.js';
@@ -112,7 +111,6 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
         
         if (finalAttractions.length >= 1) {
           const summary = await summarizeAttractions(finalAttractions.slice(0, limit), city, profile);
-          incAnswersWithCitations(); // Track attractions citation
           return { ok: true, summary, source: 'opentripmap' };
         }
       }
@@ -146,7 +144,6 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
           
           if (finalAttractions.length > 0) {
             const summary = await summarizeAttractions(finalAttractions, city, profile);
-            incAnswersWithCitations(); // Track attractions citation
             return { ok: true, summary, source: 'opentripmap' };
           }
         }
@@ -176,7 +173,6 @@ async function tryAttractionsFallback(city: string): Promise<Out> {
   // LLM-first extraction
   const attractionsInfoLLM = await llmExtractAttractionsFromResults(searchResult.results, city);
   if (attractionsInfoLLM) {
-    incAnswersWithCitations(); // Track attractions citation from search
     return { ok: true, summary: attractionsInfoLLM, source: getSearchSource() };
   }
 

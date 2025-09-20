@@ -10,8 +10,6 @@ import { RateLimiter } from './core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from './config/resilience.js';
 import { loadSessionConfig } from './config/session.js';
 import { createStore, initSessionStore } from './core/session_store.js';
-import { incMessages, snapshot } from './util/metrics.js';
-import { startServer } from './api/server.js';
 import type { Decision } from './core/receipts.js';
 
 const rl = readline.createInterface({ input, output });
@@ -252,19 +250,12 @@ async function main() {
   console.log(chalk.white('  • I avoid prices/budgeting; I can still suggest options.'));
   console.log(chalk.gray('─'.repeat(60)));
   console.log(chalk.white.bold('Commands:'));
-  console.log(chalk.blue('  /why      Show how I got my answer (sources, reasoning, fact-checking)'));
-  console.log(chalk.blue('  /metrics  Show conversation metrics'));
-  console.log(chalk.red('  exit      Quit'));
+  console.log(chalk.blue('  /why   Show how I got my answer (sources, reasoning, fact-checking)'));
+  console.log(chalk.red('  exit   Quit'));
   console.log(chalk.gray('─'.repeat(60)));
   // console.log(chalk.white.bold('Environment Variables:'));
   // console.log(chalk.yellow('  CLI_STREAMING_DELAY_MS  Set text streaming delay (default: 2ms)'));
   console.log(chalk.gray('─'.repeat(60)));
-  console.log();
-
-  // Start HTTP server in background for metrics dashboard
-  const port = Number(process.env.PORT ?? 3000);
-  startServer();
-  console.log(chalk.gray(`📊 Metrics dashboard: http://localhost:${port}/metrics-dashboard.html`));
   console.log();
 
   log.debug('CLI started. Type "exit" to quit.');
@@ -273,49 +264,6 @@ async function main() {
   while (true) {
     const q = await rl.question(chalk.blue.bold('You> '));
     if (q.trim().toLowerCase() === 'exit') break;
-
-    // Handle special commands
-    if (q.trim() === '/metrics') {
-      const metrics = snapshot();
-      console.log(chalk.yellow.bold('\n📊 Conversation Metrics:'));
-      console.log(chalk.gray('─'.repeat(40)));
-      console.log(chalk.white(`Messages: ${metrics.messages_total}`));
-      
-      if (Object.keys(metrics.chat_turns).length > 0) {
-        console.log(chalk.white('Chat turns:'));
-        Object.entries(metrics.chat_turns).forEach(([intent, count]) => {
-          console.log(chalk.gray(`  ${intent}: ${count}`));
-        });
-      }
-      
-      if (Object.keys(metrics.router_low_conf).length > 0) {
-        console.log(chalk.yellow('Low confidence routing:'));
-        Object.entries(metrics.router_low_conf).forEach(([intent, count]) => {
-          console.log(chalk.gray(`  ${intent}: ${count}`));
-        });
-      }
-      
-      if (Object.keys(metrics.clarify_requests).length > 0) {
-        console.log(chalk.blue('Clarifications requested:'));
-        Object.entries(metrics.clarify_requests).forEach(([key, count]) => {
-          console.log(chalk.gray(`  ${key}: ${count}`));
-        });
-      }
-      
-      if (Object.keys(metrics.fallbacks).length > 0) {
-        console.log(chalk.magenta('Fallbacks used:'));
-        Object.entries(metrics.fallbacks).forEach(([kind, count]) => {
-          console.log(chalk.gray(`  ${kind}: ${count}`));
-        });
-      }
-      
-      if (metrics.answers_with_citations_total > 0) {
-        console.log(chalk.green(`Answers with citations: ${metrics.answers_with_citations_total}`));
-      }
-      
-      console.log(chalk.gray('─'.repeat(40)));
-      continue;
-    }
 
     // Check rate limit
     if (!(await cliRateLimiter.acquire())) {
@@ -327,9 +275,6 @@ async function main() {
     
     spinner.start();
     const wantReceipts = /^\s*\/why\b/i.test(q);
-    
-    // Track CLI message
-    incMessages();
     
     try {
       const res = await handleChat(
