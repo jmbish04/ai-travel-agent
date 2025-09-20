@@ -81,6 +81,10 @@ flowchart TD
     U1 --> Z
     V --> Z
     I3 --> Z
+    G12 --> Z
+    G13 --> Z
+    S4 --> Z
+    SYS --> Z
 
     Z["Compose Final Answer"] --> Z1["Validate citations; setLastReceipts (facts/decisions)"]
     Z1 --> Z2{"/why or receipts flag?"}

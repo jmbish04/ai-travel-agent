@@ -19,12 +19,16 @@ flowchart TD
   NI --> CPARSE["city_parser.md\n[City parsing & normalization]"]:::nlp
   NI --> ODEX["origin_destination_extractor.md\n[Flight origin/destination]"]:::nlp
   NI --> DPARSE["date_parser.md\n[Dates/month inference]"]:::nlp
+  CPARSE --> MS
+  ODEX --> MS
+  DPARSE --> MS
 
   %% Missing-slot clarifier
   NI --> MS{Missing slots?}
   MS -->|Yes| CLAR["nlp_clarifier.md\n[Ask one clarifying question]"]:::nlp
   MS -->|No| INT{Intent}
   NCI --> INT
+  CLAR --> OUT
 
   %% Consent gate (web/deep research)
   INT --> CA["complexity_assessor.md\n[Detect deep research need]"]:::nlp
@@ -39,8 +43,10 @@ flowchart TD
   INT -->|web_search| WS_START
   INT -->|attractions| AKF["attractions_kid_friendly.md\n[Filter for family-friendly]"]:::domain
   AKF --> AT_SUM["attractions_summarizer.md\n[Summarize POIs]"]:::domain
+  AT_SUM --> Z
   INT -->|destinations| PREF["preference_extractor.md\n[Extract travel preferences]"]:::domain
   PREF --> DREC["destinations_recommender.md\n[AI destination candidates]"]:::domain
+  DREC --> BLEND
   INT -->|packing| PLAN["blend_planner.md\n[Plan response: style, needs]"]:::domain
   INT -->|weather| PLAN
   INT -->|system| Z
@@ -79,9 +85,9 @@ flowchart TD
   F_GATE -->|API fails or no results| WS_START
 
   %% Destinations/Packing/Weather narrative generation when needed
-  PLAN --> COT["cot.md\n[Private reasoning scaffold]"]:::domain
-  COT --> BLEND["blend.md\n[Compose final, cite tools when used]"]:::domain
-  BLEND --> CITANA
+  PLAN --> COT["cot.md + system.md\n[Private reasoning]"]:::domain
+  COT --> BLEND["blend.md + system.md\n[Compose final]"]:::domain
+  BLEND --> Z
 
   %% Compose final answer and optional self-check
   Z["Compose Final Answer"]:::domain --> CHK{Receipts or /why?}
