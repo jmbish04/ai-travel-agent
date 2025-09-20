@@ -395,24 +395,12 @@ export async function blendWithFacts(
                    (input.route.slots.month && input.route.slots.month.trim());
                    
   if (input.route.intent === 'unknown') {
-    // If we have a city, use LLM to decide if this is a general info query that needs web search
-    if (cityHint) {
-      const webSearchDeciderPrompt = await getPrompt('web_search_decider');
-      const needsWebSearch = await callLLM(
-        webSearchDeciderPrompt.replace('{message}', input.message),
-        { responseFormat: 'text' }
-      );
-      
-      if (needsWebSearch.trim().toLowerCase() === 'yes') {
-        ctx.log.debug({ intent: 'unknown', city: cityHint, webSearch: true }, 'unknown_intent_with_city_web_search');
-        return await performWebSearch(input.message, ctx, input.threadId, plan);
-      }
+    // Use planner signal to avoid extra LLM calls
+    if (plan.explicit_search) {
+      ctx.log.debug({ intent: 'unknown', city: cityHint, webSearch: true }, 'unknown_intent_with_city_web_search');
+      return await performWebSearch(input.message, ctx, input.threadId, plan);
     }
-    
-    return {
-      reply: 'Could you share the city and month/dates?',
-      citations: undefined,
-    };
+    return { reply: 'Could you share the city and month/dates?', citations: undefined };
   }
   
   // Check for restaurant/food queries in attractions intent
@@ -475,16 +463,8 @@ export async function blendWithFacts(
     }
     // Use LLM to decide if dates are needed for this specific query
     if (!whenHint) {
-      const webSearchDeciderPrompt = await getPrompt('web_search_decider');
-      const needsWebSearch = await callLLM(
-        webSearchDeciderPrompt.replace('{message}', input.message),
-        { responseFormat: 'text' }
-      );
-      
-      // If it's a general info query that can be answered with web search, skip date requirement
-      if (needsWebSearch.trim().toLowerCase() === 'yes') {
-        // Proceed without dates - web search can handle general city information
-      } else {
+      // If planner indicates web context, proceed without dates
+      if (!(plan.explicit_search || plan.needs_web)) {
         return { reply: 'Which month or travel dates?', citations: undefined };
       }
     }

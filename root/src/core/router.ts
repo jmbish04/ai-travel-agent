@@ -116,8 +116,8 @@ async function shouldSkipContextDetector(message: string, log?: pino.Logger): Pr
   if (!trimmed) return true;
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   if (wordCount <= 2) return true;
-  if (await isQuickAck(trimmed, log)) return true;
-  return await isPronounFollowup(trimmed, log);
+  const verdict = await classifyConsentResponse(trimmed, log);
+  return verdict === 'yes' || verdict === 'unclear';
 }
 
 async function callContextSwitchDetector(previous: string, current: string, log?: pino.Logger): Promise<boolean> {
@@ -452,6 +452,8 @@ export async function routeIntent({ message, threadId, logger }: {
       
       // Merge LLM slots with enhanced slots, prioritizing preserved relative dates
       const mergedSlots = { ...enhancedSlots, ...llmNormalized.slots, ...preservedSlots };
+      // Final normalization pass to resolve any placeholders via context
+      const normalizedMerged = normalizeSlots(ctxSlots, mergedSlots, 'flights');
       
       logger?.log?.debug({ 
         llmSlots: llmNormalized.slots, 
@@ -462,7 +464,7 @@ export async function routeIntent({ message, threadId, logger }: {
       
       const enhanced = RouterResult.parse({
         ...llmNormalized,
-        slots: mergedSlots
+        slots: normalizedMerged
       });
       
       logger?.log?.debug({ intent: enhanced.intent, confidence: enhanced.confidence }, 'router_final_result');
@@ -488,7 +490,7 @@ export async function routeIntent({ message, threadId, logger }: {
         llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
       }
     } catch (error) {
-      logger?.log?.debug({ error: error.message }, 'search_query_optimization_failed');
+      logger?.log?.debug({ error: String(error) }, 'search_query_optimization_failed');
       // Use original message as fallback
       llmNormalized.slots = { ...llmNormalized.slots, search_query: m };
     }
