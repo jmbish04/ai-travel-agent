@@ -32,6 +32,10 @@ export const router = (log: pino.Logger): Router => {
       if (!wantReceipts) {
         return res.json(out);
       }
+      // If handleChat already produced receipts, avoid recomputing
+      if ((out as any).receipts) {
+        return res.json(out);
+      }
       const receiptsData = await getLastReceipts(out.threadId) || {};
       const facts = receiptsData.facts || [];
       const decisions = receiptsData.decisions || [];

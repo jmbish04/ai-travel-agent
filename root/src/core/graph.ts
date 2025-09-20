@@ -34,6 +34,7 @@ import { getPrompt } from './prompts.js';
 import { detectLanguage } from './transformers-detector.js';
 import { extractEntitiesEnhanced } from './ner-enhanced.js';
 import { searchTravelInfo, getSearchCitation } from '../tools/search.js';
+import { summarizeSearch } from './searchSummarizer.js';
 import type { SearchResult } from '../tools/search.js';
 import {
   buildConstraintGraph,
@@ -932,8 +933,9 @@ async function performWebSearchNode(
     };
   }
   
-  // Use summarization for better results
-  const { reply, citations } = await summarizeSearchResults(searchResult.results, query, ctx);
+  // Use unified summarizer (LLM optional based on count)
+  const useLLM = process.env.SEARCH_SUMMARY !== 'off' && searchResult.results.length >= 3;
+  const { reply, citations } = await summarizeSearch(searchResult.results, query, useLLM, { log: ctx.log });
   
   // Store search receipts
   if (threadId) {
