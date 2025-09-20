@@ -3,7 +3,7 @@ import { getPrompt } from './prompts.js';
 import { callLLM, optimizeSearchQuery, classifyContent, classifyIntent } from './llm.js';
 import { extractEntities } from './ner.js';
 import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots, getLastUserMessage } from './slot_memory.js';
-import { extractSlots } from './parsers.js';
+import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
 import type pino from 'pino';
@@ -66,9 +66,6 @@ const RESET_SLOT_KEYS = Array.from(new Set([
   ...AUX_SLOT_KEYS,
 ]));
 
-const MONTH_REGEX = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|winter|spring|summer|fall|autumn)\b/i;
-
-const TRAVELER_REGEX = /\b(family|kids?|children|toddlers?|parents|couple|honeymoon|solo|friends?|business|team|group)\b/i;
 const PRONOUN_FOLLOWUP_REGEX = /\b(there|that|those|these|it|same|them|back there|this place|still)\b/i;
 const QUICK_ACK_REGEX = /^(thanks|thank you|sounds good|great|cool|awesome|perfect|nice)\b/i;
 
@@ -87,48 +84,13 @@ function getPrimaryLocation(slots: Record<string, string>): string | undefined {
   return undefined;
 }
 
-function detectLocationCandidate(message: string): string | undefined {
-  const patterns = [
-    /\b(?:about|in|for|to|from|near|around|visiting|going to|headed to|travel(?:ling)? to|trip to|pack for|stay(?:ing)? in|guide to)\s+([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)/,
-    /^([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)\s+(?:travel|trip|vacation|holiday|packing|weather|itinerary|guide|destinations?|flights?)/,
-    /\bflights?\s+(?:to|from)\s+([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      let candidate = match[1].trim();
-      candidate = candidate.replace(/[,.;!?]+$/, '');
-      if (candidate.length >= 2) {
-        return candidate;
-      }
-    }
-  }
-
-  return undefined;
-}
-
-const SWITCH_CUE_REGEX = /\b(another|elsewhere|different|new\s+trip|new\s+city|somewhere\s+else|other\s+place|switch)\b/i;
-
-function hasTimeHint(message: string): boolean {
-  return MONTH_REGEX.test(message);
-}
-
-function hasTravelerHint(message: string): boolean {
-  return TRAVELER_REGEX.test(message);
-}
-
-function isPronounContinuation(message: string): boolean {
-  return PRONOUN_FOLLOWUP_REGEX.test(message);
-}
-
 function shouldSkipContextDetector(message: string): boolean {
   const trimmed = message.trim();
   if (!trimmed) return true;
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   if (wordCount <= 2) return true;
   if (QUICK_ACK_REGEX.test(trimmed)) return true;
-  return isPronounContinuation(trimmed);
+  return PRONOUN_FOLLOWUP_REGEX.test(trimmed);
 }
 
 async function callContextSwitchDetector(previous: string, current: string, log?: pino.Logger): Promise<boolean> {
@@ -154,16 +116,6 @@ function stripSlotKeys(slots: Record<string, string>, keys: Iterable<string>): v
   }
 }
 
-function applyPostContextResetSanitization(slots: Record<string, string>, message: string): void {
-  if (!hasTimeHint(message)) {
-    stripSlotKeys(slots, TIME_SLOT_KEYS);
-  }
-  if (!hasTravelerHint(message)) {
-    stripSlotKeys(slots, PROFILE_SLOT_KEYS);
-  }
-  stripSlotKeys(slots, AUX_SLOT_KEYS);
-}
-
 async function maybeResetContextForMessage(params: {
   threadId?: string;
   message: string;
@@ -173,40 +125,60 @@ async function maybeResetContextForMessage(params: {
   const { threadId, message, logger } = params;
   const sanitizedSlots = { ...params.slots };
   const previousLocation = getPrimaryLocation(sanitizedSlots);
-  const candidateLocation = detectLocationCandidate(message);
-  const hasExplicitSwitchCue = SWITCH_CUE_REGEX.test(message);
   let reset = false;
   let reason: string | undefined;
+  const shouldSkip = shouldSkipContextDetector(message);
+  const lastMessage = threadId ? await getLastUserMessage(threadId) : undefined;
 
-  if (previousLocation && candidateLocation) {
-    if (normalizeLocationName(previousLocation) !== normalizeLocationName(candidateLocation)) {
+  let freshSlots: Record<string, string> = {};
+  try {
+    freshSlots = await extractSlots(message, {}, logger);
+  } catch (error) {
+    logger?.debug({ err: String(error) }, 'context_slots_extraction_failed');
+  }
+
+  const newLocation = getPrimaryLocation(freshSlots);
+
+  if (previousLocation && newLocation) {
+    if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
       reset = true;
-      reason = 'explicit_location_change';
+      reason = 'new_location';
     }
   }
 
-  if (!reset && hasExplicitSwitchCue) {
-    reset = true;
-    reason = 'explicit_switch_cue';
-  }
-
-  if (!reset && threadId && previousLocation && !shouldSkipContextDetector(message)) {
-    if (!candidateLocation && !hasExplicitSwitchCue) {
-      const lastMessage = await getLastUserMessage(threadId);
-      if (lastMessage) {
-        const different = await callContextSwitchDetector(lastMessage, message, logger);
-        if (different) {
-          reset = true;
-          reason = 'llm_detector';
-        }
-      }
+  if (!reset && threadId && previousLocation && !shouldSkip && lastMessage) {
+    const different = await callContextSwitchDetector(lastMessage, message, logger);
+    if (different) {
+      reset = true;
+      reason = 'llm_detector';
     }
   }
 
   if (reset && threadId) {
     await updateThreadSlots(threadId, {}, [], RESET_SLOT_KEYS);
     stripSlotKeys(sanitizedSlots, RESET_SLOT_KEYS);
-    logger?.debug({ reason, previousLocation, candidateLocation }, 'context_switch_reset');
+    logger?.debug({ reason, previousLocation, newLocation }, 'context_switch_reset');
+  } else {
+    const hasTimeSignal = Boolean(
+      freshSlots.month || freshSlots.dates || freshSlots.departureDate || freshSlots.returnDate || freshSlots.travelDates,
+    );
+    if (!hasTimeSignal) {
+      stripSlotKeys(sanitizedSlots, TIME_SLOT_KEYS);
+    }
+
+    const hasProfileSignal = Boolean(
+      freshSlots.travelerProfile ||
+      freshSlots.travelStyle ||
+      freshSlots.groupType ||
+      freshSlots.budgetLevel ||
+      freshSlots.activityType ||
+      freshSlots.tripPurpose,
+    );
+    if (!hasProfileSignal) {
+      stripSlotKeys(sanitizedSlots, PROFILE_SLOT_KEYS);
+    }
+
+    stripSlotKeys(sanitizedSlots, AUX_SLOT_KEYS);
   }
 
   return { slots: sanitizedSlots, reset, reason };
@@ -431,7 +403,7 @@ export async function routeIntent({ message, threadId, logger }: {
   // 5) Post-LLM slot enhancement for flights
   if (llmNormalized.intent === 'flights') {
     try {
-      const enhancedSlots = await extractSlots(m, ctxSlots, logger?.log);
+      const enhancedSlots = await extractFlightSlotsOnce(m, ctxSlots, logger?.log);
       
       // Preserve relative dates from LLM (today, tomorrow, etc.) over enhanced parsing
       const preservedSlots = { ...enhancedSlots };
@@ -467,10 +439,6 @@ export async function routeIntent({ message, threadId, logger }: {
   // 6) Post-LLM heuristics (cheap)
   if (llmNormalized.intent === 'flights' && !RE.dateish.test(m)) {
     logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
-  }
-
-  if (contextReset) {
-    applyPostContextResetSanitization(llmNormalized.slots, m);
   }
 
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');

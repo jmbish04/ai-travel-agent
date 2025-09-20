@@ -533,6 +533,41 @@ export async function blendWithFacts(
       // Check if this is a refinement of existing context
       const isRefinement = /\b(make it|kid[- ]?friendly|family|children|kids?)\b/i.test(input.message);
       const hasExistingContext = cityHint && whenHint;
+
+      const lowerMessage = input.message.toLowerCase();
+      const wantsOverview = /\b(tell me about|information about|info about|facts about|overview of|what is)\b/.test(lowerMessage);
+
+      if (wantsOverview && (cityHint || input.route.slots.destinationCity || input.route.slots.country)) {
+        const overviewTarget = (cityHint || input.route.slots.destinationCity || input.route.slots.country || '').trim();
+        const factAttempts: Array<{ city?: string; country?: string }> = [
+          { country: overviewTarget },
+          { city: overviewTarget }
+        ];
+
+        for (const attempt of factAttempts) {
+          const cf = await getCountryFacts(attempt);
+          if (cf.ok) {
+            const source = cf.source === getSearchSource() ? getSearchCitation() : 'REST Countries';
+            const reply = `Here\'s an overview of ${overviewTarget}:\n${cf.summary}`;
+            if (input.threadId) {
+              const overviewFacts: Fact[] = [{ source, key: 'country_summary', value: cf.summary }];
+              const overviewDecisions = [createDecision(
+                `Provided overview for ${overviewTarget}`,
+                'User asked for general information, so retrieved factual country overview instead of forcing trip planning slots.',
+                ['Prompt for travel dates', 'Use generic template'],
+                0.9
+              )];
+              await setLastReceipts(input.threadId, overviewFacts, overviewDecisions, reply);
+            }
+            incGeneratedAnswer();
+            incAnswersWithCitations();
+            return { reply, citations: [source] };
+          }
+        }
+
+        const web = await performWebSearch(`Tell me about ${overviewTarget}`, ctx, input.threadId, plan);
+        return web;
+      }
       
       if (isRefinement && hasExistingContext) {
         // For refinements, use the existing context and add refinement guidance
@@ -585,8 +620,8 @@ export async function blendWithFacts(
       }
       
       // Get weather for origin city (use originCity if available, fallback to city)
-      const originCity = input.route.slots.originCity || cityHint;
-      if (originCity) {
+      const originCity = input.route.slots.originCity;
+      if (originCity && whenHint) {
         const wx = await getWeather({
           city: originCity,
           datesOrMonth: whenHint || 'today',

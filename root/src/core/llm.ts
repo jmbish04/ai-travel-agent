@@ -42,6 +42,12 @@ export async function callLLM(
   prompt: string,
   _opts: { responseFormat?: ResponseFormat; log?: any; timeoutMs?: number } = {},
 ): Promise<string> {
+  const trimmed = prompt?.trim?.() ?? '';
+  if (!trimmed) {
+    const format: ResponseFormat = _opts.responseFormat ?? 'text';
+    if (_opts.log?.debug) _opts.log.debug('⚠️ callLLM received empty prompt, returning stub');
+    return format === 'json' ? '{}' : '';
+  }
   const jsonHint = /strict JSON|Return strict JSON|Output \(strict JSON only\)/i.test(prompt);
   const format: ResponseFormat = _opts.responseFormat ?? (jsonHint ? 'json' : 'text');
   const log = _opts.log;

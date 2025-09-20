@@ -130,8 +130,8 @@ export async function runGraphTurn(
     ctx.log.debug({ fastpath: 'policy' }, 'guard_policy_hit');
   }
   
-  // Web-ish hit → set consent and return
-  if (checkWebishHit(message)) {
+  // Web-ish hit → set consent and return (but never when another guard forced intent)
+  if (!C.forced && checkWebishHit(message)) {
     await writeConsentState(threadId, { type: 'web', pending: message });
     ctx.log.debug({ fastpath: 'webish' }, 'guard_webish_hit');
     return { done: true, reply: 'I can look this up on the web. Want me to search now?' };
@@ -143,7 +143,9 @@ export async function runGraphTurn(
     const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
     
     try {
-      const cityResult = await callLLM('city_parser', { log: ctx.log });
+      const tpl = await getPrompt('city_parser');
+      const prompt = tpl.replace('{message}', message).replace('{context_city}', context.city ?? '');
+      const cityResult = await callLLM(prompt, { responseFormat: 'json', log: ctx.log });
       const parsed = JSON.parse(cityResult);
       
       if (parsed.confidence >= 0.6 && parsed.city) {
@@ -365,9 +367,10 @@ function checkMissingSlots(intent: string, slots: Record<string, string>, messag
   const hasWhen = !!(slots.dates?.trim() || slots.month?.trim());
   const hasImmediateContext = /\b(today|now|currently|right now)\b/i.test(message);
   const hasSpecialContext = /\b(kids?|children|family|business|work|summer|winter|spring|fall)\b/i.test(message);
+  const wantsOverview = /\b(tell me about|information about|info about|facts about|overview of|what is)\b/i.test(message);
   
   if (needsCity && !hasCity) missing.push('city');
-  if (intent === 'destinations' && !hasWhen) missing.push('dates');
+  if (intent === 'destinations' && !hasWhen && !wantsOverview) missing.push('dates');
   if (intent === 'packing' && !hasWhen && !hasImmediateContext && !hasSpecialContext) missing.push('dates');
   
   return missing;
@@ -552,8 +555,15 @@ async function flightsNode(
   try {
     const { searchFlights, convertToAmadeusDate } = await import('../tools/amadeus_flights.js');
     
-    const departureDate = mergedSlots.departureDate || mergedSlots.dates;
+    let departureDate = mergedSlots.departureDate || mergedSlots.dates;
     const returnDate = mergedSlots.returnDate;
+    
+    // If no date specified, default to today for current price queries
+    if (!departureDate && mergedSlots.originCity && (mergedSlots.destinationCity || mergedSlots.city)) {
+      const today = new Date();
+      departureDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+      logger.log?.debug({ defaultDate: departureDate }, 'flights_using_default_date');
+    }
     
     if (mergedSlots.originCity && (mergedSlots.destinationCity || mergedSlots.city) && departureDate) {
       const result = await searchFlights({

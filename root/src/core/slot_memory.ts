@@ -109,12 +109,32 @@ export async function setLastUserMessage(threadId: string, message: string): Pro
   await store.setJson('state', threadId, { ...prev, lastUserMessage: message });
 }
 
+const LOCATION_KEY_ORDER = ['city', 'destinationCity', 'country', 'originCity', 'region', 'state', 'countryName'];
+const TIME_KEYS = ['month', 'dates', 'departureDate', 'returnDate', 'travelWindow', 'travelDates'];
+const PROFILE_KEYS = ['travelerProfile', 'travelStyle', 'groupType', 'budgetLevel', 'activityType', 'tripPurpose'];
+
+function normalizeLocationName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z]/g, '');
+}
+
+function getPrimaryLocation(slots: Record<string, string>): string | undefined {
+  for (const key of LOCATION_KEY_ORDER) {
+    const value = slots[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 export function normalizeSlots(
   prior: Record<string, string>, 
   extracted: Record<string, string | null>,
   intent?: string
 ): Record<string, string> {
-  const out = { ...prior };
+  let out = { ...prior };
   const safe: Record<string, string> = {};
 
   // Convert null values to empty strings and filter out
@@ -180,7 +200,24 @@ export function normalizeSlots(
     }
   }
 
-  return { ...out, ...filtered };
+  const priorPrimary = getPrimaryLocation(prior);
+  const newPrimary = getPrimaryLocation(filtered);
+
+  if (newPrimary) {
+    if (!priorPrimary || normalizeLocationName(priorPrimary) !== normalizeLocationName(newPrimary)) {
+      out = {};
+    }
+  }
+
+  const merged = { ...out, ...filtered };
+
+  if (newPrimary && (!priorPrimary || normalizeLocationName(priorPrimary) !== normalizeLocationName(newPrimary))) {
+    for (const key of [...TIME_KEYS, ...PROFILE_KEYS]) {
+      if (!(key in filtered) && key in merged) delete merged[key];
+    }
+  }
+
+  return merged;
 }
 
 export function readConsentState(slots: Record<string, string>) {

@@ -21,7 +21,10 @@ export async function flightOffersGet(
   signal?: AbortSignal
 ): Promise<any> {
   try {
+    console.log('🛫 Starting Amadeus flight search with query:', query);
+    
     const result = await withPolicies(async () => {
+      console.log('🔗 Getting Amadeus client...');
       const amadeus = await getAmadeusClient();
       
       const params = {
@@ -35,9 +38,11 @@ export async function flightOffersGet(
         ...(query.currencyCode && { currencyCode: query.currencyCode }),
       };
       
+      console.log('📡 Making Amadeus API call with params:', params);
       const response = await amadeus.shopping.flightOffersSearch.get(params);
+      console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
       return response.data;
-    }, signal, 10000);
+    }, signal, 10000); // Keep 10 seconds timeout
     
     // Log successful result
     console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
@@ -180,28 +185,68 @@ export async function searchFlights(params: {
   passengers?: number;
   cabinClass?: string;
 }): Promise<any> {
+  console.log('🔍 Starting flight search with params:', params);
+  
   // Resolve city names to IATA codes if needed
   let originCode = params.origin;
   let destinationCode = params.destination;
   
-  // If not 3-letter codes, try to resolve via Amadeus
+  // Quick hardcoded mappings for common cities to avoid API calls
+  const cityMappings: Record<string, string> = {
+    'London': 'LON',
+    'NYC': 'NYC', 
+    'New York': 'NYC',
+    'New York City': 'NYC',
+    'Paris': 'PAR',
+    'Tokyo': 'TYO',
+    'Berlin': 'BER'
+  };
+  
+  // Try hardcoded mapping first
+  if (cityMappings[originCode]) {
+    originCode = cityMappings[originCode];
+    console.log(`📍 Mapped origin ${params.origin} -> ${originCode}`);
+  }
+  
+  if (cityMappings[destinationCode]) {
+    destinationCode = cityMappings[destinationCode];
+    console.log(`📍 Mapped destination ${params.destination} -> ${destinationCode}`);
+  }
+  
+  // If not 3-letter codes and not in hardcoded mappings, try to resolve via Amadeus
   if (originCode.length !== 3 || !/^[A-Z]{3}$/.test(originCode)) {
-    const { resolveCity } = await import('./amadeus_locations.js');
-    const resolved = await resolveCity(originCode);
-    if (resolved.ok) {
-      originCode = resolved.cityCode;
+    console.log(`🔍 Resolving origin city: ${originCode}`);
+    try {
+      const { resolveCity } = await import('./amadeus_locations.js');
+      const resolved = await resolveCity(originCode);
+      if (resolved.ok) {
+        originCode = resolved.cityCode;
+        console.log(`✅ Resolved origin: ${params.origin} -> ${originCode}`);
+      } else {
+        console.log(`❌ Failed to resolve origin: ${params.origin}, reason: ${resolved.reason}`);
+      }
+    } catch (error) {
+      console.log(`❌ Error resolving origin: ${error}`);
     }
-    // Don't throw error - let it try with original name
   }
   
   if (destinationCode.length !== 3 || !/^[A-Z]{3}$/.test(destinationCode)) {
-    const { resolveCity } = await import('./amadeus_locations.js');
-    const resolved = await resolveCity(destinationCode);
-    if (resolved.ok) {
-      destinationCode = resolved.cityCode;
+    console.log(`🔍 Resolving destination city: ${destinationCode}`);
+    try {
+      const { resolveCity } = await import('./amadeus_locations.js');
+      const resolved = await resolveCity(destinationCode);
+      if (resolved.ok) {
+        destinationCode = resolved.cityCode;
+        console.log(`✅ Resolved destination: ${params.destination} -> ${destinationCode}`);
+      } else {
+        console.log(`❌ Failed to resolve destination: ${params.destination}, reason: ${resolved.reason}`);
+      }
+    } catch (error) {
+      console.log(`❌ Error resolving destination: ${error}`);
     }
-    // Don't throw error - let it try with original name
   }
+  
+  console.log(`🛫 Final flight search: ${originCode} -> ${destinationCode} on ${params.departureDate}`);
   
   return flightOffersGet({
     originLocationCode: originCode,

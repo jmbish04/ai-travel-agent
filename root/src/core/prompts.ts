@@ -46,7 +46,8 @@ type PromptName =
   | 'llm_test_evaluator'
   | 'entity_extraction_retry'
   | 'citation_analysis'
-  | 'citation_verification';
+  | 'citation_verification'
+  | 'flight_slot_extractor';
 
 let loaded = false;
 const PROMPTS: Partial<Record<PromptName, string>> = {};
@@ -196,6 +197,9 @@ export async function preloadPrompts(): Promise<void> {
   );
   PROMPTS.citation_verification = await loadFileSafe(
     path.join(base, 'citation_verification.md'),
+  );
+  PROMPTS.flight_slot_extractor = await loadFileSafe(
+    path.join(base, 'flight_slot_extractor.md'),
   );
   loaded = true;
 }

@@ -25,7 +25,7 @@ Intent Classification Rules:
 - `flights`: ANY flight-related query including "flights", "fly", "book flight", "airline", flight prices, flight schedules, flight booking, travel from X to Y with dates
 - `irrops`: Flight disruptions, cancellations, delays, rebooking requests, equipment changes, missed connections, "my flight was cancelled", "flight delayed", "need to rebook"
 - `policy`: Visa requirements, immigration rules, passport info, entry requirements, travel policies
-- `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests
+- `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests, and ANY hotel/accommodation/lodging query (e.g., "best hotels in Bangkok", "hotel near LAX", "accommodation in Tokyo")
 - `system`: Questions about the AI assistant, consent responses, clarifications, app functionality
 - `destinations`: Travel destination recommendations, "where to go" questions
 - `weather`: Weather forecasts, climate information, temperature queries
@@ -161,3 +161,11 @@ Output: {"intent":"weather","needExternal":true,"slots":{"city":"Berlin"},"confi
 
 Input: "Previsão do tempo em Lisboa" (Portuguese)
 Output: {"intent":"weather","needExternal":true,"slots":{"city":"Lisbon"},"confidence":0.80,"missingSlots":[]}
+Input: "Best hotels in Bangkok right now"
+Output: {"intent":"web_search","needExternal":true,"slots":{"city":"Bangkok","dates":"today"},"confidence":0.90,"missingSlots":[]}
+
+Input: "What are the change fees for JetBlue flights? Get me the official policy with receipts."
+Output: {"intent":"policy","needExternal":true,"slots":{"city":"JetBlue"},"confidence":0.92,"missingSlots":[]}
+
+Input: "My flight DL8718 from CDG to LHR was cancelled, please help me rebook"
+Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","dates":"today"},"confidence":0.93,"missingSlots":[]}

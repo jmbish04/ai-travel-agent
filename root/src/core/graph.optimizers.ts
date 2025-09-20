@@ -16,7 +16,7 @@ type Entities = {
 
 // Precompiled regex patterns
 export const RE = {
-  policy: /\b(visa|passport|entry|baggage|refund|policy|fare\s*rules?)\b/i,
+  policy: /\b(visa|passport|entry|baggage|carry\s*-?on|refund|policy|fare\s*rules?|change\s*fees?|rebook(ing)?\s*fee|cancellation\s*policy)\b/i,
   webish: /\b(prices?|fare|deals?|events?|this\s+week(end)?|hotels?\s+under\s+\$?\d+)\b/i,
   yes: /^(yes|y|sure|ok(ay)?|proceed|go(\s*ahead)?|do\s*it)$/i,
   no: /^(no|n|nope|skip|pass|cancel|nah)$/i,
@@ -57,7 +57,25 @@ export function checkPolicyHit(message: string): boolean {
 }
 
 export function checkWebishHit(message: string): boolean {
-  return RE.webish.test(message);
+  const lower = message.toLowerCase();
+
+  // Never hijack flight or weather intents
+  const mentionsFlight = /\b(flight|flights|airfare|airline|ticket|book|booking)\b/.test(lower)
+    || /\bfrom\b.*\bto\b/.test(lower)
+    || /\b([A-Z]{3})\s*(?:to|→|->)\s*([A-Z]{3})\b/.test(message);
+  if (mentionsFlight) return false;
+
+  const mentionsWeather = /\b(weather|forecast|temperature|climate)\b/.test(lower);
+  if (mentionsWeather) return false;
+
+  // Hotels and accommodations should go via web search (we don't have a hotels API)
+  const mentionsHotels = /\b(hotel|hotels|accommodation|accommodations|lodging|stay|resort|hostel)\b/.test(lower);
+  const mentionsRecency = /\b(right now|today|tonight|this\s+week|current|currently|now)\b/.test(lower);
+
+  if (mentionsHotels) return true;
+
+  // Generic web-ish patterns (prices, deals, events, this week, etc.)
+  return RE.webish.test(lower) || mentionsRecency;
 }
 
 // Decision table types

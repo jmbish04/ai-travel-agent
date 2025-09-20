@@ -621,13 +621,9 @@ export async function parseIntent(text: string, context?: Record<string, any>, l
     const raw = await callLLM(prompt, { responseFormat: 'json', log: logger });
     const json = JSON.parse(raw);
     const result = IntentParseResult.parse(json);
-    
-    // Merge context slots with extracted slots
-    const mergedSlots = { ...context, ...result.slots };
-    
     return {
       success: true,
-      data: { ...result, slots: mergedSlots },
+      data: result,
       confidence: result.confidence,
     };
   } catch (error) {
@@ -645,7 +641,7 @@ function parseIntentWithPatterns(text: string, context?: Record<string, any>): P
   if (/weather|temperature|forecast|climate/.test(lower)) {
     return {
       success: true,
-      data: { intent: 'weather', confidence: 0.8, slots: context || {} },
+      data: { intent: 'weather', confidence: 0.8, slots: {} },
       confidence: 0.8,
     };
   }
@@ -653,7 +649,7 @@ function parseIntentWithPatterns(text: string, context?: Record<string, any>): P
   if (/pack|bring|wear|clothes|luggage/.test(lower)) {
     return {
       success: true,
-      data: { intent: 'packing', confidence: 0.8, slots: context || {} },
+      data: { intent: 'packing', confidence: 0.8, slots: {} },
       confidence: 0.8,
     };
   }
@@ -661,7 +657,7 @@ function parseIntentWithPatterns(text: string, context?: Record<string, any>): P
   if (/attraction|museum|do in|activities|visit/.test(lower)) {
     return {
       success: true,
-      data: { intent: 'attractions', confidence: 0.8, slots: context || {} },
+      data: { intent: 'attractions', confidence: 0.8, slots: {} },
       confidence: 0.8,
     };
   }
@@ -669,14 +665,14 @@ function parseIntentWithPatterns(text: string, context?: Record<string, any>): P
   if (/where to go|destination|recommend|suggest/.test(lower)) {
     return {
       success: true,
-      data: { intent: 'destinations', confidence: 0.8, slots: context || {} },
+      data: { intent: 'destinations', confidence: 0.8, slots: {} },
       confidence: 0.8,
     };
   }
   
   return {
     success: true,
-    data: { intent: 'unknown', confidence: 0.3, slots: context || {} },
+    data: { intent: 'unknown', confidence: 0.3, slots: {} },
     confidence: 0.3,
   };
 }
@@ -796,4 +792,25 @@ export async function extractSlots(text: string, context?: Record<string, any>, 
   }
   
   return slots;
+}
+
+export async function extractFlightSlotsOnce(text: string, context?: Record<string, any>, logger?: any): Promise<Record<string, string>> {
+  try {
+    const tpl = await getPrompt('flight_slot_extractor');
+    const prompt = tpl.replace('{text}', text);
+    const raw = await callLLM(prompt, { responseFormat: 'json', log: logger });
+    const json = JSON.parse(raw) as any;
+    const slots: Record<string, string> = {};
+    if (json.originCity && typeof json.originCity === 'string') slots.originCity = json.originCity;
+    if (json.destinationCity && typeof json.destinationCity === 'string') slots.destinationCity = json.destinationCity;
+    if (json.destinationCity && !slots.city) slots.city = json.destinationCity;
+    if (json.departureDate && typeof json.departureDate === 'string') slots.departureDate = json.departureDate;
+    if (json.returnDate && typeof json.returnDate === 'string') slots.returnDate = json.returnDate;
+    if (Number.isFinite(json.passengers) && json.passengers > 0) slots.passengers = String(json.passengers);
+    if (json.cabinClass && typeof json.cabinClass === 'string') slots.cabinClass = json.cabinClass;
+    return slots;
+  } catch (error) {
+    // Fallback to multi-call extractor (slower)
+    return extractSlots(text, context, logger);
+  }
 }

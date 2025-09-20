@@ -18,14 +18,16 @@ export async function getAmadeusClient(): Promise<Amadeus> {
     throw new Error('AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET required');
   }
 
-  console.log(`Initializing Amadeus client for ${hostname} environment`);
+  if (process.env.LOG_LEVEL === 'debug') {
+    console.log(`Initializing Amadeus client for ${hostname} environment`);
+  }
 
   _client = new Amadeus({
     clientId: process.env.AMADEUS_CLIENT_ID,
     clientSecret: process.env.AMADEUS_CLIENT_SECRET,
     hostname,
-    logger: console,
-    logLevel: process.env.AMADEUS_LOG_LEVEL ?? 'warn',
+    // Avoid noisy SDK logs in production; can be overridden via env
+    ...(process.env.AMADEUS_LOG_LEVEL ? { logLevel: process.env.AMADEUS_LOG_LEVEL } : {}),
     customAppId: 'navan',
     customAppVersion: process.env.APP_VERSION ?? 'dev',
   });
