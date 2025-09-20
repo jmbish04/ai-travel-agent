@@ -32,6 +32,15 @@ function fallbackBuildClarifyingQuestion(
   slots: Record<string, string> = {},
 ): string {
   const miss = new Set(missing.map((m) => m.toLowerCase()));
+  if (miss.has('origin') && miss.has('destination')) {
+    return 'Where are you departing from and flying to?';
+  }
+  if (miss.has('origin')) {
+    return 'Where are you departing from?';
+  }
+  if (miss.has('destination')) {
+    return 'Where would you like to fly to?';
+  }
   if (miss.has('dates') && miss.has('city')) {
     // Keep wording aligned with existing tests
     return 'Could you share the city and month/dates?';
@@ -45,4 +54,3 @@ function fallbackBuildClarifyingQuestion(
   }
   return 'Could you provide more details about your travel plans?';
 }
-

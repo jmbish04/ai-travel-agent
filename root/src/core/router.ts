@@ -339,7 +339,10 @@ export async function routeIntent({ message, threadId, logger }: {
       logger?.log?.debug({ assessment }, 'complexity_consent_gate');
       return RouterResult.parse({
         intent:'system', needExternal:false,
-        slots:{ deep_research_consent_needed:'true', complexity_score },
+        slots:{
+          deep_research_consent_needed:'true',
+          complexity_score:complexityScore
+        },
         confidence:0.9
       });
     }
