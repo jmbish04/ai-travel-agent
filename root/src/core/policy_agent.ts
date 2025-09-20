@@ -272,9 +272,23 @@ export class PolicyAgent {
       const response = await callLLM(prompt, { responseFormat: 'json', log });
       const assessment = JSON.parse(response.trim());
       
+      // Prioritize low FCS scores over LLM assessment
+      const lowQualityScores = avgScore < 0.5;
+      const llmRecommendation = assessment.recommendWebSearch || assessment.assessment === 'INSUFFICIENT';
+      
+      if (log?.debug) {
+        log.debug({ 
+          avgScore, 
+          lowQualityScores, 
+          llmRecommendation,
+          finalDecision: lowQualityScores || llmRecommendation 
+        }, 'FCS assessment decision process');
+      }
+      
       return {
-        needsWebSearch: assessment.recommendWebSearch || assessment.assessment === 'INSUFFICIENT',
-        reason: assessment.reason || 'Quality assessment completed'
+        needsWebSearch: lowQualityScores || llmRecommendation,
+        reason: lowQualityScores ? `Low FCS score (${avgScore.toFixed(3)} < 0.5) indicates poor relevance` : 
+                (assessment.reason || 'Quality assessment completed')
       };
     } catch (error) {
       if (log?.warn) {

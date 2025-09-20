@@ -488,7 +488,7 @@ export async function routeIntent({ message, threadId, logger }: {
         llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
       }
     } catch (error) {
-      logger?.log?.debug({ error: error.message }, 'search_query_optimization_failed');
+      logger?.log?.debug({ error: String(error) }, 'search_query_optimization_failed');
       // Use original message as fallback
       llmNormalized.slots = { ...llmNormalized.slots, search_query: m };
     }
