@@ -4,111 +4,576 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voyant Metrics Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: #333; margin-bottom: 20px; text-align: center; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .card h2 { color: #555; margin-bottom: 10px; font-size: 18px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
-        .hint { font-size: 13px; color: #7a7a7a; margin-bottom: 12px; line-height: 1.4; }
-        .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
-        .metric:last-child { border-bottom: none; }
-        .metric-name { color: #666; }
-        .metric-value { font-weight: bold; color: #333; }
-        .status { text-align: center; padding: 10px; margin-bottom: 20px; border-radius: 4px; }
-        .status.online { background: #d4edda; color: #155724; }
-        .status.offline { background: #f8d7da; color: #721c24; }
-        .refresh-btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin-bottom: 20px; }
-        .refresh-btn:hover { background: #0056b3; }
-        .auto-refresh { margin-left: 10px; }
-        .alert { color: #721c24; }
-        .warn { color: #856404; }
-        .ok { color: #155724; }
-        .spark { font-family: monospace; letter-spacing: 1px; color: #333; }
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #64748b;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --gray-700: #334155;
+            --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: #f1f5f9;
+            color: var(--gray-800);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding: 16px 24px;
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            background: var(--primary);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .logo-text {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--gray-900);
+        }
+
+        .logo-text span {
+            color: var(--primary);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .status-indicator.online {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .status-indicator.offline {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .refresh-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .refresh-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--gray-600);
+        }
+
+        .auto-refresh input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary);
+        }
+
+        .dashboard-title {
+            margin-bottom: 24px;
+            padding: 0 8px;
+        }
+
+        .dashboard-title h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--gray-900);
+            margin-bottom: 8px;
+        }
+
+        .dashboard-title p {
+            color: var(--gray-600);
+            max-width: 800px;
+            font-size: 16px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 24px;
+            box-shadow: var(--box-shadow);
+            transition: box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--box-shadow-lg);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .card.business .card-icon {
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+        }
+
+        .card.chat .card-icon {
+            background: rgba(100, 116, 139, 0.1);
+            color: var(--secondary);
+        }
+
+        .card.router .card-icon {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .card.clarify .card-icon {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .card.fallback .card-icon {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .card.citations .card-icon {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--info);
+        }
+
+        .card.external .card-icon {
+            background: rgba(163, 163, 163, 0.1);
+            color: var(--gray-500);
+        }
+
+        .card.perf .card-icon {
+            background: rgba(139, 92, 246, 0.1);
+            color: #8b5cf6;
+        }
+
+        .card.tools .card-icon {
+            background: rgba(236, 72, 153, 0.1);
+            color: #ec4899;
+        }
+
+        .card.alerts .card-icon {
+            background: rgba(249, 115, 22, 0.1);
+            color: #f97316;
+        }
+
+        .card.trends .card-icon {
+            background: rgba(14, 165, 233, 0.1);
+            color: #0ea5e9;
+        }
+
+        .card h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--gray-900);
+        }
+
+        .card .hint {
+            color: var(--gray-600);
+            font-size: 14px;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-name {
+            color: var(--gray-700);
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: var(--gray-900);
+            font-size: 15px;
+        }
+
+        .alert {
+            color: var(--danger);
+            font-weight: 600;
+        }
+
+        .warn {
+            color: var(--warning);
+            font-weight: 600;
+        }
+
+        .ok {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .spark {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            letter-spacing: 1px;
+            color: var(--primary);
+            font-size: 16px;
+        }
+
+        .guide-card {
+            grid-column: 1 / -1;
+        }
+
+        .guide-content {
+            margin-top: 16px;
+        }
+
+        .guide-content .metric {
+            padding: 16px;
+            background-color: var(--gray-100);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-bottom: none;
+        }
+
+        .guide-content .metric:last-child {
+            margin-bottom: 0;
+        }
+
+        .guide-content .metric-name {
+            font-weight: 600;
+            color: var(--gray-800);
+        }
+
+        .guide-content .metric-value {
+            font-weight: 400;
+            color: var(--gray-700);
+            text-align: right;
+            max-width: 70%;
+        }
+
+        .guide-content .metric-value b {
+            font-weight: 600;
+        }
+
+        footer {
+            text-align: center;
+            padding: 24px;
+            color: var(--gray-500);
+            font-size: 14px;
+            border-top: 1px solid var(--gray-200);
+            margin-top: 24px;
+        }
+
+        @media (max-width: 1200px) {
+            .grid {
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            header {
+                flex-direction: column;
+                gap: 16px;
+                align-items: flex-start;
+            }
+            
+            .header-controls {
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Voyant Travel Assistant - Metrics Dashboard</h1>
-        <p class="hint" style="text-align:center; max-width:760px; margin:0 auto 18px;">
-            These cards answer two interview-critical questions: are answers grounded and helpful, and do we route/clarify fast enough to keep users happy?
-        </p>
+        <header>
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <div class="logo-text">Voyant<span>Metrics</span></div>
+            </div>
+            <div class="header-controls">
+                <div id="status" class="status-indicator offline">
+                    <i class="fas fa-circle"></i>
+                    <span>Connecting...</span>
+                </div>
+                <button class="refresh-btn" onclick="fetchMetrics()">
+                    <i class="fas fa-sync-alt"></i>
+                    <span>Refresh</span>
+                </button>
+                <label class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh" checked> Auto-refresh
+                </label>
+            </div>
+        </header>
 
-        <div id="status" class="status offline">Connecting...</div>
-
-        <button class="refresh-btn" onclick="fetchMetrics()">🔄 Refresh</button>
-        <label class="auto-refresh">
-            <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
-        </label>
+        <div class="dashboard-title">
+            <h1>Travel Assistant Performance Dashboard</h1>
+            <p>Monitor key performance indicators for the Voyant travel assistant. These metrics provide insights into user satisfaction, system reliability, and operational efficiency.</p>
+        </div>
 
         <div class="grid">
-            <div class="card">
-                <h2>🏁 Business Overview</h2>
-                <p class="hint">FCR reveals how often we resolve without escalation, while TTR (avg ms) shows how quickly intents finish.</p>
+            <div class="card guide-card">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-book"></i>
+                    </div>
+                    <h2>Dashboard Guide</h2>
+                </div>
+                <p class="hint">
+                    Key metrics and their business significance:
+                </p>
+                <div class="guide-content" id="guide">
+                    <div class="metric">
+                        <span class="metric-name">First Call Resolution (FCR)</span>
+                        <span class="metric-value">Measures the percentage of customer issues resolved in the first interaction. Target: >60%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">Citation Coverage & Verification</span>
+                        <span class="metric-value">Ensures answers are grounded in reliable sources. High coverage and low failure rates indicate trustworthy responses.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">Router Confidence</span>
+                        <span class="metric-value">Low confidence scores indicate ambiguous user intents that may require clarification or retraining.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">External Request Latency</span>
+                        <span class="metric-value">Measures the performance of external APIs. High latency impacts user experience and should be monitored closely.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">End-to-End Latency</span>
+                        <span class="metric-value">Overall response time. Critical for user satisfaction. Target: <3s for 95th percentile.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card business">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-briefcase"></i>
+                    </div>
+                    <h2>Business Overview</h2>
+                </div>
+                <p class="hint">Key business metrics including session resolution and time to resolution.</p>
                 <div id="business"></div>
             </div>
-            <div class="card">
-                <h2>📊 Chat Activity</h2>
-                <p class="hint">Turns per intent highlight demand hot-spots; sudden spikes often correlate with new features or regressions.</p>
+
+            <div class="card chat">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-comments"></i>
+                    </div>
+                    <h2>Chat Activity</h2>
+                </div>
+                <p class="hint">Conversation metrics highlighting user engagement patterns.</p>
                 <div id="chatActivity"></div>
             </div>
 
-            <div class="card">
-                <h2>🎯 Router Performance</h2>
-                <p class="hint">Low-confidence routes are early warning for off-topic replies or intents that need better training.</p>
+            <div class="card router">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-route"></i>
+                    </div>
+                    <h2>Router Performance</h2>
+                </div>
+                <p class="hint">Intent classification confidence and accuracy metrics.</p>
                 <div id="routerPerf"></div>
             </div>
 
-            <div class="card">
-                <h2>❓ Clarifications</h2>
-                <p class="hint">Compare clarify requests vs resolved to confirm we collect missing slots instead of leaving users stuck.</p>
+            <div class="card clarify">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-question-circle"></i>
+                    </div>
+                    <h2>Clarifications</h2>
+                </div>
+                <p class="hint">Effectiveness of clarification prompts in resolving user intents.</p>
                 <div id="clarifications"></div>
             </div>
 
-            <div class="card">
-                <h2>🔄 Fallbacks</h2>
-                <p class="hint">Web or browser fallback surges signal gaps in API coverage or flaky upstreams; investigate prolonged increases.</p>
+            <div class="card fallback">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-undo"></i>
+                    </div>
+                    <h2>Fallbacks</h2>
+                </div>
+                <p class="hint">Fallback mechanism usage indicating gaps in primary capabilities.</p>
                 <div id="fallbacks"></div>
             </div>
 
-            <div class="card">
-                <h2>📚 Citations & Verification</h2>
-                <p class="hint">Citation coverage and verify pass rate are our north-star for grounded answers from web search or RAG.</p>
+            <div class="card citations">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-bookmark"></i>
+                    </div>
+                    <h2>Citations & Verification</h2>
+                </div>
+                <p class="hint">Source grounding and factual accuracy of assistant responses.</p>
                 <div id="citations"></div>
             </div>
 
-            <div class="card">
-                <h2>🌐 External Requests</h2>
-                <p class="hint">Latency and status per target expose tool reliability—watch for slow Brave/Tavily responses that erode relevance.</p>
+            <div class="card external">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <h2>External Requests</h2>
+                </div>
+                <p class="hint">Performance and reliability of external API integrations.</p>
                 <div id="external"></div>
             </div>
 
-            <div class="card">
-                <h2>⚡ Performance</h2>
-                <p class="hint">E2E latency buckets keep us honest on UX; p95 should stay under the 3–6s band depending on cache/fresh data.</p>
+            <div class="card perf">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-tachometer-alt"></i>
+                    </div>
+                    <h2>Performance</h2>
+                </div>
+                <p class="hint">System response times and operational efficiency metrics.</p>
                 <div id="perf"></div>
             </div>
 
-            <div class="card">
-                <h2>🧰 Tool Reliability</h2>
-                <p class="hint">Timeout rate and calls/turn help spot flaky providers and chat-tool churn.</p>
+            <div class="card tools">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-wrench"></i>
+                    </div>
+                    <h2>Tool Reliability</h2>
+                </div>
+                <p class="hint">Reliability metrics for integrated tools and services.</p>
                 <div id="tools"></div>
             </div>
 
-            <div class="card">
-                <h2>⚠️ Alerts</h2>
-                <p class="hint">Threshold-based warnings derived from SLO targets.</p>
+            <div class="card alerts">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-bell"></i>
+                    </div>
+                    <h2>Alerts</h2>
+                </div>
+                <p class="hint">Active service level objective violations requiring attention.</p>
                 <div id="alerts"></div>
             </div>
 
-            <div class="card">
-                <h2>📈 Trends</h2>
-                <p class="hint">Last 30 samples (auto-refresh) for key KPIs.</p>
+            <div class="card trends">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-chart-bar"></i>
+                    </div>
+                    <h2>Trends</h2>
+                </div>
+                <p class="hint">Historical trends for key performance indicators.</p>
                 <div id="trends"></div>
             </div>
         </div>
+
+        <footer>
+            <p>Voyant Travel Assistant Metrics Dashboard • Updated in real-time</p>
+        </footer>
     </div>
 
     <script>
@@ -154,8 +619,9 @@
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
                 const data = await response.json();
-                document.getElementById('status').className = 'status online';
-                document.getElementById('status').textContent = `✅ Connected - Last updated: ${new Date().toLocaleTimeString()}`;
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status-indicator online';
+                statusEl.innerHTML = '<i class="fas fa-circle"></i><span>Connected</span>';
 
                 // Clear containers
                 ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf', 'tools', 'alerts', 'trends'].forEach(id => {
@@ -165,14 +631,14 @@
                 // Business Overview
                 const bizDiv = document.getElementById('business');
                 if (data.business) {
-                    renderMetrics('total_sessions', data.business.total_sessions || 0, bizDiv);
-                    renderMetrics('resolved_sessions', data.business.resolved_sessions || 0, bizDiv);
-                    renderMetrics('fcr_rate', data.business.fcr_rate || 0, bizDiv);
+                    renderMetrics('Total Sessions', data.business.total_sessions || 0, bizDiv);
+                    renderMetrics('Resolved Sessions', data.business.resolved_sessions || 0, bizDiv);
+                    renderMetrics('FCR Rate', (data.business.fcr_rate || 0).toFixed(3), bizDiv);
                     if (typeof data.business.deflection_rate === 'number') {
-                        renderMetrics('deflection_rate', data.business.deflection_rate, bizDiv);
+                        renderMetrics('Deflection Rate', data.business.deflection_rate.toFixed(3), bizDiv);
                     }
                     if (data.business.session_outcomes) {
-                        renderMetrics('outcomes', data.business.session_outcomes, bizDiv);
+                        renderMetrics('Outcomes', data.business.session_outcomes, bizDiv);
                     }
                     if (data.business.ttr_ms_by_intent) {
                         const ttrView = {};
@@ -181,7 +647,7 @@
                             // @ts-ignore
                             ttrView[k] = (v && v.avg_ms) ? v.avg_ms : 0;
                         }
-                        renderMetrics('ttr_avg_ms{intent}', ttrView, bizDiv);
+                        renderMetrics('TTR Avg (ms)', ttrView, bizDiv);
                     }
                 } else {
                     bizDiv.innerHTML = '<div class="metric"><span class="metric-name">Sessions</span><span class="metric-value">No data</span></div>';
@@ -191,27 +657,27 @@
                 const chatDiv = document.getElementById('chatActivity');
                 renderMetrics('Total Messages', data.messages_total, chatDiv);
                 if (data.chat_turns && Object.keys(data.chat_turns).length > 0) {
-                    renderMetrics('chat_turns', data.chat_turns, chatDiv);
+                    renderMetrics('Chat Turns', data.chat_turns, chatDiv);
                 }
 
                 // Router Performance
                 const routerDiv = document.getElementById('routerPerf');
                 if (data.router_low_conf && Object.keys(data.router_low_conf).length > 0) {
-                    renderMetrics('low_confidence', data.router_low_conf, routerDiv);
+                    renderMetrics('Low Confidence', data.router_low_conf, routerDiv);
                 } else {
                     routerDiv.innerHTML = '<div class="metric"><span class="metric-name">Low Confidence</span><span class="metric-value">0</span></div>';
                 }
                 if (data.router_confidence_buckets) {
-                    renderMetrics('confidence_buckets', data.router_confidence_buckets, routerDiv);
+                    renderMetrics('Confidence Buckets', data.router_confidence_buckets, routerDiv);
                 }
 
                 // Clarifications
                 const clarifyDiv = document.getElementById('clarifications');
                 if (data.clarify_requests && Object.keys(data.clarify_requests).length > 0) {
-                    renderMetrics('requests', data.clarify_requests, clarifyDiv);
+                    renderMetrics('Requests', data.clarify_requests, clarifyDiv);
                 }
                 if (data.clarify_resolved && Object.keys(data.clarify_resolved).length > 0) {
-                    renderMetrics('resolved', data.clarify_resolved, clarifyDiv);
+                    renderMetrics('Resolved', data.clarify_resolved, clarifyDiv);
                 }
                 if (clarifyDiv.innerHTML === '') {
                     clarifyDiv.innerHTML = '<div class="metric"><span class="metric-name">No clarifications yet</span><span class="metric-value">-</span></div>';
@@ -220,7 +686,7 @@
                 // Fallbacks
                 const fallbackDiv = document.getElementById('fallbacks');
                 if (data.fallbacks && Object.keys(data.fallbacks).length > 0) {
-                    renderMetrics('fallbacks', data.fallbacks, fallbackDiv);
+                    renderMetrics('Fallbacks', data.fallbacks, fallbackDiv);
                 } else {
                     fallbackDiv.innerHTML = '<div class="metric"><span class="metric-name">No fallbacks yet</span><span class="metric-value">-</span></div>';
                 }
@@ -229,27 +695,27 @@
                 const citDiv = document.getElementById('citations');
                 renderMetrics('With Citations', data.answers_with_citations_total || 0, citDiv);
                 if (typeof data.answers_using_external_data_total === 'number') {
-                    renderMetrics('answers_using_external', data.answers_using_external_data_total, citDiv);
+                    renderMetrics('Using External Data', data.answers_using_external_data_total, citDiv);
                 }
                 if (data.quality) {
-                    renderMetrics('verify_pass_rate', data.quality.verify_pass_rate || 0, citDiv);
+                    renderMetrics('Verify Pass Rate', (data.quality.verify_pass_rate || 0).toFixed(3), citDiv);
                     if (typeof data.quality.verify_fail_rate === 'number') {
-                        renderMetrics('verify_fail_rate', data.quality.verify_fail_rate, citDiv);
+                        renderMetrics('Verify Fail Rate', data.quality.verify_fail_rate.toFixed(3), citDiv);
                     }
-                    renderMetrics('citation_coverage', data.quality.citation_coverage || 0, citDiv);
+                    renderMetrics('Citation Coverage', (data.quality.citation_coverage || 0).toFixed(3), citDiv);
                     if (typeof data.quality.clarification_efficacy === 'number') {
-                        renderMetrics('clarification_efficacy', data.quality.clarification_efficacy, citDiv);
+                        renderMetrics('Clarification Efficacy', data.quality.clarification_efficacy.toFixed(3), citDiv);
                     }
                 }
                 if (data.verify_fails && Object.keys(data.verify_fails).length > 0) {
-                    renderMetrics('verify_fails', data.verify_fails, citDiv);
+                    renderMetrics('Verify Fails', data.verify_fails, citDiv);
                 }
 
                 // External Requests
                 const extDiv = document.getElementById('external');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     data.external_requests.targets.forEach(target => {
-                        const tr = (typeof target.timeout_rate === 'number') ? `, timeout ${Math.round(target.timeout_rate*100)}%` : '';
+                        const tr = (typeof target.timeout_rate === 'number') ? `, timeout ${(target.timeout_rate*100).toFixed(1)}%` : '';
                         extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target}</span><span class="metric-value">${target.total} (${target.latency.avg_ms}ms avg${tr})</span></div>`;
                     });
                 } else {
@@ -259,14 +725,14 @@
                 // Performance
                 const perfDiv = document.getElementById('perf');
                 if (data.performance && data.performance.e2e_latency_ms) {
-                    renderMetrics('e2e_avg_ms', data.performance.e2e_latency_ms.avg_ms || 0, perfDiv);
-                    renderMetrics('e2e_pmin_ms', data.performance.e2e_latency_ms.min_ms || 0, perfDiv);
-                    renderMetrics('e2e_pmax_ms', data.performance.e2e_latency_ms.max_ms || 0, perfDiv);
+                    renderMetrics('E2E Avg (ms)', data.performance.e2e_latency_ms.avg_ms || 0, perfDiv);
+                    renderMetrics('E2E Min (ms)', data.performance.e2e_latency_ms.min_ms || 0, perfDiv);
+                    renderMetrics('E2E Max (ms)', data.performance.e2e_latency_ms.max_ms || 0, perfDiv);
                     if (data.performance.e2e_latency_ms.buckets) {
-                        renderMetrics('e2e_buckets_ms', data.performance.e2e_latency_ms.buckets, perfDiv);
+                        renderMetrics('Latency Buckets', data.performance.e2e_latency_ms.buckets, perfDiv);
                     }
                     if (typeof data.performance.tool_calls_per_turn === 'number') {
-                        renderMetrics('tool_calls_per_turn', data.performance.tool_calls_per_turn, perfDiv);
+                        renderMetrics('Tool Calls/Turn', data.performance.tool_calls_per_turn.toFixed(2), perfDiv);
                     }
                 } else {
                     perfDiv.innerHTML = '<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value">No data</span></div>';
@@ -276,9 +742,9 @@
                 const toolsDiv = document.getElementById('tools');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     const totals = data.external_requests.targets.reduce((acc, t) => acc + (t.total || 0), 0);
-                    renderMetrics('total_tool_calls', totals, toolsDiv);
+                    renderMetrics('Total Tool Calls', totals, toolsDiv);
                     data.external_requests.targets.forEach(t => {
-                        const rate = typeof t.timeout_rate === 'number' ? Math.round(t.timeout_rate * 100) + '%' : 'n/a';
+                        const rate = typeof t.timeout_rate === 'number' ? (t.timeout_rate * 100).toFixed(1) + '%' : 'n/a';
                         toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${t.target} timeout</span><span class="metric-value">${rate}</span></div>`;
                     });
                 } else {
@@ -295,7 +761,7 @@
                 if (e2eAvg > 6000) alerts.push(['E2E latency > 6s', 'alert']);
                 else if (e2eAvg > 3000) alerts.push(['E2E latency > 3s', 'warn']);
                 if (vfr > 0.05) alerts.push(['Verify fail rate > 5%', 'alert']);
-                if (fcr < 0.6 && (data.business?.total_sessions || 0) >= 5) alerts.push(['FCR < 0.60', 'warn']);
+                if (fcr < 0.6 && (data.business?.total_sessions || 0) >= 5) alerts.push(['FCR < 60%', 'warn']);
                 timeoutBreaches.forEach(t => alerts.push([`${t.target} timeout > 2%`, 'alert']));
                 if (alerts.length === 0) alerts.push(['All SLOs within targets', 'ok']);
                 alerts.forEach(([msg, level]) => {
@@ -307,13 +773,14 @@
                 pushHistory('e2e_avg_ms', e2eAvg);
                 pushHistory('fcr_rate', fcr);
                 pushHistory('verify_fail_rate', vfr);
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">e2e_avg_ms</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">fcr_rate</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">verify_fail_rate</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">FCR Rate</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Fail Rate</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
 
             } catch (error) {
-                document.getElementById('status').className = 'status offline';
-                document.getElementById('status').textContent = `❌ Error: ${error.message}`;
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status-indicator offline';
+                statusEl.innerHTML = `<i class="fas fa-circle"></i><span>Error: ${error.message}</span>`;
             }
         }
 
