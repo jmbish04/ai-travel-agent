@@ -81,8 +81,7 @@ async function isPronounFollowup(message: string, log?: pino.Logger): Promise<bo
   const consentPrompt = await getPrompt('consent_detector');
   const result = await callLLM(
     consentPrompt + `\n\nUser message: "${message}"`,
-    { format: 'text', maxTokens: 5 },
-    log
+    { responseFormat: 'text' }
   );
   return result.trim().toLowerCase() === 'unclear';
 }
@@ -92,8 +91,7 @@ async function isQuickAck(message: string, log?: pino.Logger): Promise<boolean> 
   const consentPrompt = await getPrompt('consent_detector');
   const result = await callLLM(
     consentPrompt + `\n\nUser message: "${message}"`,
-    { format: 'text', maxTokens: 5 },
-    log
+    { responseFormat: 'text' }
   );
   return result.trim().toLowerCase() === 'yes';
 }
@@ -157,7 +155,7 @@ async function maybeResetContextForMessage(params: {
   const previousLocation = getPrimaryLocation(sanitizedSlots);
   let reset = false;
   let reason: string | undefined;
-  const shouldSkip = await shouldSkipContextDetector(message, params.log);
+  const shouldSkip = await shouldSkipContextDetector(message, params.logger);
   const lastMessage = threadId ? await getLastUserMessage(threadId) : undefined;
 
   let freshSlots: Record<string, string> = {};
@@ -270,6 +268,7 @@ async function clearConsentState(threadId?: string) {
     'dates',
     'month',
     'passengers',
+    'search_query', // Clear old search queries to prevent error message persistence
     'cabinClass',
     'travelerProfile',
     'complexity_score',
@@ -483,8 +482,16 @@ export async function routeIntent({ message, threadId, logger }: {
     clearConsentState(threadId);
   }
   if (llmNormalized.intent === 'web_search' && !llmNormalized.slots?.search_query) {
-    const q = await optimizeSearchQuery(m, ctxSlots, 'web_search', logger?.log);
-    llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
+    try {
+      const q = await optimizeSearchQuery(m, ctxSlots, 'web_search', logger?.log);
+      if (q && q.trim()) {
+        llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
+      }
+    } catch (error) {
+      logger?.log?.debug({ error: error.message }, 'search_query_optimization_failed');
+      // Use original message as fallback
+      llmNormalized.slots = { ...llmNormalized.slots, search_query: m };
+    }
   }
   // metrics
   incTurn(llmNormalized.intent);

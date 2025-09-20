@@ -18,6 +18,30 @@ import {
 import type { SearchResult } from '../tools/search.js';
 import { validateNoCitation } from './citations.js';
 import type { Fact } from './receipts.js';
+
+// Semantic complexity detection
+function isComplexRequest(query: string): boolean {
+  const complexTerms = new Set([
+    'detailed', 'comprehensive', 'in-depth', 'analysis', 'research', 'study',
+    'budget plan', 'itinerary', 'guide'
+  ]);
+  const lower = query.toLowerCase();
+  return Array.from(complexTerms).some(term => lower.includes(term));
+}
+
+// Temporal context detection
+function hasTemporalContext(message: string): boolean {
+  const temporal = new Set(['today', 'now', 'currently', 'right now', 'what to wear']);
+  const lower = message.toLowerCase();
+  return Array.from(temporal).some(term => lower.includes(term));
+}
+
+// Travel context detection
+function hasTravelContext(message: string): boolean {
+  const contexts = new Set(['kids', 'children', 'family', 'business', 'work', 'summer', 'winter', 'spring', 'fall']);
+  const lower = message.toLowerCase();
+  return Array.from(contexts).some(term => lower.includes(term));
+}
 import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage } from './slot_memory.js';
 import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
@@ -70,9 +94,7 @@ async function performWebSearch(
   }
   
   // Determine if this needs Crawlee deep research
-  const isComplexQuery = query.length > 50 || 
-                         /detailed|comprehensive|in-depth|analysis|research|study/.test(query) ||
-                         /budget.*plan|itinerary|guide/.test(query);
+  const isComplexQuery = query.length > 50 || isComplexRequest(query);
   
   ctx.log.debug({ query, isComplexQuery, queryLength: query.length }, 'complex_query_detection');
   
@@ -373,6 +395,20 @@ export async function blendWithFacts(
                    (input.route.slots.month && input.route.slots.month.trim());
                    
   if (input.route.intent === 'unknown') {
+    // If we have a city, use LLM to decide if this is a general info query that needs web search
+    if (cityHint) {
+      const webSearchDeciderPrompt = await getPrompt('web_search_decider');
+      const needsWebSearch = await callLLM(
+        webSearchDeciderPrompt.replace('{message}', input.message),
+        { responseFormat: 'text' }
+      );
+      
+      if (needsWebSearch.trim().toLowerCase() === 'yes') {
+        ctx.log.debug({ intent: 'unknown', city: cityHint, webSearch: true }, 'unknown_intent_with_city_web_search');
+        return await performWebSearch(input.message, ctx, input.threadId, plan);
+      }
+    }
+    
     return {
       reply: 'Could you share the city and month/dates?',
       citations: undefined,
@@ -428,8 +464,8 @@ export async function blendWithFacts(
       return { reply: 'Which city?', citations: undefined };
     }
     // Ask for dates if no time context and no immediate context
-    const hasImmediateContext = /\b(today|now|currently|right now|what to wear)\b/i.test(input.message);
-    if (!whenHint && !hasImmediateContext && !/\b(kids?|children|family|business|work|summer|winter|spring|fall)\b/i.test(input.message)) {
+    const hasImmediateContext = hasTemporalContext(input.message);
+    if (!whenHint && !hasImmediateContext && !hasTravelContext(input.message)) {
       return { reply: 'Which month or travel dates?', citations: undefined };
     }
   }
@@ -437,8 +473,20 @@ export async function blendWithFacts(
     if (!cityHint) {
       return { reply: 'Which city?', citations: undefined };
     }
+    // Use LLM to decide if dates are needed for this specific query
     if (!whenHint) {
-      return { reply: 'Which month or travel dates?', citations: undefined };
+      const webSearchDeciderPrompt = await getPrompt('web_search_decider');
+      const needsWebSearch = await callLLM(
+        webSearchDeciderPrompt.replace('{message}', input.message),
+        { responseFormat: 'text' }
+      );
+      
+      // If it's a general info query that can be answered with web search, skip date requirement
+      if (needsWebSearch.trim().toLowerCase() === 'yes') {
+        // Proceed without dates - web search can handle general city information
+      } else {
+        return { reply: 'Which month or travel dates?', citations: undefined };
+      }
     }
   }
   if (input.route.intent === 'attractions' && !cityHint) {
@@ -584,7 +632,13 @@ export async function blendWithFacts(
           0.85
         ));
       } else {
-        // Use destinations catalog for new recommendations
+        // For general city information without dates, use web search
+        if (!whenHint && cityHint) {
+          ctx.log.debug({ intent: input.route.intent, city: cityHint, hasDate: false }, 'destinations_general_info_query');
+          return await performWebSearch(input.message, ctx, input.threadId, plan);
+        }
+        
+        // Use destinations catalog for new recommendations with dates
         ctx.onStatus?.('Finding destinations...');
         ctx.log.debug({ intent: input.route.intent, slots: input.route.slots }, 'destinations_block_entered');
         try {

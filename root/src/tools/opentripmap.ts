@@ -54,7 +54,7 @@ export async function searchPOIs(input: {
   if (!key) return { ok: false, reason: 'missing_api_key' };
   const radius = Math.max(100, Math.min(20000, input.radiusMeters ?? 4000));
   const limit = Math.max(1, Math.min(50, input.limit ?? 10));
-  const kinds = input.kinds ?? 'interesting_places,cultural,historic,architecture,museums,fortifications,urban_environment,other_buildings_and_structures';
+  const kinds = input.kinds ?? 'interesting_places,cultural,historic,architecture,museums';
   const url =
     `${BASE_URL}/radius?lon=${encodeURIComponent(String(input.lon))}` +
     `&lat=${encodeURIComponent(String(input.lat))}` +

@@ -231,8 +231,8 @@ function stubSynthesize(prompt: string): string {
     });
   }
   
-  // For regular chat responses, return a helpful error message
-  return "I'm experiencing technical difficulties right now. Please try again in a moment, or ask me something about weather, destinations, packing, or attractions.";
+  // For regular chat responses, throw error instead of returning error message
+  throw new Error("LLM service temporarily unavailable");
 }
 
 // NLP Service Functions
@@ -449,7 +449,9 @@ export async function optimizeSearchQuery(
     return optimized;
   } catch (error) {
     if (log) log.debug('Query optimization failed, using fallback');
-    return fallbackOptimizeQuery(query);
+    const fallback = fallbackOptimizeQuery(query);
+    // If fallback also fails, use original query instead of error message
+    return fallback || query;
   }
 }
 

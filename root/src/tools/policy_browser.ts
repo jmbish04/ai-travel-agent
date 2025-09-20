@@ -27,7 +27,7 @@ async function scorePolicyConfidence(
       .replace('{{sourceUrl}}', sourceUrl);
     const raw = await callLLM(prompt, { responseFormat: 'text' });
     const match = raw.match(/(\d+(?:\.\d+)?)/);
-    if (!match) return 0;
+    if (!match || !match[1]) return 0;
     let score = parseFloat(match[1]);
     if (!Number.isFinite(score)) return 0;
     if (score > 1) score /= 100;
@@ -100,7 +100,7 @@ export async function extractPolicyClause(params: {
         const stats = getBreakerStats(host);
         console.warn('policy_browser_breaker_bypass', { host, stats });
         try { (breaker as any).close?.(); } catch {}
-        try { incFallback('browser_breaker_bypass'); } catch {}
+        try { incFallback('browser'); } catch {}
         const result = await withPlaywright(url, params.clause, timeoutSecs);
         return PolicyReceiptSchema.parse(result);
       }

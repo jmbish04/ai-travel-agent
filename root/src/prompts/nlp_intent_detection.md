@@ -21,7 +21,7 @@ Intent definitions:
 - weather: asking about weather conditions, temperature, forecast
 - packing: what to bring, clothes, items for travel
 - attractions: things to do, places to visit, activities
-- destinations: where to go, travel recommendations
+- destinations: where to go, travel recommendations, general city information, "tell me about [city]", city overviews
 - flights: flight search, booking, schedules, prices, airlines
 - unknown: unclear, unrelated, or insufficient information
 
@@ -87,6 +87,27 @@ Output: {"intent":"destinations","confidence":0.75,"needExternal":false,"slots":
 
 Input: "Add family activities"
 Output: {"intent":"attractions","confidence":0.75,"needExternal":false,"slots":{}}
+
+Input: "Tell me about Paris"
+Output: {"intent":"destinations","confidence":0.90,"needExternal":true,"slots":{"city":"Paris"}}
+
+Input: "What's London like?"
+Output: {"intent":"destinations","confidence":0.85,"needExternal":true,"slots":{"city":"London"}}
+
+Input: "Information about Tokyo"
+Output: {"intent":"destinations","confidence":0.90,"needExternal":true,"slots":{"city":"Tokyo"}}
+
+Input: "Tell me about Rome as a travel destination"
+Output: {"intent":"destinations","confidence":0.95,"needExternal":true,"slots":{"city":"Rome"}}
+
+Input: "About Barcelona"
+Output: {"intent":"destinations","confidence":0.80,"needExternal":true,"slots":{"city":"Barcelona"}}
+
+Input: "Paris overview"
+Output: {"intent":"destinations","confidence":0.85,"needExternal":true,"slots":{"city":"Paris"}}
+
+Input: "What can you tell me about Madrid?"
+Output: {"intent":"destinations","confidence":0.90,"needExternal":true,"slots":{"city":"Madrid"}}
 
 Input: "Any festivals or events that week we should plan around?"
 Output: {"intent":"unknown","confidence":0.90,"needExternal":true,"slots":{}}
