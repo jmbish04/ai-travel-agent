@@ -15,6 +15,28 @@ const llmCircuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_CONFIG, 'llm');
 
 type ResponseFormat = 'text' | 'json';
 
+// Lightweight in-memory cache to avoid duplicate LLM calls for identical prompts
+const LLM_CACHE = new Map<string, { ts: number; value: string }>();
+function cacheGet(model: string, format: ResponseFormat, prompt: string): string | undefined {
+  const ttlMs = Math.max(0, Number(process.env.LLM_CACHE_TTL_MS ?? '15000'));
+  const key = `${model}::${format}::${prompt}`;
+  const hit = LLM_CACHE.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.ts > ttlMs) { LLM_CACHE.delete(key); return undefined; }
+  return hit.value;
+}
+function cacheSet(model: string, format: ResponseFormat, prompt: string, value: string) {
+  const key = `${model}::${format}::${prompt}`;
+  const max = Math.max(1, Number(process.env.LLM_CACHE_MAX ?? '64'));
+  if (LLM_CACHE.size >= max) {
+    // evict oldest
+    let oldestKey: string | undefined; let oldestTs = Infinity;
+    for (const [k, v] of LLM_CACHE.entries()) { if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; } }
+    if (oldestKey) LLM_CACHE.delete(oldestKey);
+  }
+  LLM_CACHE.set(key, { ts: Date.now(), value });
+}
+
 // Unified content classification schema
 const ContentClassificationSchema = z.object({
   content_type: z.enum(['travel', 'system', 'policy', 'unrelated', 'budget', 'restaurant', 'flight', 'gibberish', 'emoji_only']),
@@ -107,6 +129,12 @@ async function tryModel(
 ): Promise<string | null> {
   try {
     if (log?.debug) log.debug(`🔗 Trying model: ${model} at ${baseUrl}`);
+    // Cache check
+    const cached = cacheGet(model, format, prompt);
+    if (cached) {
+      if (log?.debug) log.debug('⚡ LLM cache hit');
+      return cached;
+    }
     const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
     
     const result = await llmCircuitBreaker.execute(async () => {
@@ -147,7 +175,9 @@ async function tryModel(
     
     if (typeof content === 'string' && content.trim().length > 0) {
       if (log?.debug) log.debug(`✅ Model ${model} succeeded - Output: ${countTokens(content)} tokens`);
-      return content.trim();
+      const out = content.trim();
+      cacheSet(model, format, prompt, out);
+      return out;
     }
     
     if (log?.debug) log.debug(`❌ Model ${model} returned empty content`);

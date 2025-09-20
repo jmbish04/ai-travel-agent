@@ -137,27 +137,27 @@ export async function runGraphTurn(
     return { done: true, reply: 'I can look this up on the web. Want me to search now?' };
   }
   
-  // Weather fast-path guard - AI-first city extraction
-  if (/\bweather\b/i.test(message) && (/\btoday\b/i.test(message) || /\bthere\b/i.test(message))) {
-    const slots = await getThreadSlots(threadId);
-    const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
-    
-    try {
-      const tpl = await getPrompt('city_parser');
-      const prompt = tpl.replace('{message}', message).replace('{context_city}', context.city ?? '');
-      const cityResult = await callLLM(prompt, { responseFormat: 'json', log: ctx.log });
-      const parsed = JSON.parse(cityResult);
-      
-      if (parsed.confidence >= 0.6 && parsed.city) {
-        ctx.log.debug({ city: parsed.city, confidence: parsed.confidence, fastpath: 'weather_guard' }, 'guard_weather_hit');
-        return await weatherNode(
-          { msg: message, threadId, onStatus: ctx.onStatus },
-          { city: parsed.city },
-          ctx
-        );
+  // Weather fast-path guard (optional). Disabled by default to avoid extra LLM calls.
+  if (process.env.WEATHER_FASTPATH === 'on') {
+    if (/\bweather\b/i.test(message) && (/\btoday\b/i.test(message) || /\bthere\b/i.test(message))) {
+      const slots = await getThreadSlots(threadId);
+      const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
+      try {
+        const tpl = await getPrompt('city_parser');
+        const prompt = tpl.replace('{message}', message).replace('{context_city}', context.city ?? '');
+        const cityResult = await callLLM(prompt, { responseFormat: 'json', log: ctx.log });
+        const parsed = JSON.parse(cityResult);
+        if (parsed.confidence >= 0.6 && parsed.city) {
+          ctx.log.debug({ city: parsed.city, confidence: parsed.confidence, fastpath: 'weather_guard' }, 'guard_weather_hit');
+          return await weatherNode(
+            { msg: message, threadId, onStatus: ctx.onStatus },
+            { city: parsed.city },
+            ctx
+          );
+        }
+      } catch (error) {
+        ctx.log.debug({ error: String(error) }, 'weather_guard_llm_failed');
       }
-    } catch (error) {
-      ctx.log.debug({ error: String(error) }, 'weather_guard_llm_failed');
     }
   }
   
@@ -195,12 +195,15 @@ export async function runGraphTurn(
   const routedIntent = C.forced ?? C.route?.intent;
   const promises = [];
   
-  // Only run NER for flights intent
+  // Only run NER for flights intent when Transformers are enabled
   if (routedIntent === 'flights' && !C.ner) {
-    promises.push((async () => {
-      C.ner = await extractEntitiesEnhanced(message, ctx.log) as Entities;
-      llmCallsThisTurn++;
-    })());
+    const { transformersEnabled } = await import('../config/transformers.js');
+    if (transformersEnabled()) {
+      promises.push((async () => {
+        C.ner = await extractEntitiesEnhanced(message, ctx.log) as Entities;
+        llmCallsThisTurn++;
+      })());
+    }
   }
   
   // Lightweight city extraction for weather/attractions/packing/destinations

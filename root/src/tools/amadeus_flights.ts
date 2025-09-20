@@ -42,7 +42,7 @@ export async function flightOffersGet(
       const response = await amadeus.shopping.flightOffersSearch.get(params);
       console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
       return response.data;
-    }, signal, 10000); // Keep 10 seconds timeout
+    }, signal, 30000); // 30 seconds timeout
     
     // Log successful result
     console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
@@ -115,7 +115,7 @@ export async function flightOffersPost(
       const amadeus = await getAmadeusClient();
       const response = await amadeus.shopping.flightOffersSearch.post(body);
       return response.data;
-    }, signal, 6000);
+    }, signal, 30000);
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPost');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -144,7 +144,7 @@ export async function flightOffersPrice(
       
       const response = await amadeus.shopping.flightOffers.pricing.post(body);
       return response.data;
-    }, signal, 6000);
+    }, signal, 30000);
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPrice');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -168,7 +168,7 @@ export async function seatmapsFromOffer(
       
       const response = await amadeus.shopping.seatmaps.post(body);
       return response.data;
-    }, signal, 6000);
+    }, signal, 30000);
   } catch (error) {
     const stdError = toStdError(error, 'seatmapsFromOffer');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -191,29 +191,7 @@ export async function searchFlights(params: {
   let originCode = params.origin;
   let destinationCode = params.destination;
   
-  // Quick hardcoded mappings for common cities to avoid API calls
-  const cityMappings: Record<string, string> = {
-    'London': 'LON',
-    'NYC': 'NYC', 
-    'New York': 'NYC',
-    'New York City': 'NYC',
-    'Paris': 'PAR',
-    'Tokyo': 'TYO',
-    'Berlin': 'BER'
-  };
-  
-  // Try hardcoded mapping first
-  if (cityMappings[originCode]) {
-    originCode = cityMappings[originCode];
-    console.log(`📍 Mapped origin ${params.origin} -> ${originCode}`);
-  }
-  
-  if (cityMappings[destinationCode]) {
-    destinationCode = cityMappings[destinationCode];
-    console.log(`📍 Mapped destination ${params.destination} -> ${destinationCode}`);
-  }
-  
-  // If not 3-letter codes and not in hardcoded mappings, try to resolve via Amadeus
+  // If not 3-letter codes, try to resolve via Amadeus
   if (originCode.length !== 3 || !/^[A-Z]{3}$/.test(originCode)) {
     console.log(`🔍 Resolving origin city: ${originCode}`);
     try {

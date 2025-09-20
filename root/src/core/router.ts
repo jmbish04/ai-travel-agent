@@ -290,7 +290,7 @@ export async function routeIntent({ message, threadId, logger }: {
     
     // Route based on user's choice (no recursion)
     if (userResponse.includes('direct') || userResponse.includes('search') || userResponse.includes('booking')) {
-      const flightSlots = await extractSlots(pendingQuery, ctxSlots, logger?.log);
+      const flightSlots = await extractFlightSlotsOnce(pendingQuery, ctxSlots, logger?.log);
       logger?.log?.debug({ choice: 'direct_search', slots: flightSlots }, 'flight_clarification_resolved');
       return RouterResult.parse({
         intent: 'flights',
@@ -324,8 +324,8 @@ export async function routeIntent({ message, threadId, logger }: {
     const { isDirect } = isDirectFlightHeuristic(m);
     if (isDirect) {
       await clearConsentState(threadId); // Clear any pending consent for unrelated queries
-      const slots = await extractSlots(m, ctxSlots, logger?.log);
-      logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic)');
+      const slots = await extractFlightSlotsOnce(m, ctxSlots, logger?.log);
+      logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic_llm_unified)');
       const result = RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
       // metrics
       incTurn(result.intent);
