@@ -158,6 +158,7 @@ async function performWebSearch(
   incGeneratedAnswer();
   if (citations.length > 0) {
     incAnswersWithCitations();
+    try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
   }
   
   return { reply, citations };
@@ -252,7 +253,12 @@ export async function handleChat(
   const result = await runGraphTurn(input.message, threadId, ctx);
   if ('done' in result) {
     await pushMessage(threadId, { role: 'assistant', content: result.reply });
-    try { if (result.citations && result.citations.length > 0) incAnswersWithCitations(); } catch {}
+    try {
+      if (result.citations && result.citations.length > 0) {
+        incAnswersWithCitations();
+        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
+      }
+    } catch {}
     try { incGeneratedAnswer(); } catch {}
 
     // Handle receipts if requested
@@ -504,6 +510,7 @@ export async function blendWithFacts(
         // Metrics instrumentation
         incGeneratedAnswer();
         incAnswersWithCitations();
+        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
         
         return { reply, citations: [source] };
       } else {
@@ -589,6 +596,7 @@ export async function blendWithFacts(
             }
             incGeneratedAnswer();
             incAnswersWithCitations();
+            try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
             return { reply, citations: [source] };
           }
         }
@@ -854,6 +862,7 @@ export async function blendWithFacts(
       incGeneratedAnswer();
       if (cits.length > 0) {
         incAnswersWithCitations();
+        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
       }
       
       return { reply: replyWithSource, citations: cits.length ? cits : undefined };

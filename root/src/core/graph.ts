@@ -315,7 +315,15 @@ export async function runGraphTurn(
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
   }
-  
+  // Clarification resolved: if we previously had awaiting_* flags and now no missing slots
+  const hadAwaiting = Object.keys(prior || {}).some((k) => k.startsWith('awaiting_') && (prior as any)[k]);
+  if (hadAwaiting && intent) {
+    try {
+      const { incClarifyResolved } = await import('../util/metrics.js');
+      incClarifyResolved(intent);
+    } catch {}
+  }
+
   // Update slots and set intent
   await updateThreadSlots(threadId, slots, []);
   await setLastIntent(threadId, intent as any);

@@ -25,6 +25,7 @@ let answersWithCitations = 0;
 let verifyPass = 0;
 let verifyFail = 0;
 let generatedAnswers = 0;
+let answersUsingExternal = 0;
 
 // Flow counters (low-cardinality labels only)
 const chatTurns: Record<string, number> = {};
@@ -33,6 +34,15 @@ const clarifyRequests: Record<string, number> = {};
 const clarifyResolved: Record<string, number> = {};
 const fallbacks: Record<string, number> = { web: 0, browser: 0 };
 const verifyFailsByReason: Record<string, number> = {};
+
+// Router confidence distribution buckets
+const routerConfidenceBuckets: Record<string, number> = {
+  '0.0-0.5': 0,
+  '0.5-0.6': 0,
+  '0.6-0.75': 0,
+  '0.75-0.9': 0,
+  '0.9-1.0': 0,
+};
 
 // Business/session metrics (lightweight approximation for dev/demo)
 const sessions = new Map<string, { startedAt: number; intent?: string; turns: number; resolved?: boolean }>();
@@ -52,6 +62,7 @@ type ExtAgg = {
   latency: { count: number; sum: number; min: number; max: number };
 };
 const externalAgg = new Map<string, ExtAgg>(); // key = target
+let toolCallsTotal = 0;
 
 type Labels = { target?: string; status?: string };
 
@@ -75,6 +86,7 @@ let counterFallback: CounterT | undefined;
 let counterAnswersWithCitations: CounterT | undefined;
 let counterVerifyFail: CounterT | undefined;
 let histE2ESeconds: HistogramT | undefined;
+let counterSessionResolved: CounterT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -176,6 +188,12 @@ async function ensureProm(): Promise<void> {
       buckets: [0.3, 0.6, 1, 2, 3, 5, 8],
       registers: [register],
     }) as HistogramT;
+    counterSessionResolved = new Counter({
+      name: 'session_resolved_total',
+      help: 'Sessions resolved by mode',
+      labelNames: ['mode'],
+      registers: [register],
+    }) as CounterT;
   })();
   return initPromise;
 }
@@ -249,6 +267,10 @@ export function incGeneratedAnswer() {
   generatedAnswers += 1;
 }
 
+export function incAnswerUsingExternal() {
+  answersUsingExternal += 1;
+}
+
 export function incVerifyPass() {
   verifyPass += 1;
 }
@@ -310,6 +332,7 @@ export function resolveSession(threadId: string, mode: 'auto' | 'escalated' | 'a
   agg.min = Math.min(agg.min, dur);
   agg.max = Math.max(agg.max, dur);
   ttrByIntent[intent] = agg;
+  if (counterSessionResolved) counterSessionResolved.inc({ mode });
 }
 
 export function observeExternal(labels: Labels, durationMs: number) {
@@ -339,6 +362,7 @@ export function observeExternal(labels: Labels, durationMs: number) {
   prev.latency.min = Math.min(prev.latency.min, durationMs);
   prev.latency.max = Math.max(prev.latency.max, durationMs);
   externalAgg.set(target, prev);
+  toolCallsTotal += 1;
 }
 
 export function updateBreakerMetrics() {
@@ -427,6 +451,7 @@ export function snapshot() {
       min_ms: agg.latency.count > 0 ? agg.latency.min : 0,
       max_ms: agg.latency.max,
     },
+    timeout_rate: agg.total > 0 ? Number(((agg.byStatus['timeout'] ?? 0) / agg.total).toFixed(3)) : 0,
   }));
   
   // Include session store config
@@ -437,6 +462,7 @@ export function snapshot() {
     messages_total: messages, 
     chat_turns: chatTurns,
     router_low_conf: routerLowConf,
+    router_confidence_buckets: routerConfidenceBuckets,
     clarify_requests: clarifyRequests,
     clarify_resolved: clarifyResolved,
     fallbacks,
@@ -444,9 +470,16 @@ export function snapshot() {
     verify_fails: verifyFailsByReason,
     verify_pass_total: verifyPass,
     generated_answers_total: generatedAnswers,
+    answers_using_external_data_total: answersUsingExternal,
     quality: {
       verify_pass_rate: generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0,
-      citation_coverage: generatedAnswers > 0 ? Number((answersWithCitations / Math.max(1, generatedAnswers)).toFixed(3)) : 0, // proxy
+      verify_fail_rate: generatedAnswers > 0 ? Number((verifyFail / generatedAnswers).toFixed(3)) : 0,
+      citation_coverage: answersUsingExternal > 0 ? Number((answersWithCitations / answersUsingExternal).toFixed(3)) : 0,
+      clarification_efficacy: (() => {
+        const totalReq = Object.values(clarifyRequests).reduce((a, b) => a + b, 0);
+        const totalRes = Object.values(clarifyResolved).reduce((a, b) => a + b, 0);
+        return totalReq > 0 ? Number((totalRes / totalReq).toFixed(3)) : 0;
+      })(),
     },
     external_requests: { targets },
     performance: {
@@ -457,11 +490,16 @@ export function snapshot() {
         max_ms: e2eHist.max,
         buckets: e2eHist.buckets,
       },
+      tool_calls_per_turn: (() => {
+        const totalTurns = Object.values(chatTurns).reduce((a, b) => a + b, 0);
+        return totalTurns > 0 ? Number((toolCallsTotal / totalTurns).toFixed(3)) : 0;
+      })(),
     },
     business: {
       total_sessions: totalSessions,
       resolved_sessions: resolvedSessions,
       fcr_rate: totalSessions > 0 ? Number((resolvedSessions / totalSessions).toFixed(3)) : 0,
+      deflection_rate: totalSessions > 0 ? Number(((sessionOutcomes.auto || 0) / totalSessions).toFixed(3)) : 0,
       session_outcomes: sessionOutcomes,
       ttr_ms_by_intent: Object.fromEntries(Object.entries(ttrByIntent).map(([intent, a]) => [intent, {
         count: a.count,
@@ -508,6 +546,9 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'answers_with_citations_total':
       incAnswersWithCitations();
       break;
+    case 'answers_using_external_data_total':
+      incAnswerUsingExternal();
+      break;
     case 'verify_fail_total':
       incVerifyFail(labels?.reason || 'unknown');
       break;
@@ -530,4 +571,14 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
       // ignore unknown
       break;
   }
+}
+
+// Router confidence bucket observation
+export function observeRouterConfidence(confidence: number) {
+  const c = isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  if (c < 0.5) routerConfidenceBuckets['0.0-0.5'] += 1;
+  else if (c < 0.6) routerConfidenceBuckets['0.5-0.6'] += 1;
+  else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] += 1;
+  else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] += 1;
+  else routerConfidenceBuckets['0.9-1.0'] += 1;
 }

@@ -14,7 +14,7 @@ import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic } from './router.optimizers.js';
 import type pino from 'pino';
-import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
+import { incTurn, incRouterLowConf, noteTurn, observeRouterConfidence } from '../util/metrics.js';
 import { classifyConsentResponse } from './consent.js';
 import { assessQueryComplexity } from './complexity.js';
 
@@ -368,6 +368,7 @@ export async function routeIntent({ message, threadId, logger }: {
       const result = RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
       // metrics
       incTurn(result.intent);
+      try { observeRouterConfidence(result.confidence); } catch {}
       if (threadId) noteTurn(threadId, result.intent);
       return result;
     }
@@ -409,6 +410,7 @@ export async function routeIntent({ message, threadId, logger }: {
     }
     const r = RouterResult.parse(tfm);
     incTurn(r.intent);
+    try { observeRouterConfidence(r.confidence); } catch {}
     if (r.confidence < 0.6) incRouterLowConf(r.intent);
     if (threadId) noteTurn(threadId, r.intent);
     return r;
@@ -497,6 +499,7 @@ export async function routeIntent({ message, threadId, logger }: {
   }
   // metrics
   incTurn(llmNormalized.intent);
+  try { observeRouterConfidence(llmNormalized.confidence); } catch {}
   if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);
   if (threadId) noteTurn(threadId, llmNormalized.intent);
   return llmNormalized;

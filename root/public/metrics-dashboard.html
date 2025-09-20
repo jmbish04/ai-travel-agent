@@ -86,6 +86,12 @@
                 <p class="hint">E2E latency buckets keep us honest on UX; p95 should stay under the 3–6s band depending on cache/fresh data.</p>
                 <div id="perf"></div>
             </div>
+
+            <div class="card">
+                <h2>🧰 Tool Reliability</h2>
+                <p class="hint">Timeout rate and calls/turn help spot flaky providers and chat-tool churn.</p>
+                <div id="tools"></div>
+            </div>
         </div>
     </div>
 
@@ -112,7 +118,7 @@
                 document.getElementById('status').textContent = `✅ Connected - Last updated: ${new Date().toLocaleTimeString()}`;
 
                 // Clear containers
-                ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf'].forEach(id => {
+                ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf', 'tools'].forEach(id => {
                     document.getElementById(id).innerHTML = '';
                 });
 
@@ -122,6 +128,9 @@
                     renderMetrics('total_sessions', data.business.total_sessions || 0, bizDiv);
                     renderMetrics('resolved_sessions', data.business.resolved_sessions || 0, bizDiv);
                     renderMetrics('fcr_rate', data.business.fcr_rate || 0, bizDiv);
+                    if (typeof data.business.deflection_rate === 'number') {
+                        renderMetrics('deflection_rate', data.business.deflection_rate, bizDiv);
+                    }
                     if (data.business.session_outcomes) {
                         renderMetrics('outcomes', data.business.session_outcomes, bizDiv);
                     }
@@ -152,6 +161,9 @@
                 } else {
                     routerDiv.innerHTML = '<div class="metric"><span class="metric-name">Low Confidence</span><span class="metric-value">0</span></div>';
                 }
+                if (data.router_confidence_buckets) {
+                    renderMetrics('confidence_buckets', data.router_confidence_buckets, routerDiv);
+                }
 
                 // Clarifications
                 const clarifyDiv = document.getElementById('clarifications');
@@ -176,9 +188,18 @@
                 // Citations & Verification
                 const citDiv = document.getElementById('citations');
                 renderMetrics('With Citations', data.answers_with_citations_total || 0, citDiv);
+                if (typeof data.answers_using_external_data_total === 'number') {
+                    renderMetrics('answers_using_external', data.answers_using_external_data_total, citDiv);
+                }
                 if (data.quality) {
                     renderMetrics('verify_pass_rate', data.quality.verify_pass_rate || 0, citDiv);
+                    if (typeof data.quality.verify_fail_rate === 'number') {
+                        renderMetrics('verify_fail_rate', data.quality.verify_fail_rate, citDiv);
+                    }
                     renderMetrics('citation_coverage', data.quality.citation_coverage || 0, citDiv);
+                    if (typeof data.quality.clarification_efficacy === 'number') {
+                        renderMetrics('clarification_efficacy', data.quality.clarification_efficacy, citDiv);
+                    }
                 }
                 if (data.verify_fails && Object.keys(data.verify_fails).length > 0) {
                     renderMetrics('verify_fails', data.verify_fails, citDiv);
@@ -188,7 +209,8 @@
                 const extDiv = document.getElementById('external');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     data.external_requests.targets.forEach(target => {
-                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target}</span><span class="metric-value">${target.total} (${target.latency.avg_ms}ms avg)</span></div>`;
+                        const tr = (typeof target.timeout_rate === 'number') ? `, timeout ${Math.round(target.timeout_rate*100)}%` : '';
+                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target}</span><span class="metric-value">${target.total} (${target.latency.avg_ms}ms avg${tr})</span></div>`;
                     });
                 } else {
                     extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external requests yet</span><span class="metric-value">-</span></div>';
@@ -203,8 +225,24 @@
                     if (data.performance.e2e_latency_ms.buckets) {
                         renderMetrics('e2e_buckets_ms', data.performance.e2e_latency_ms.buckets, perfDiv);
                     }
+                    if (typeof data.performance.tool_calls_per_turn === 'number') {
+                        renderMetrics('tool_calls_per_turn', data.performance.tool_calls_per_turn, perfDiv);
+                    }
                 } else {
                     perfDiv.innerHTML = '<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value">No data</span></div>';
+                }
+
+                // Tools
+                const toolsDiv = document.getElementById('tools');
+                if (data.external_requests && data.external_requests.targets.length > 0) {
+                    const totals = data.external_requests.targets.reduce((acc, t) => acc + (t.total || 0), 0);
+                    renderMetrics('total_tool_calls', totals, toolsDiv);
+                    data.external_requests.targets.forEach(t => {
+                        const rate = typeof t.timeout_rate === 'number' ? Math.round(t.timeout_rate * 100) + '%' : 'n/a';
+                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${t.target} timeout</span><span class="metric-value">${rate}</span></div>`;
+                    });
+                } else {
+                    toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">No tool data</span><span class="metric-value">-</span></div>';
                 }
 
             } catch (error) {
