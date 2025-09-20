@@ -143,9 +143,7 @@ export async function runGraphTurn(
     const context = { city: slots.city || slots.destinationCity || slots.originCity || '' };
     
     try {
-      const prompt = await getPrompt('city_parser');
-      const filledPrompt = prompt.replace('{text}', message).replace('{context}', JSON.stringify(context));
-      const cityResult = await callLLM(filledPrompt, { log: ctx.log });
+      const cityResult = await callLLM('city_parser', { log: ctx.log });
       const parsed = JSON.parse(cityResult);
       
       if (parsed.confidence >= 0.6 && parsed.city) {

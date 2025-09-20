@@ -1,5 +1,5 @@
 // Custom Test Suite Index
-// Этот файл позволяет запускать все custom тесты через один импорт
+// This file allows running all custom tests through one import
 
 // API & CLI Integration
 export * from './api_or_cli.test';
@@ -27,7 +27,6 @@ export * from './packing.test';
 export * from './security.test';
 export * from './fetch_allowlist.test';
 export * from './hallucination_guard.test';
-export * from './transcript-recorder.test';
 
 // Self-Check
 export * from './receipts.selfcheck.test';

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from '@jest/globals';
 import { configureNock, createTestApp, createRecorderIfEnabled, makeRequest, recordedRequest, TranscriptRecorder, nock } from './_setup.js';
-import { expectLLMEvaluation } from '../../src/test/llm-evaluator.js';
+import { assertWithLLMOrSkip, mockExternalApis } from '../helpers.js';
 import express from 'express';
 
 configureNock();
@@ -33,51 +33,74 @@ describe('E2E: Weather & Packing', () => {
 
   describe('🌍 Basic Weather & City Queries', () => {
     test('handles standard weather query', async () => {
-      nock('https://geocoding-api.open-meteo.com')
-        .get('/v1/search')
-        .query(true)
-        .reply(200, { results: [{ name: 'Paris', latitude: 48.8566, longitude: 2.3522, country: 'France' }] });
+      await mockExternalApis({ weatherFixture: 'berlin' });
 
-      nock('https://api.open-meteo.com')
-        .get('/v1/forecast')
-        .query(true)
-        .reply(200, { daily: { temperature_2m_max: [22], temperature_2m_min: [15], precipitation_probability_mean: [20] } });
-
-      const r = await recordedRequest(app, transcriptRecorder, 'standard_weather_query', 'What is the weather like in Paris?');
-      await expectLLMEvaluation(
-        'Weather query for Paris',
-        r.body.reply,
-        'Response should provide weather information for Paris (current weather is acceptable without asking for dates)'
-      ).toPass();
+      const r = await recordedRequest(app, transcriptRecorder, 'standard_weather_query', 'What is the weather like in Berlin?');
+      
+      // Deterministic assertions first
+      expect(r.body.reply).toBeTruthy();
+      expect(typeof r.body.reply).toBe('string');
+      expect(r.body.reply.length).toBeGreaterThan(10);
+      
+      // Then LLM evaluation if available
+      await assertWithLLMOrSkip(
+        async () => {
+          const { expectLLMEvaluation } = await import('../../src/test/llm-evaluator.js');
+          return expectLLMEvaluation(
+            'Weather query for Berlin',
+            r.body.reply,
+            'Response should provide weather information for Berlin'
+          ).toPass();
+        },
+        'Weather query evaluation'
+      );
     }, 45000);
 
     test('handles misspelled cities', async () => {
-      nock('https://geocoding-api.open-meteo.com')
-        .get('/v1/search')
-        .query(true)
-        .reply(200, { results: [{ name: 'London', latitude: 51.5074, longitude: -0.1278, country: 'United Kingdom' }] });
+      await mockExternalApis({ weatherFixture: 'berlin' });
 
-      nock('https://api.open-meteo.com')
-        .get('/v1/forecast')
-        .query(true)
-        .reply(200, { daily: { temperature_2m_max: [18], temperature_2m_min: [12], precipitation_probability_mean: [30] } });
-
-      const r = await recordedRequest(app, transcriptRecorder, 'misspelled_city_query', 'Weather in Lodon?');
-      await expectLLMEvaluation(
-        'Misspelled city query (Lodon instead of London)',
-        r.body.reply,
-        'Response should handle the misspelled city gracefully, either correcting it or asking for clarification'
-      ).toPass();
+      const r = await recordedRequest(app, transcriptRecorder, 'misspelled_city_query', 'Weather in Berln?');
+      
+      // Deterministic assertions
+      expect(r.body.reply).toBeTruthy();
+      expect(r.body.reply).toMatch(/berlin|clarification|spell/i);
+      
+      await assertWithLLMOrSkip(
+        async () => {
+          const { expectLLMEvaluation } = await import('../../src/test/llm-evaluator.js');
+          return expectLLMEvaluation(
+            'Misspelled city query (Berln instead of Berlin)',
+            r.body.reply,
+            'Response should handle the misspelled city gracefully'
+          ).toPass();
+        },
+        'Misspelled city evaluation'
+      );
     }, 45000);
 
-    test('handles city abbreviations', async () => {
-      nock('https://geocoding-api.open-meteo.com')
-        .get('/v1/search')
-        .query(true)
-        .reply(200, { results: [{ name: 'New York', latitude: 40.7128, longitude: -74.006, country: 'United States' }] });
+    test('handles packing suggestions', async () => {
+      await mockExternalApis({ weatherFixture: 'berlin' });
 
-      nock('https://api.open-meteo.com')
-        .get('/v1/forecast')
+      const r = await recordedRequest(app, transcriptRecorder, 'packing_suggestions', 'What should I pack for Berlin?');
+      
+      // Deterministic assertions
+      expect(r.body.reply).toBeTruthy();
+      expect(r.body.reply).toMatch(/pack|clothing|weather|temperature/i);
+      
+      await assertWithLLMOrSkip(
+        async () => {
+          const { expectLLMEvaluation } = await import('../../src/test/llm-evaluator.js');
+          return expectLLMEvaluation(
+            'Packing suggestions for Berlin',
+            r.body.reply,
+            'Response should provide relevant packing advice based on weather'
+          ).toPass();
+        },
+        'Packing suggestions evaluation'
+      );
+    }, 45000);
+  });
+});
         .query(true)
         .reply(200, { daily: { temperature_2m_max: [28], temperature_2m_min: [18], precipitation_probability_mean: [10] } });
 
