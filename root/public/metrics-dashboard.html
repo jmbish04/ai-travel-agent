@@ -23,6 +23,10 @@
         .refresh-btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin-bottom: 20px; }
         .refresh-btn:hover { background: #0056b3; }
         .auto-refresh { margin-left: 10px; }
+        .alert { color: #721c24; }
+        .warn { color: #856404; }
+        .ok { color: #155724; }
+        .spark { font-family: monospace; letter-spacing: 1px; color: #333; }
     </style>
 </head>
 <body>
@@ -92,11 +96,47 @@
                 <p class="hint">Timeout rate and calls/turn help spot flaky providers and chat-tool churn.</p>
                 <div id="tools"></div>
             </div>
+
+            <div class="card">
+                <h2>⚠️ Alerts</h2>
+                <p class="hint">Threshold-based warnings derived from SLO targets.</p>
+                <div id="alerts"></div>
+            </div>
+
+            <div class="card">
+                <h2>📈 Trends</h2>
+                <p class="hint">Last 30 samples (auto-refresh) for key KPIs.</p>
+                <div id="trends"></div>
+            </div>
         </div>
     </div>
 
     <script>
         let autoRefreshInterval;
+        const history = {
+            e2e_avg_ms: [],
+            fcr_rate: [],
+            verify_fail_rate: []
+        };
+
+        function pushHistory(key, value) {
+            if (typeof value !== 'number' || !isFinite(value)) return;
+            const arr = history[key] || (history[key] = []);
+            arr.push(value);
+            if (arr.length > 30) arr.shift();
+        }
+
+        function sparkline(values) {
+            if (!values || values.length === 0) return '';
+            const blocks = ['▁','▂','▃','▄','▅','▆','▇','█'];
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const range = max - min || 1;
+            return values.map(v => {
+                const idx = Math.min(blocks.length - 1, Math.max(0, Math.floor(((v - min) / range) * (blocks.length - 1))));
+                return blocks[idx];
+            }).join('');
+        }
 
         function renderMetrics(key, value, container) {
             if (typeof value === 'object' && value !== null) {
@@ -118,7 +158,7 @@
                 document.getElementById('status').textContent = `✅ Connected - Last updated: ${new Date().toLocaleTimeString()}`;
 
                 // Clear containers
-                ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf', 'tools'].forEach(id => {
+                ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf', 'tools', 'alerts', 'trends'].forEach(id => {
                     document.getElementById(id).innerHTML = '';
                 });
 
@@ -244,6 +284,32 @@
                 } else {
                     toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">No tool data</span><span class="metric-value">-</span></div>';
                 }
+
+                // Alerts (simple SLOs)
+                const alertsDiv = document.getElementById('alerts');
+                const alerts = [];
+                const e2eAvg = data?.performance?.e2e_latency_ms?.avg_ms || 0;
+                const vfr = data?.quality?.verify_fail_rate || 0;
+                const fcr = data?.business?.fcr_rate || 0;
+                const timeoutBreaches = (data?.external_requests?.targets || []).filter(t => (t.timeout_rate || 0) > 0.02);
+                if (e2eAvg > 6000) alerts.push(['E2E latency > 6s', 'alert']);
+                else if (e2eAvg > 3000) alerts.push(['E2E latency > 3s', 'warn']);
+                if (vfr > 0.05) alerts.push(['Verify fail rate > 5%', 'alert']);
+                if (fcr < 0.6 && (data.business?.total_sessions || 0) >= 5) alerts.push(['FCR < 0.60', 'warn']);
+                timeoutBreaches.forEach(t => alerts.push([`${t.target} timeout > 2%`, 'alert']));
+                if (alerts.length === 0) alerts.push(['All SLOs within targets', 'ok']);
+                alerts.forEach(([msg, level]) => {
+                    alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${level}">${msg}</span><span class="metric-value"></span></div>`;
+                });
+
+                // Trends
+                const trendsDiv = document.getElementById('trends');
+                pushHistory('e2e_avg_ms', e2eAvg);
+                pushHistory('fcr_rate', fcr);
+                pushHistory('verify_fail_rate', vfr);
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">e2e_avg_ms</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">fcr_rate</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">verify_fail_rate</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
 
             } catch (error) {
                 document.getElementById('status').className = 'status offline';
