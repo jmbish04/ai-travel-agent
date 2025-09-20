@@ -10,12 +10,20 @@ import { RateLimiter } from './core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from './config/resilience.js';
 import { loadSessionConfig } from './config/session.js';
 import { createStore, initSessionStore } from './core/session_store.js';
+import { clearThreadSlots } from './core/slot_memory.js';
 import type { Decision } from './core/receipts.js';
 import { incMessages, observeE2E } from './util/metrics.js';
 
-// Default push URL so CLI metrics appear on the server dashboard if running locally
+// Start standalone metrics server for dashboard access
+if (process.env.METRICS !== 'off') {
+  import('./util/metrics-server.js').catch(() => {
+    // Ignore if metrics server fails to start
+  });
+}
+
+// Default push URL so CLI metrics appear on the metrics server dashboard
 if (!process.env.METRICS_PUSH_URL) {
-  process.env.METRICS_PUSH_URL = 'http://localhost:3000/metrics/ingest';
+  process.env.METRICS_PUSH_URL = 'http://localhost:3001/metrics/ingest';
 }
 
 const rl = readline.createInterface({ input, output });
@@ -224,6 +232,14 @@ async function main() {
   log.debug({ logLevel: process.env.LOG_LEVEL || 'error' }, 'CLI starting with log level');
   // Suppress noisy third‑party logs (e.g., Transformers dtype warnings) for non‑debug levels
   silenceNoisyLibLogs(process.env.LOG_LEVEL);
+  
+  // Clear any existing context from previous sessions
+  try {
+    await clearThreadSlots(threadId);
+    log.debug({ threadId }, 'Cleared previous session context');
+  } catch (error) {
+    log.debug({ error }, 'Failed to clear previous context (continuing anyway)');
+  }
   
   // Display banner and intro
   console.log(chalk.cyan(`

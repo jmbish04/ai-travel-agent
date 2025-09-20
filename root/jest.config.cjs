@@ -12,6 +12,7 @@ module.exports = {
   detectOpenHandles: true,
   testSequencer: '<rootDir>/tests/custom-sequencer.cjs',
   maxWorkers: 1,
+  setupFilesAfterEnv: ['<rootDir>/tests/setup/jest.setup.ts'],
   transform: {
     '^.+\\.ts$': 'ts-jest',
   },

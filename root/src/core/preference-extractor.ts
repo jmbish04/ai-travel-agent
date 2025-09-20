@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { classifyContent, classifyIntent } from './transformers-classifier.js';
 import { extractEntities } from './ner.js';
 import { getPrompt } from './prompts.js';
 import type pino from 'pino';
@@ -22,6 +21,15 @@ export type TravelPreferencesT = z.infer<typeof TravelPreferences>;
 
 async function tryNLPExtraction(text: string, log?: pino.Logger): Promise<TravelPreferencesT | null> {
   try {
+    // Check if transformers are enabled
+    const { transformersEnabled } = await import('../config/transformers.js');
+    if (!transformersEnabled()) {
+      return null; // Skip NLP extraction when transformers disabled
+    }
+
+    // Dynamic import of transformers functions
+    const { classifyContent, classifyIntent } = await import('./transformers-classifier.js');
+
     // Step 1: Content classification
     const contentClass = await classifyContent(text, log);
     if (contentClass.content_type !== 'travel' || contentClass.confidence < 0.7) {

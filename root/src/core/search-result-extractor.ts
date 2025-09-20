@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { classifyContent } from './transformers-classifier.js';
 import { extractEntitiesEnhanced } from './ner-enhanced.js';
 import { callLLM } from './llm.js';
 import { getPrompt } from './prompts.js';

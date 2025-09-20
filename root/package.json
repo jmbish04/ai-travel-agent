@@ -29,7 +29,7 @@
     "start": "node dist/api/server.js",
     "start:prod": "NODE_ENV=production node dist/api/server.js",
     "dev:stop": "pkill -f 'node dist/api/server.js' && pkill -f 'tsx src/cli.ts'",
-    "dashboard": "open http://localhost:3000/metrics-dashboard.html",
+    "dashboard": "open http://localhost:3001",
     "prepublishOnly": "npm run build",
     "test": "jest --runInBand --config jest.config.cjs",
     "test:transcripts": "RECORD_TRANSCRIPTS=true jest --runInBand --config jest.config.cjs",

@@ -24,7 +24,7 @@ import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
-import { incAnswersWithCitations, incFallback, incGeneratedAnswer } from '../util/metrics.js';
+import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession, resolveSession } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
   results: Array<{ title: string; url: string; description: string }>
@@ -132,6 +132,12 @@ async function performWebSearch(
     }
   }
   
+  // Metrics instrumentation
+  incGeneratedAnswer();
+  if (citations.length > 0) {
+    incAnswersWithCitations();
+  }
+  
   return { reply, citations };
 }
 
@@ -139,6 +145,9 @@ export async function handleChat(
   input: ChatInputT,
   ctx: { log: pino.Logger; onStatus?: (status: string) => void },
 ) {
+  // Metrics: count every message
+  incMessages();
+  
   // Early handling for empty/emoji-only or non-informative inputs
   const raw = input.message || '';
   const trimmed = raw.trim();
@@ -153,6 +162,10 @@ export async function handleChat(
   ctx.onStatus?.('Analyzing your request...');
   
   const threadId = getThreadId(input.threadId);
+  
+  // Start session tracking
+  startSession(threadId);
+  
   const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
     /^\s*\/why\b/i.test(input.message);
   if (wantReceipts) {
@@ -254,6 +267,9 @@ export async function handleChat(
       }
     }
 
+    // Resolve session as completed
+    resolveSession(threadId, 'auto');
+    
     return ChatOutput.parse({
       reply: result.reply,
       threadId,
@@ -455,6 +471,10 @@ export async function blendWithFacts(
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
+        // Metrics instrumentation
+        incGeneratedAnswer();
+        incAnswersWithCitations();
+        
         return { reply, citations: [source] };
       } else {
         ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
@@ -497,6 +517,10 @@ export async function blendWithFacts(
           )];
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
+        
+        // Metrics instrumentation
+        incGeneratedAnswer();
+        incAnswersWithCitations();
         
         return { reply, citations: [source] };
       } else {
@@ -649,6 +673,10 @@ export async function blendWithFacts(
           setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
+        // Metrics instrumentation
+        incGeneratedAnswer();
+        incAnswersWithCitations();
+        
         return { reply, citations: [source] };
       } else if (!at.ok && at.reason === 'unknown_city') {
         return {
@@ -749,6 +777,12 @@ export async function blendWithFacts(
         validateNoCitation(replyWithSource, cits.length > 0);
       } catch (err) {
         ctx.log.warn({ reply: replyWithSource, cits, hasExternal: cits.length > 0 }, 'citation_validation_failed');
+      }
+      
+      // Metrics instrumentation
+      incGeneratedAnswer();
+      if (cits.length > 0) {
+        incAnswersWithCitations();
       }
       
       return { reply: replyWithSource, citations: cits.length ? cits : undefined };

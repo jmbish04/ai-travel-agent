@@ -2,7 +2,7 @@ import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
 import { callLLM, optimizeSearchQuery, classifyContent, classifyIntent } from './llm.js';
 import { extractEntities } from './ner.js';
-import { getThreadSlots, updateThreadSlots, normalizeSlots } from './slot_memory.js';
+import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots } from './slot_memory.js';
 import { extractSlots } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
@@ -13,8 +13,11 @@ import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
 async function clearConsentState(threadId?: string) {
   if (!threadId) return;
   
-  // Clear all consent and conflicting travel data to prevent context pollution
-  await updateThreadSlots(threadId, {}, [
+  // Get current slots
+  const currentSlots = await getThreadSlots(threadId);
+  
+  // List of keys to remove
+  const keysToRemove = [
     // Consent states
     'awaiting_deep_research_consent',
     'pending_deep_research_query', 
@@ -45,7 +48,21 @@ async function clearConsentState(threadId?: string) {
     'awaiting_flight_clarification',
     'pending_flight_query',
     'clarification_reasoning'
-  ]);
+  ];
+  
+  // Create new slots object without the keys to remove
+  const cleanedSlots: Record<string, string> = {};
+  for (const [key, value] of Object.entries(currentSlots)) {
+    if (!keysToRemove.includes(key)) {
+      cleanedSlots[key] = value;
+    }
+  }
+  
+  // Clear all slots and set only the cleaned ones
+  await clearThreadSlots(threadId);
+  if (Object.keys(cleanedSlots).length > 0) {
+    await updateThreadSlots(threadId, cleanedSlots, []);
+  }
 }
 
 export async function routeIntent({ message, threadId, logger }: {
@@ -72,7 +89,19 @@ export async function routeIntent({ message, threadId, logger }: {
   }
 
   // Handle flight clarification responses (no recursion)
-  const ctxSlots = threadId ? await await getThreadSlots(threadId) : {};
+  let ctxSlots = threadId ? await await getThreadSlots(threadId) : {};
+  
+  // Clear old context for completely new, unrelated queries
+  if (threadId && ctxSlots.awaiting_deep_research_consent === 'true') {
+    // Check if this is a completely different query (not a consent response)
+    const isConsentResponse = /^(yes|no|sure|ok|proceed|search|continue|go ahead)/i.test(m);
+    if (!isConsentResponse) {
+      await clearConsentState(threadId);
+      // Reload slots after clearing
+      ctxSlots = await getThreadSlots(threadId);
+    }
+  }
+  
   if (ctxSlots.awaiting_flight_clarification === 'true' && threadId) {
     const userResponse = m.toLowerCase();
     const pendingQuery = ctxSlots.pending_flight_query || '';

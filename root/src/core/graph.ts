@@ -29,7 +29,6 @@ import {
 } from './slot_memory.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { getPrompt } from './prompts.js';
-import { classifyContent as classifyContentTransformers } from './transformers-classifier.js';
 import { detectLanguage } from './transformers-detector.js';
 import { extractEntitiesEnhanced } from './ner-enhanced.js';
 import { searchTravelInfo, getSearchCitation } from '../tools/search.js';
@@ -219,6 +218,7 @@ export async function runGraphTurn(
         C.clsContent = { content_type: 'travel', confidence: 0.5 };
         return;
       }
+      const { classifyContent: classifyContentTransformers } = await import('./transformers-classifier.js');
       const result = await classifyContentTransformers(message, ctx.log);
       C.clsContent = { 
         content_type: result.content_type || 'travel', 

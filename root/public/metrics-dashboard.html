@@ -11,7 +11,8 @@
         h1 { color: #333; margin-bottom: 20px; text-align: center; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
         .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .card h2 { color: #555; margin-bottom: 15px; font-size: 18px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+        .card h2 { color: #555; margin-bottom: 10px; font-size: 18px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+        .hint { font-size: 13px; color: #7a7a7a; margin-bottom: 12px; line-height: 1.4; }
         .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
         .metric:last-child { border-bottom: none; }
         .metric-name { color: #666; }
@@ -27,6 +28,9 @@
 <body>
     <div class="container">
         <h1>🚀 Voyant Travel Assistant - Metrics Dashboard</h1>
+        <p class="hint" style="text-align:center; max-width:760px; margin:0 auto 18px;">
+            These cards answer two interview-critical questions: are answers grounded and helpful, and do we route/clarify fast enough to keep users happy?
+        </p>
 
         <div id="status" class="status offline">Connecting...</div>
 
@@ -38,40 +42,48 @@
         <div class="grid">
             <div class="card">
                 <h2>🏁 Business Overview</h2>
+                <p class="hint">FCR reveals how often we resolve without escalation, while TTR (avg ms) shows how quickly intents finish.</p>
                 <div id="business"></div>
             </div>
             <div class="card">
                 <h2>📊 Chat Activity</h2>
+                <p class="hint">Turns per intent highlight demand hot-spots; sudden spikes often correlate with new features or regressions.</p>
                 <div id="chatActivity"></div>
             </div>
 
             <div class="card">
                 <h2>🎯 Router Performance</h2>
+                <p class="hint">Low-confidence routes are early warning for off-topic replies or intents that need better training.</p>
                 <div id="routerPerf"></div>
             </div>
 
             <div class="card">
                 <h2>❓ Clarifications</h2>
+                <p class="hint">Compare clarify requests vs resolved to confirm we collect missing slots instead of leaving users stuck.</p>
                 <div id="clarifications"></div>
             </div>
 
             <div class="card">
                 <h2>🔄 Fallbacks</h2>
+                <p class="hint">Web or browser fallback surges signal gaps in API coverage or flaky upstreams; investigate prolonged increases.</p>
                 <div id="fallbacks"></div>
             </div>
 
             <div class="card">
                 <h2>📚 Citations & Verification</h2>
+                <p class="hint">Citation coverage and verify pass rate are our north-star for grounded answers from web search or RAG.</p>
                 <div id="citations"></div>
             </div>
 
             <div class="card">
                 <h2>🌐 External Requests</h2>
+                <p class="hint">Latency and status per target expose tool reliability—watch for slow Brave/Tavily responses that erode relevance.</p>
                 <div id="external"></div>
             </div>
 
             <div class="card">
                 <h2>⚡ Performance</h2>
+                <p class="hint">E2E latency buckets keep us honest on UX; p95 should stay under the 3–6s band depending on cache/fresh data.</p>
                 <div id="perf"></div>
             </div>
         </div>
