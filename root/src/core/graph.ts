@@ -12,6 +12,7 @@
 import type { Logger } from 'pino';
 import pinoLib from 'pino';
 import { routeIntent } from './router.js';
+import { detectSearchUpgradeRequest } from './search_upgrade.js';
 
 // Declare global process for Node.js environment
 declare const process: NodeJS.Process;
@@ -25,7 +26,8 @@ import {
   getLastIntent,
   normalizeSlots,
   readConsentState,
-  writeConsentState
+  writeConsentState,
+  getLastReceipts
 } from './slot_memory.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { getPrompt } from './prompts.js';
@@ -146,32 +148,59 @@ export async function runGraphTurn(
   }
   
   // === EXTRACT STAGE: Router-once with intent-gated extractors ===
+  // Check for search upgrade request BEFORE routing
+  const prevSlots = await getThreadSlots(threadId);
+  const previousQuery = prevSlots.last_search_query;
+  const { reply: previousAnswer } = await getLastReceipts(threadId);
+  
+  ctx.log.debug({ message, previousQuery, hasQuery: !!previousQuery }, 'search_upgrade_check');
+  
+  if (previousQuery) {
+    const upgradeResult = await detectSearchUpgradeRequest({
+      message,
+      previousQuery,
+      previousAnswer,
+      log: ctx.log
+    });
+    
+    ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_result');
+    
+    if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
+      ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_detected');
+      // Directly perform deep research for better search results
+      return await performDeepResearchNode(previousQuery, ctx, threadId);
+    }
+  }
+  
   // Single router call with slots. If guard forced an intent, skip LLM router.
   if (!C.route) {
     if (C.forced) {
       C.route = { intent: C.forced, slots: {}, confidence: 0.9 } as any;
       ctx.log.debug({ route: C.route }, 'router_skipped_forced_intent');
     } else {
-      const routed = await routeIntent({
-        message,
-        threadId: threadId, 
-        logger: { log: ctx.log }
-      });
-      // Filter out null values from slots
-      const filteredSlots: Record<string, string> = {};
-      for (const [key, value] of Object.entries(routed.slots || {})) {
-        if (typeof value === 'string') {
-          filteredSlots[key] = value;
-        }
-      }
       
-      C.route = { 
-        intent: routed.intent, 
-        slots: filteredSlots, 
-        confidence: routed.confidence 
-      };
-      llmCallsThisTurn++;
-      ctx.log.debug({ route: C.route }, 'router_once');
+      if (!C.route) {
+        const routed = await routeIntent({
+          message,
+          threadId: threadId, 
+          logger: { log: ctx.log }
+        });
+        // Filter out null values from slots
+        const filteredSlots: Record<string, string> = {};
+        for (const [key, value] of Object.entries(routed.slots || {})) {
+          if (typeof value === 'string') {
+            filteredSlots[key] = value;
+          }
+        }
+        
+        C.route = { 
+          intent: routed.intent, 
+          slots: filteredSlots, 
+          confidence: routed.confidence 
+        };
+        llmCallsThisTurn++;
+        ctx.log.debug({ route: C.route }, 'router_once');
+      }
     }
   }
   
@@ -883,6 +912,9 @@ async function performWebSearchNode(
   ctx.log.debug({ query }, 'performing_web_search_node');
   try { const { incFallback } = await import('../util/metrics.js'); incFallback('web'); } catch {}
   
+  // Store the search query for potential upgrade requests
+  await updateThreadSlots(threadId, { last_search_query: query }, []);
+  
   const searchResult = await searchTravelInfo(query, ctx.log);
   
   if (!searchResult.ok) {
@@ -941,6 +973,9 @@ async function performDeepResearchNode(
 ): Promise<NodeOut> {
   try {
     const optimizedQuery = await optimizeSearchQuery(query, {}, 'destinations', ctx.log);
+    // Persist the optimized query so subsequent "search deeper/more" upgrades
+    // maintain topic continuity across turns without re-routing.
+    await updateThreadSlots(threadId, { last_search_query: optimizedQuery }, []);
     
     const { performDeepResearch } = await import('./deep_research.js');
     const research = await performDeepResearch(optimizedQuery, { threadId }, ctx.log);

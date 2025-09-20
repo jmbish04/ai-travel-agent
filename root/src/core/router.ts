@@ -116,8 +116,8 @@ async function shouldSkipContextDetector(message: string, log?: pino.Logger): Pr
   if (!trimmed) return true;
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   if (wordCount <= 2) return true;
-  if (await isQuickAck(trimmed, log)) return true;
-  return await isPronounFollowup(trimmed, log);
+  const verdict = await classifyConsentResponse(trimmed, log);
+  return verdict === 'yes' || verdict === 'unclear';
 }
 
 async function callContextSwitchDetector(previous: string, current: string, log?: pino.Logger): Promise<boolean> {

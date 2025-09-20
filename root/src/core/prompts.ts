@@ -11,6 +11,7 @@ type PromptName =
   | 'web_search_decider'
   | 'query_type_detector'
   | 'consent_detector'
+  | 'search_upgrade_detector'
   | 'context_switch_detector'
   | 'city_parser'
   | 'date_parser'
@@ -91,6 +92,9 @@ export async function preloadPrompts(): Promise<void> {
   );
   PROMPTS.consent_detector = await loadFileSafe(
     path.join(base, 'consent_detector.md'),
+  );
+  PROMPTS.search_upgrade_detector = await loadFileSafe(
+    path.join(base, 'search_upgrade_detector.md'),
   );
   PROMPTS.city_parser = await loadFileSafe(
     path.join(base, 'city_parser.md'),
