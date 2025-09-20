@@ -315,17 +315,31 @@ export async function runGraphTurn(
 function checkMissingSlots(intent: string, slots: Record<string, string>, message: string): string[] {
   const missing: string[] = [];
   
-  const needsCity = ['attractions', 'packing', 'destinations', 'weather', 'flights'].includes(intent);
-  const hasCity = intent === 'destinations'
-    ? !!(slots.city?.trim() || slots.originCity?.trim())
-    : !!slots.city?.trim();
+  const needsCity = ['attractions', 'packing', 'destinations', 'weather', 'flights']
+    .includes(intent);
+  const hasOrigin = !!slots.originCity?.trim();
+  const hasDestination = !!(slots.destinationCity?.trim() || slots.city?.trim());
+  const hasCity = intent === 'flights'
+    ? hasOrigin && hasDestination
+    : intent === 'destinations'
+      ? !!(slots.city?.trim() || slots.originCity?.trim())
+      : !!slots.city?.trim();
   
   const hasWhen = !!(slots.dates?.trim() || slots.month?.trim());
   const hasImmediateContext = /\b(today|now|currently|right now)\b/i.test(message);
   const hasSpecialContext = /\b(kids?|children|family|business|work|summer|winter|spring|fall)\b/i.test(message);
   const wantsOverview = /\b(tell me about|information about|info about|facts about|overview of|what is)\b/i.test(message);
   
-  if (needsCity && !hasCity) missing.push('city');
+  if (intent === 'flights') {
+    if (!hasOrigin && !hasDestination) {
+      missing.push('city');
+    } else {
+      if (!hasOrigin) missing.push('origin');
+      if (!hasDestination) missing.push('destination');
+    }
+  } else if (needsCity && !hasCity) {
+    missing.push('city');
+  }
   if (intent === 'destinations' && !hasWhen && !wantsOverview) missing.push('dates');
   if (intent === 'packing' && !hasWhen && !hasImmediateContext && !hasSpecialContext) missing.push('dates');
   

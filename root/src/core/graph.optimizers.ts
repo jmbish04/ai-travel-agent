@@ -9,6 +9,8 @@ export type TurnCache = {
   msgRaw: string;
   msgL: string;
   words: Set<string>;
+  ner?: Entities;
+  clsContent?: { content_type: string; confidence: number };
   route?: { intent: string; slots: Record<string, string>; confidence: number };
   forced?: string;
 };
