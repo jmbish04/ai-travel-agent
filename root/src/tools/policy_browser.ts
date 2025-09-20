@@ -6,7 +6,61 @@ import { scheduleWithLimit } from '../util/limiter.js';
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
 import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt } from '../schemas/policy.js';
-import type { CheerioCrawlingContext, PlaywrightCrawlingContext } from 'crawlee';
+import type { CheerioCrawlingContext } from 'crawlee';
+
+const SOURCE_CACHE = new Map<string, 'airline' | 'hotel' | 'visa' | 'generic'>();
+
+function escapeForPrompt(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+async function scorePolicyConfidence(
+  clause: ClauseTypeT,
+  extractedText: string,
+  sourceUrl: string
+): Promise<number> {
+  try {
+    const tpl = await getPrompt('policy_confidence');
+    const prompt = tpl
+      .replace('{{clauseType}}', clause)
+      .replace('{{extractedText}}', escapeForPrompt(extractedText.slice(0, 800)))
+      .replace('{{sourceUrl}}', sourceUrl);
+    const raw = await callLLM(prompt, { responseFormat: 'text' });
+    const match = raw.match(/(\d+(?:\.\d+)?)/);
+    if (!match) return 0;
+    let score = parseFloat(match[1]);
+    if (!Number.isFinite(score)) return 0;
+    if (score > 1) score /= 100;
+    return Math.max(0, Math.min(1, score));
+  } catch (error) {
+    console.warn('policy_confidence_failed', error instanceof Error ? error.message : String(error));
+    return 0;
+  }
+}
+
+async function classifySourceCategory(url: string, excerpt: string): Promise<'airline' | 'hotel' | 'visa' | 'generic'> {
+  try {
+    const host = new URL(url).hostname;
+    if (SOURCE_CACHE.has(host)) return SOURCE_CACHE.get(host)!;
+
+    const tpl = await getPrompt('policy_classifier');
+    const question = `Source host: ${host}. Policy excerpt: ${excerpt.slice(0, 280)}.`;
+    const prompt = tpl.replace('{question}', escapeForPrompt(question));
+    const raw = await callLLM(prompt, { responseFormat: 'text' });
+    const normalized = raw.trim().toLowerCase();
+
+    let category: 'airline' | 'hotel' | 'visa' | 'generic' = 'generic';
+    if (normalized.includes('airline')) category = 'airline';
+    else if (normalized.includes('hotel')) category = 'hotel';
+    else if (normalized.includes('visa')) category = 'visa';
+
+    SOURCE_CACHE.set(host, category);
+    return category;
+  } catch (error) {
+    console.warn('policy_source_classifier_failed', error instanceof Error ? error.message : String(error));
+    return 'generic';
+  }
+}
 
 const PNG_MAX = 2_000_000;
 
@@ -257,17 +311,12 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
     // Smart content detection - wait for policy content specifically
     try {
       await page.waitForFunction(() => {
-        const text = document.body.innerText;
-        const hasContent = text.length > 1000;
-        const hasPolicy = /baggage|carry.?on|luggage|policy|refund|size|weight|limit|dimension|fee|allow/gi.test(text);
-        const notLoading = !text.includes('Loading') && !text.includes('CSS Error');
-        const notMath = !/Question:|Answer:|Let [a-z] =|Suppose/g.test(text);
-        
-        return hasContent && hasPolicy && notLoading && notMath;
+        const text = document.body?.innerText ?? '';
+        return text.trim().length > 800;
       }, { timeout: 15000 });
-      console.log('✅ Policy content detected and loaded');
+      console.log('✅ Content loaded');
     } catch {
-      console.log('⚠️ Timeout waiting for policy content, proceeding with current state');
+      console.log('⚠️ Timeout waiting for content, proceeding with current state');
     }
     
     // Human-like behavior simulation (faster version)
@@ -313,7 +362,8 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
     
     const hash = crypto.createHash('sha256').update(`${url}\n${extractedClause.quote}`).digest('hex');
     const imgPath = png && png.byteLength <= PNG_MAX ? await persistPng(url, png) : undefined;
-    
+    const sourceCategory = await classifySourceCategory(url, extractedClause.quote);
+
     return {
       url,
       title,
@@ -322,7 +372,7 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
       quote: extractedClause.quote,
       imgPath,
       confidence: extractedClause.confidence,
-      source: classifySource(url)
+      source: sourceCategory
     };
     
   } finally {
@@ -345,7 +395,8 @@ async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) 
     // Use LLM to extract relevant policy clause
     const extractedClause = await extractClauseWithLLM(fullText, clause, request.url);
     const hash = crypto.createHash('sha256').update(`${request.url}\n${extractedClause.quote}`).digest('hex');
-    
+    const sourceCategory = await classifySourceCategory(request.url, extractedClause.quote);
+
     receipt = {
       url: request.url,
       title,
@@ -353,7 +404,7 @@ async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) 
       capturedAt: new Date().toISOString(),
       quote: extractedClause.quote,
       confidence: extractedClause.confidence,
-      source: classifySource(request.url)
+      source: sourceCategory
     };
   });
   
@@ -373,14 +424,17 @@ async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) 
     console.warn('Cheerio crawler error:', error);
   }
   
-  return receipt ?? {
+  if (receipt) return receipt;
+
+  const fallbackSource = await classifySourceCategory(url, '');
+  return {
     url,
     title: new URL(url).hostname,
     hash: crypto.createHash('sha256').update(url).digest('hex'),
     capturedAt: new Date().toISOString(),
     quote: '',
     confidence: 0,
-    source: classifySource(url)
+    source: fallbackSource
   };
 }
 
@@ -400,25 +454,6 @@ async function extractClauseWithLLM(
     console.log(`- URL: ${sourceUrl}`);
     console.log(`- Text length: ${fullText.length} -> ${truncatedText.length}`);
     console.log(`- First 300 chars: "${truncatedText.slice(0, 300)}"`);
-    
-    // Check for anti-bot indicators
-    const antiBot = {
-      mathQuestions: /Question:|Answer:|Let [a-z] =|Suppose|Which is|What is the/g.test(truncatedText),
-      cppCode: /class|struct|public:|private:|#include/g.test(truncatedText),
-      randomMath: /\d+\*[a-z]\*\*\d+|\d+\s*\+\s*-\d+/g.test(truncatedText),
-      jsGarbage: /Loading×Sorry to interrupt|CSS Error|slds-modal|forceChatter|flexipage/g.test(truncatedText),
-      salesforce: /builder_industries|flowengine|forceCommunity/g.test(truncatedText),
-      hasRealContent: /baggage|policy|refund|size|weight|limit|dimension|fee|allow/gi.test(truncatedText)
-    };
-    
-    // Block garbage content
-    const hasGarbageContent = antiBot.mathQuestions || antiBot.cppCode || antiBot.randomMath || antiBot.jsGarbage || antiBot.salesforce;
-    const hasMinimalRealContent = truncatedText.split(/baggage|policy|refund|size|weight|limit|dimension|fee|allow/gi).length < 5;
-    
-    if (hasGarbageContent && (hasMinimalRealContent || !antiBot.hasRealContent)) {
-      console.log(`❌ Anti-bot content detected, skipping extraction`);
-      return { quote: '', confidence: 0 };
-    }
     
     // Extract with LLM - emphasize the specific airline
     const extractorPrompt = await getPrompt('policy_extractor');
@@ -453,68 +488,29 @@ Extract the most relevant and specific policy text about ${clause} from the CORR
       .replace(/&gt;/g, '>')
       .replace(/&#39;/g, "'");
     
-    console.log(`- LLM response length: ${decodedText.length}`);
-    console.log(`- LLM response FULL: "${decodedText}"`);
-    
-    if (!decodedText.trim() || decodedText.length < 10) {
-      console.log(`❌ LLM response too short`);
+    const cleaned = decodedText.trim();
+    if (cleaned.length < 10) {
+      console.log('❌ LLM response too short');
       return { quote: '', confidence: 0 };
     }
-    
-    // Check if it's actually policy content
-    const isPolicyContent = /baggage|bag|luggage|carry.?on|checked|size|weight|limit|dimension|policy|allow|refund|cancel/i.test(decodedText);
-    console.log(`- Is policy content: ${isPolicyContent}`);
-    
-    if (!isPolicyContent) {
-      console.log(`❌ LLM response not policy content`);
-      return { quote: decodedText.trim().slice(0, 1000), confidence: 0.1 };
-    }
-    
-    // Score confidence
-    const confidencePrompt = await getPrompt('policy_confidence') as string;
-    console.log(`- Raw confidence prompt length: ${confidencePrompt.length}`);
-    
-    const confidenceInput = confidencePrompt
-      .replace('{{clauseType}}', clause)
-      .replace('{{extractedText}}', decodedText.slice(0, 500)) // Limit to avoid token overflow
-      .replace('{{sourceUrl}}', sourceUrl);
-    
-    console.log(`- Final confidence prompt length: ${confidenceInput.length}`);
-    console.log(`- Confidence prompt preview: "${confidenceInput.slice(0, 200)}..."`);
-    
-    const confidenceStr = await callLLM(confidenceInput, { responseFormat: 'text' });
-    
-    // Parse confidence more robustly
-    let confidence = 0;
-    const confidenceMatch = confidenceStr.match(/(\d+\.?\d*)/);
-    if (confidenceMatch && confidenceMatch[1]) {
-      confidence = parseFloat(confidenceMatch[1]);
-      // If it's a whole number > 1, assume it's a percentage
-      if (confidence > 1) confidence = confidence / 100;
-      // Final clamp into [0,1]
-      confidence = Math.max(0, Math.min(1, confidence));
-    }
-    
-    console.log(`- Raw confidence response: "${confidenceStr.trim()}"`);
+
+    const confidence = await scorePolicyConfidence(clause, cleaned, sourceUrl);
     console.log(`- Parsed confidence: ${confidence}`);
-    console.log(`✅ Final result: ${extractedText.length} chars, ${(confidence * 100).toFixed(0)}% confidence`);
-    
+    console.log(`✅ Final result: ${cleaned.length} chars, ${(confidence * 100).toFixed(0)}% confidence`);
+
+    if (confidence < 0.3) {
+      console.log('❌ Confidence too low for extracted clause');
+      return { quote: '', confidence };
+    }
+
     return {
-      quote: decodedText.trim().slice(0, 1000),
+      quote: cleaned.slice(0, 1000),
       confidence
     };
   } catch (error) {
     console.warn('❌ LLM extraction failed:', error);
     return { quote: '', confidence: 0 };
   }
-}
-
-function classifySource(url: string): 'airline' | 'hotel' | 'visa' | 'generic' {
-  const h = new URL(url).hostname;
-  if (/visa|gov|state\.gov|embassy|consulate/.test(h)) return 'visa';
-  if (/hotel|inn|marriott|hilton|hyatt|sheraton|westin|courtyard|residence/.test(h)) return 'hotel';
-  if (/airline|united|delta|american|southwest|jetblue|alaska|spirit|frontier/.test(h)) return 'airline';
-  return 'generic';
 }
 
 async function persistPng(url: string, buf: Buffer): Promise<string> {
