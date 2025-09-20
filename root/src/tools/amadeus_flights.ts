@@ -1,6 +1,120 @@
 import { getAmadeusClient } from '../vendors/amadeus_client.js';
 import { withPolicies } from './_sdk_policies.js';
 import { toStdError } from './errors.js';
+import { callLLM } from '../core/llm.js';
+import { getPrompt } from '../core/prompts.js';
+import { parseDate } from '../core/parsers.js';
+
+const IATA_REGEX = /^[A-Z]{3}$/;
+
+const iataCache = new Map<string, string>();
+const llmCache = new Map<string, string>();
+
+const MONTHS = new Map<string, number>([
+  ['january', 0],
+  ['february', 1],
+  ['march', 2],
+  ['april', 3],
+  ['may', 4],
+  ['june', 5],
+  ['july', 6],
+  ['august', 7],
+  ['september', 8],
+  ['october', 9],
+  ['november', 10],
+  ['december', 11],
+]);
+
+function formatIso(date: Date): string {
+  return date.toISOString().split('T')[0]!;
+}
+
+function buildIso(year: number, month: number, day: number): string | null {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return formatIso(date);
+}
+
+function parseRelative(keyword: string, base: Date): string | null {
+  const lower = keyword.trim().toLowerCase();
+  if (!lower) return null;
+  if (lower === 'today' || lower === 'tonight') return formatIso(base);
+  if (lower === 'tomorrow') {
+    const next = new Date(base);
+    next.setDate(base.getDate() + 1);
+    return formatIso(next);
+  }
+  if (lower === 'next week') {
+    const next = new Date(base);
+    next.setDate(base.getDate() + 7);
+    return formatIso(next);
+  }
+  if (lower === 'next month') {
+    const next = new Date(base);
+    next.setMonth(base.getMonth() + 1, 1);
+    return formatIso(next);
+  }
+  return null;
+}
+
+function splitCandidates(input: string): string[] {
+  return input
+    .replace(/[–—]/g, '-')
+    .split(/(?:\bto\b|\bthrough\b|\-|\u2013|\u2014)/gi)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function tryNumericDate(value: string): string | null {
+  const match = value.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+  if (!match) return null;
+  let year = Number(match[3]);
+  if (year < 100) year += year >= 70 ? 1900 : 2000;
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const dmy = buildIso(year, second, first);
+  if (dmy) return dmy;
+  const mdy = buildIso(year, first, second);
+  if (mdy) return mdy;
+  return null;
+}
+
+function tryDateParse(value: string): string | null {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return formatIso(new Date(parsed));
+}
+
+function parseMonthOnly(token: string, base: Date): string | null {
+  const lower = token.toLowerCase();
+  const idx = MONTHS.get(lower);
+  if (idx === undefined) return null;
+  const year = base.getMonth() > idx ? base.getFullYear() + 1 : base.getFullYear();
+  return formatIso(new Date(Date.UTC(year, idx, 1)));
+}
+
+function tryCandidate(candidate: string, base: Date): string | null {
+  if (!candidate) return null;
+  const relative = parseRelative(candidate, base);
+  if (relative) return relative;
+  const numeric = tryNumericDate(candidate);
+  if (numeric) return numeric;
+  const parsed = tryDateParse(candidate);
+  if (parsed) return parsed;
+  return parseMonthOnly(candidate, base);
+}
 
 export interface FlightSearchQuery {
   originLocationCode: string;
@@ -11,6 +125,80 @@ export interface FlightSearchQuery {
   max?: string;
   nonStop?: boolean;
   currencyCode?: string;
+}
+
+async function resolveIataViaLLM(input: string): Promise<string | null> {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const cacheKey = trimmed.toLowerCase();
+  const cached = llmCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const template = await getPrompt('iata_code_generator');
+    const prompt = template.replace('{city_or_airport}', trimmed);
+    const raw = await callLLM(prompt, { responseFormat: 'text' });
+    const candidate = raw.trim().toUpperCase();
+    if (candidate === 'XXX') return null;
+    if (IATA_REGEX.test(candidate)) {
+      llmCache.set(cacheKey, candidate);
+      return candidate;
+    }
+  } catch (error) {
+    console.warn('⚠️ LLM IATA fallback failed', {
+      input: trimmed,
+      error: String(error),
+    });
+  }
+  return null;
+}
+
+async function ensureIataCode(
+  value: string,
+  type: 'origin' | 'destination',
+): Promise<{ code: string | null; source: string }> {
+  const trimmed = value.trim();
+  if (!trimmed) return { code: null, source: 'empty' };
+
+  const upper = trimmed.toUpperCase();
+  if (IATA_REGEX.test(upper)) {
+    return { code: upper, source: 'input' };
+  }
+
+  const cacheKey = `${type}:${upper}`;
+  const cached = iataCache.get(cacheKey);
+  if (cached) {
+    return { code: cached, source: 'cache' };
+  }
+
+  try {
+    const { resolveCity } = await import('./amadeus_locations.js');
+    const resolved = await resolveCity(trimmed);
+    if (resolved.ok && IATA_REGEX.test(resolved.cityCode)) {
+      const code = resolved.cityCode.toUpperCase();
+      iataCache.set(cacheKey, code);
+      return { code, source: 'amadeus' };
+    }
+  } catch (error) {
+    console.warn('⚠️ Amadeus city resolution failed', {
+      type,
+      value: trimmed,
+      error: String(error),
+    });
+  }
+
+  const fallback = await resolveIataViaLLM(trimmed);
+  if (fallback) {
+    iataCache.set(cacheKey, fallback);
+    return { code: fallback, source: 'llm' };
+  }
+
+  console.warn('⚠️ Unable to resolve location to IATA code', {
+    type,
+    value: trimmed,
+  });
+  return { code: null, source: 'unresolved' };
 }
 
 /**
@@ -42,7 +230,7 @@ export async function flightOffersGet(
       const response = await amadeus.shopping.flightOffersSearch.get(params);
       console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
       return response.data;
-    }, signal, 30000); // 30 seconds timeout
+    }, signal, 45000); // 30 seconds timeout
     
     // Log successful result
     console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
@@ -84,7 +272,7 @@ ${result.length > 3 ? `\n...and ${result.length - 3} more options available.` : 
       };
     }
     
-    return { ok: false, reason: 'no_results' };
+    return { ok: false, reason: 'no_flights_found' };
     
   } catch (error) {
     console.error('Amadeus flight search failed:', error);
@@ -115,7 +303,7 @@ export async function flightOffersPost(
       const amadeus = await getAmadeusClient();
       const response = await amadeus.shopping.flightOffersSearch.post(body);
       return response.data;
-    }, signal, 30000);
+    }, signal, 45000);
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPost');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -144,7 +332,7 @@ export async function flightOffersPrice(
       
       const response = await amadeus.shopping.flightOffers.pricing.post(body);
       return response.data;
-    }, signal, 30000);
+    }, signal, 45000);
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPrice');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -168,7 +356,7 @@ export async function seatmapsFromOffer(
       
       const response = await amadeus.shopping.seatmaps.post(body);
       return response.data;
-    }, signal, 30000);
+    }, signal, 45000);
   } catch (error) {
     const stdError = toStdError(error, 'seatmapsFromOffer');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -186,78 +374,99 @@ export async function searchFlights(params: {
   cabinClass?: string;
 }): Promise<any> {
   console.log('🔍 Starting flight search with params:', params);
-  
-  // Resolve city names to IATA codes if needed
-  let originCode = params.origin;
-  let destinationCode = params.destination;
-  
-  // If not 3-letter codes, try to resolve via Amadeus
-  if (originCode.length !== 3 || !/^[A-Z]{3}$/.test(originCode)) {
-    console.log(`🔍 Resolving origin city: ${originCode}`);
-    try {
-      const { resolveCity } = await import('./amadeus_locations.js');
-      const resolved = await resolveCity(originCode);
-      if (resolved.ok) {
-        originCode = resolved.cityCode;
-        console.log(`✅ Resolved origin: ${params.origin} -> ${originCode}`);
-      } else {
-        console.log(`❌ Failed to resolve origin: ${params.origin}, reason: ${resolved.reason}`);
-      }
-    } catch (error) {
-      console.log(`❌ Error resolving origin: ${error}`);
-    }
+  const originInput = params.origin?.trim() ?? '';
+  const destinationInput = params.destination?.trim() ?? '';
+  const departureInput = params.departureDate?.trim() ?? '';
+
+  if (!originInput || !destinationInput || !departureInput) {
+    return { ok: false, reason: 'missing_required_fields' };
   }
-  
-  if (destinationCode.length !== 3 || !/^[A-Z]{3}$/.test(destinationCode)) {
-    console.log(`🔍 Resolving destination city: ${destinationCode}`);
-    try {
-      const { resolveCity } = await import('./amadeus_locations.js');
-      const resolved = await resolveCity(destinationCode);
-      if (resolved.ok) {
-        destinationCode = resolved.cityCode;
-        console.log(`✅ Resolved destination: ${params.destination} -> ${destinationCode}`);
-      } else {
-        console.log(`❌ Failed to resolve destination: ${params.destination}, reason: ${resolved.reason}`);
-      }
-    } catch (error) {
-      console.log(`❌ Error resolving destination: ${error}`);
-    }
+
+  const origin = await ensureIataCode(originInput, 'origin');
+  if (!origin.code) {
+    return { ok: false, reason: 'origin_unresolved' };
   }
-  
-  console.log(`🛫 Final flight search: ${originCode} -> ${destinationCode} on ${params.departureDate}`);
-  
+
+  if (origin.source !== 'input') {
+    console.log('📍 Origin resolved', {
+      input: originInput,
+      code: origin.code,
+      source: origin.source,
+    });
+  }
+
+  const destination = await ensureIataCode(destinationInput, 'destination');
+  if (!destination.code) {
+    return { ok: false, reason: 'destination_unresolved' };
+  }
+
+  if (destination.source !== 'input') {
+    console.log('📍 Destination resolved', {
+      input: destinationInput,
+      code: destination.code,
+      source: destination.source,
+    });
+  }
+
+  const departureIso = await convertToAmadeusDate(departureInput);
+  const returnIso = params.returnDate
+    ? await convertToAmadeusDate(params.returnDate)
+    : undefined;
+
+  console.log('🛫 Final flight search', {
+    origin: origin.code,
+    destination: destination.code,
+    departureDate: departureIso,
+  });
+
   return flightOffersGet({
-    originLocationCode: originCode,
-    destinationLocationCode: destinationCode,
-    departureDate: params.departureDate,
+    originLocationCode: origin.code,
+    destinationLocationCode: destination.code,
+    departureDate: departureIso,
     adults: ((params.adults || params.passengers) || 1).toString(),
-    ...(params.returnDate && { returnDate: params.returnDate }),
+    ...(returnIso && { returnDate: returnIso }),
   });
 }
 
 export async function convertToAmadeusDate(dateStr?: string): Promise<string> {
-  if (!dateStr) return '2024-12-01'; // Default date
-  
-  const lowerDate = dateStr.toLowerCase();
-  
-  // Handle relative dates
-  if (lowerDate === 'tomorrow') {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split('T')[0]!;
+  const base = new Date();
+  const defaultIso = formatIso(base);
+  if (!dateStr || !dateStr.trim()) return defaultIso;
+
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
   }
-  
-  if (lowerDate === 'today') {
-    return new Date().toISOString().split('T')[0]!;
+
+  const directRelative = parseRelative(trimmed, base);
+  if (directRelative) return directRelative;
+
+  const candidates = new Set<string>([trimmed]);
+
+  try {
+    const parsed = await parseDate(trimmed);
+    if (parsed.success && parsed.data) {
+      if (parsed.data.start) candidates.add(parsed.data.start);
+      if (parsed.data.dates) candidates.add(parsed.data.dates);
+      if (parsed.data.month) candidates.add(parsed.data.month);
+    }
+  } catch (error) {
+    console.warn('⚠️ LLM date extraction failed', {
+      input: trimmed,
+      error: String(error),
+    });
   }
-  
-  // If already in YYYY-MM-DD format, return as-is
-  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-    return dateStr;
+
+  for (const candidate of candidates) {
+    for (const part of splitCandidates(candidate)) {
+      const iso = tryCandidate(part, base);
+      if (iso) return iso;
+    }
+    const fallback = tryCandidate(candidate, base);
+    if (fallback) return fallback;
   }
-  
-  // Default fallback
-  return '2024-12-01';
+
+  return defaultIso;
 }
 
 export interface SearchConstraints {

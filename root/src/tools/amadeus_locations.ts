@@ -85,7 +85,7 @@ export async function resolveCity(
       subType: 'CITY',
       countryCode: countryHint,
       view: 'FULL',
-      limit: 10,
+      limit: 20,
     });
     
     if (!results.length) {
