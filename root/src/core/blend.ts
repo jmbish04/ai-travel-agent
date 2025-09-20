@@ -18,7 +18,7 @@ import {
 import type { SearchResult } from '../tools/search.js';
 import { validateNoCitation } from './citations.js';
 import type { Fact } from './receipts.js';
-import { getLastReceipts, setLastReceipts, updateThreadSlots } from './slot_memory.js';
+import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage } from './slot_memory.js';
 import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
@@ -169,6 +169,7 @@ export async function handleChat(
   const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
     /^\s*\/why\b/i.test(input.message);
   if (wantReceipts) {
+    await setLastUserMessage(threadId, input.message);
     const stored = await getLastReceipts(threadId) || {};
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
@@ -224,6 +225,7 @@ export async function handleChat(
     }
   }
   await pushMessage(threadId, { role: 'user', content: input.message });
+  await setLastUserMessage(threadId, input.message);
   ctx.onStatus?.('Processing your travel request...');
   const result = await runGraphTurn(input.message, threadId, ctx);
   if ('done' in result) {
@@ -235,7 +237,7 @@ export async function handleChat(
     const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
       /^\s*\/why\b/i.test(input.message);
     if (wantReceipts) {
-      const stored = await await getLastReceipts(threadId) || {};
+      const stored = await getLastReceipts(threadId) || {};
       const facts = stored.facts || [];
       const decisions = stored.decisions || [];
       let reply = result.reply;

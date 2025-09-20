@@ -2,12 +2,215 @@ import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
 import { callLLM, optimizeSearchQuery, classifyContent, classifyIntent } from './llm.js';
 import { extractEntities } from './ner.js';
-import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots } from './slot_memory.js';
+import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots, getLastUserMessage } from './slot_memory.js';
 import { extractSlots } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
 import type pino from 'pino';
 import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
+
+const LOCATION_SLOT_KEYS = [
+  'city',
+  'destinationCity',
+  'originCity',
+  'country',
+  'countryName',
+  'region',
+  'state',
+  'stateOrProvince',
+];
+
+const TIME_SLOT_KEYS = [
+  'month',
+  'dates',
+  'departureDate',
+  'returnDate',
+  'travelWindow',
+  'season',
+  'checkIn',
+  'checkOut',
+  'travelDates',
+];
+
+const PROFILE_SLOT_KEYS = [
+  'travelerProfile',
+  'travelStyle',
+  'groupType',
+  'budgetLevel',
+  'activityType',
+  'tripPurpose',
+];
+
+const CONSENT_SLOT_KEYS = [
+  'awaiting_search_consent',
+  'pending_search_query',
+  'awaiting_deep_research_consent',
+  'pending_deep_research_query',
+  'awaiting_web_search_consent',
+  'pending_web_search_query',
+  'awaiting_flight_clarification',
+  'pending_flight_query',
+  'flight_clarification_needed',
+  'clarification_options',
+  'clarification_reasoning',
+  'ambiguity_reason',
+];
+
+const AUX_SLOT_KEYS = ['complexity_score', 'complexity_reasoning'];
+
+const RESET_SLOT_KEYS = Array.from(new Set([
+  ...LOCATION_SLOT_KEYS,
+  ...TIME_SLOT_KEYS,
+  ...PROFILE_SLOT_KEYS,
+  ...CONSENT_SLOT_KEYS,
+  ...AUX_SLOT_KEYS,
+]));
+
+const MONTH_REGEX = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|winter|spring|summer|fall|autumn)\b/i;
+
+const TRAVELER_REGEX = /\b(family|kids?|children|toddlers?|parents|couple|honeymoon|solo|friends?|business|team|group)\b/i;
+const PRONOUN_FOLLOWUP_REGEX = /\b(there|that|those|these|it|same|them|back there|this place|still)\b/i;
+const QUICK_ACK_REGEX = /^(thanks|thank you|sounds good|great|cool|awesome|perfect|nice)\b/i;
+
+function normalizeLocationName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z]/g, '');
+}
+
+function getPrimaryLocation(slots: Record<string, string>): string | undefined {
+  for (const key of ['city', 'destinationCity', 'country', 'originCity', 'region', 'state', 'countryName']) {
+    if (slots[key]) return slots[key];
+  }
+  return undefined;
+}
+
+function detectLocationCandidate(message: string): string | undefined {
+  const patterns = [
+    /\b(?:about|in|for|to|from|near|around|visiting|going to|headed to|travel(?:ling)? to|trip to|pack for|stay(?:ing)? in|guide to)\s+([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)/,
+    /^([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)\s+(?:travel|trip|vacation|holiday|packing|weather|itinerary|guide|destinations?|flights?)/,
+    /\bflights?\s+(?:to|from)\s+([A-Z][A-Za-zÀ-ÿ'\-]*(?:\s+[A-Z][A-Za-zÀ-ÿ'\-]*)?)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match && match[1]) {
+      let candidate = match[1].trim();
+      candidate = candidate.replace(/[,.;!?]+$/, '');
+      if (candidate.length >= 2) {
+        return candidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+const SWITCH_CUE_REGEX = /\b(another|elsewhere|different|new\s+trip|new\s+city|somewhere\s+else|other\s+place|switch)\b/i;
+
+function hasTimeHint(message: string): boolean {
+  return MONTH_REGEX.test(message);
+}
+
+function hasTravelerHint(message: string): boolean {
+  return TRAVELER_REGEX.test(message);
+}
+
+function isPronounContinuation(message: string): boolean {
+  return PRONOUN_FOLLOWUP_REGEX.test(message);
+}
+
+function shouldSkipContextDetector(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed) return true;
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (wordCount <= 2) return true;
+  if (QUICK_ACK_REGEX.test(trimmed)) return true;
+  return isPronounContinuation(trimmed);
+}
+
+async function callContextSwitchDetector(previous: string, current: string, log?: pino.Logger): Promise<boolean> {
+  try {
+    const prompt = await getPrompt('context_switch_detector');
+    const filled = prompt
+      .replace('{previous_query}', previous)
+      .replace('{current_query}', current);
+    const response = await callLLM(filled, { responseFormat: 'text', log });
+    const verdict = response.trim().toUpperCase();
+    return verdict.startsWith('DIFFERENT');
+  } catch (err) {
+    log?.warn({ err: err instanceof Error ? err.message : String(err) }, 'context_switch_detector_failed');
+    return false;
+  }
+}
+
+function stripSlotKeys(slots: Record<string, string>, keys: Iterable<string>): void {
+  for (const key of keys) {
+    if (key in slots) {
+      delete slots[key];
+    }
+  }
+}
+
+function applyPostContextResetSanitization(slots: Record<string, string>, message: string): void {
+  if (!hasTimeHint(message)) {
+    stripSlotKeys(slots, TIME_SLOT_KEYS);
+  }
+  if (!hasTravelerHint(message)) {
+    stripSlotKeys(slots, PROFILE_SLOT_KEYS);
+  }
+  stripSlotKeys(slots, AUX_SLOT_KEYS);
+}
+
+async function maybeResetContextForMessage(params: {
+  threadId?: string;
+  message: string;
+  slots: Record<string, string>;
+  logger?: pino.Logger;
+}): Promise<{ slots: Record<string, string>; reset: boolean; reason?: string }> {
+  const { threadId, message, logger } = params;
+  const sanitizedSlots = { ...params.slots };
+  const previousLocation = getPrimaryLocation(sanitizedSlots);
+  const candidateLocation = detectLocationCandidate(message);
+  const hasExplicitSwitchCue = SWITCH_CUE_REGEX.test(message);
+  let reset = false;
+  let reason: string | undefined;
+
+  if (previousLocation && candidateLocation) {
+    if (normalizeLocationName(previousLocation) !== normalizeLocationName(candidateLocation)) {
+      reset = true;
+      reason = 'explicit_location_change';
+    }
+  }
+
+  if (!reset && hasExplicitSwitchCue) {
+    reset = true;
+    reason = 'explicit_switch_cue';
+  }
+
+  if (!reset && threadId && previousLocation && !shouldSkipContextDetector(message)) {
+    if (!candidateLocation && !hasExplicitSwitchCue) {
+      const lastMessage = await getLastUserMessage(threadId);
+      if (lastMessage) {
+        const different = await callContextSwitchDetector(lastMessage, message, logger);
+        if (different) {
+          reset = true;
+          reason = 'llm_detector';
+        }
+      }
+    }
+  }
+
+  if (reset && threadId) {
+    await updateThreadSlots(threadId, {}, [], RESET_SLOT_KEYS);
+    stripSlotKeys(sanitizedSlots, RESET_SLOT_KEYS);
+    logger?.debug({ reason, previousLocation, candidateLocation }, 'context_switch_reset');
+  }
+
+  return { slots: sanitizedSlots, reset, reason };
+}
 
 // Helper function to clear consent state for unrelated queries
 async function clearConsentState(threadId?: string) {
@@ -107,7 +310,7 @@ export async function routeIntent({ message, threadId, logger }: {
     const pendingQuery = ctxSlots.pending_flight_query || '';
     
     // Clear the clarification state
-    await await updateThreadSlots(threadId, {}, [
+    await updateThreadSlots(threadId, {}, [], [
       'awaiting_flight_clarification',
       'pending_flight_query',
       'clarification_reasoning'
@@ -135,6 +338,13 @@ export async function routeIntent({ message, threadId, logger }: {
       // Process current message instead of recursion
       logger?.log?.debug({ choice: 'process_current' }, 'flight_clarification_ambiguous');
     }
+  }
+
+  let contextReset = false;
+  if (threadId) {
+    const resetResult = await maybeResetContextForMessage({ threadId, message: m, slots: ctxSlots, logger: logger?.log });
+    ctxSlots = resetResult.slots;
+    contextReset = resetResult.reset;
   }
 
   // 1) Flight fast-path (no LLM)
@@ -258,7 +468,11 @@ export async function routeIntent({ message, threadId, logger }: {
   if (llmNormalized.intent === 'flights' && !RE.dateish.test(m)) {
     logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
   }
-  
+
+  if (contextReset) {
+    applyPostContextResetSanitization(llmNormalized.slots, m);
+  }
+
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
   // metrics
   incTurn(llmNormalized.intent);

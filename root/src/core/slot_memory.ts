@@ -16,6 +16,7 @@ type SlotState = {
   lastFacts?: Fact[];
   lastDecisions?: Array<string | Decision>;
   lastReply?: string;
+  lastUserMessage?: string;
 };
 
 export async function getThreadSlots(threadId: string): Promise<Record<string, string>> {
@@ -35,6 +36,7 @@ export async function updateThreadSlots(
   threadId: string,
   slots: Record<string, string | null>,
   expectedMissing: string[] = [],
+  remove: string[] = [],
 ): Promise<void> {
   // Filter out null values
   const filteredSlots: Record<string, string> = {};
@@ -54,7 +56,7 @@ export async function updateThreadSlots(
   });
   
   // Update slots
-  await store.setSlots(threadId, filteredSlots);
+  await store.setSlots(threadId, filteredSlots, remove.length ? Array.from(new Set(remove)) : undefined);
   
   // Update state
   const newState = { ...prevState, expectedMissing };
@@ -93,6 +95,18 @@ export async function getLastReceipts(threadId: string): Promise<{ facts?: Fact[
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
   return { facts: state?.lastFacts, decisions: state?.lastDecisions, reply: state?.lastReply };
+}
+
+export async function getLastUserMessage(threadId: string): Promise<string | undefined> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return state?.lastUserMessage;
+}
+
+export async function setLastUserMessage(threadId: string, message: string): Promise<void> {
+  const store = getSessionStore();
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  await store.setJson('state', threadId, { ...prev, lastUserMessage: message });
 }
 
 export function normalizeSlots(
@@ -202,4 +216,3 @@ export async function writeConsentState(threadId: string, next: { type: 'web' | 
   
   await updateThreadSlots(threadId, updates, []);
 }
-

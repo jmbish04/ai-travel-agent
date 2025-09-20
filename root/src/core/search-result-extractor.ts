@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { extractEntitiesEnhanced } from './ner-enhanced.js';
-import { callLLM } from './llm.js';
+import { callLLM, classifyContent } from './llm.js';
 import { getPrompt } from './prompts.js';
 import type pino from 'pino';
 
@@ -37,10 +37,11 @@ async function tryTransformersExtraction(
         const text = `${result.title} ${result.description}`;
         const contentClass = await classifyContent(text, log);
         const entityResult = await extractEntitiesEnhanced(text, log);
-        
+        const relevanceScore = contentClass?.confidence ?? 0;
+
         return {
           ...result,
-          relevanceScore: contentClass.confidence,
+          relevanceScore,
           entities: entityResult.entities
         };
       })

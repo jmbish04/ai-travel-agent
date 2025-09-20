@@ -268,11 +268,12 @@ export function observeE2E(durationMs: number) {
   e2eHist.max = Math.max(e2eHist.max, durationMs);
   for (const b of e2eBuckets) {
     if (durationMs <= b) {
-      e2eHist.buckets[String(b)] += 1;
+      const key = String(b);
+      e2eHist.buckets[key] = (e2eHist.buckets[key] ?? 0) + 1;
       break;
     }
   }
-  if (histE2ESeconds) histE2ESeconds.observe({}, durationMs / 1000);
+  histE2ESeconds?.observe({}, durationMs / 1000);
   void pushIngest('e2e_latency_ms', {}, durationMs);
 }
 
