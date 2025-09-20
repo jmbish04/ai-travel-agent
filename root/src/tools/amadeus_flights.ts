@@ -495,9 +495,23 @@ export async function searchAlternatives(
   signal?: AbortSignal
 ): Promise<FlightAlternative[]> {
   try {
+    // Resolve city names to airport codes using Amadeus API
+    const { resolveCity } = await import('./amadeus_locations.js');
+    
+    const originResolved = await resolveCity(constraints.origin);
+    const destinationResolved = await resolveCity(constraints.destination);
+    
+    if (!originResolved.ok) {
+      throw new Error(`Could not resolve origin city: ${constraints.origin}`);
+    }
+    
+    if (!destinationResolved.ok) {
+      throw new Error(`Could not resolve destination city: ${constraints.destination}`);
+    }
+    
     const result = await flightOffersGet({
-      originLocationCode: constraints.origin,
-      destinationLocationCode: constraints.destination,
+      originLocationCode: originResolved.cityCode,
+      destinationLocationCode: destinationResolved.cityCode,
       departureDate: constraints.departureDate,
       adults: (constraints.passengers || 1).toString(),
       max: '10'
