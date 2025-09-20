@@ -6,14 +6,17 @@ flowchart TD
 
   %% Entry
   U["User Message"]:::uisys --> S["system.md\n[System behavior & guardrails]"]:::uisys
-  S --> R["router_llm.md\n[Intent + slots JSON]"]:::route
+  %% Detect "search deeper/more" to continue prior web query as deep research
+  S --> UPG["search_upgrade_detector.md\n[Detect search upgrade vs last query]"]:::nlp
+  UPG -->|upgrade| CR1
+  UPG --> R["router_llm.md\n[Intent + slots JSON]"]:::route
 
   %% NLP & Extraction helpers (parallel refinements)
   R --> NCI["nlp_content_classification.md\n[Content type, explicit search, web needs]"]:::nlp
   R --> NI["nlp_intent_detection.md\n[Intent refine + slots]"]:::nlp
-  NI --> CEX["nlp_city_extraction.md\n[Extract city]"]:::nlp
-  CEX --> CNAME["city_name_extractor.md\n[Normalize city names]"]:::nlp
-  CNAME --> CPARSE["city_parser.md\n[City parsing & normalization]"]:::nlp
+  R --> CSD["context_switch_detector.md\n[Detect context change]"]:::nlp
+  CSD --> INT
+  NI --> CPARSE["city_parser.md\n[City parsing & normalization]"]:::nlp
   NI --> ODEX["origin_destination_extractor.md\n[Flight origin/destination]"]:::nlp
   NI --> DPARSE["date_parser.md\n[Dates/month inference]"]:::nlp
 
@@ -24,24 +27,31 @@ flowchart TD
   NCI --> INT
 
   %% Consent gate (web/deep research)
-  INT -->|web_search consent needed| CONS["consent_detector.md\n[Yes/No for web/deep research]"]:::uisys
-  CONS -->|Yes| WS_START
+  INT --> CA["complexity_assessor.md\n[Detect deep research need]"]:::nlp
+  CA -->|complex &amp; enabled| CONS["consent_detector.md\n[Yes/No for web/deep research]"]:::uisys
+  INT -->|web_search consent needed| CONS
+  CONS -->|Yes / web| WS_START
+  CONS -->|Yes / deep| CR1
   CONS -->|No| Z
 
   %% Intent branches → Domain processing prompts
   INT -->|policy| PCLS["policy_classifier.md\n[airlines | hotels | visas]"]:::domain
   INT -->|web_search| WS_START
-  INT -->|attractions| AT_SUM["attractions_summarizer.md\n[Summarize POIs]"]:::domain
+  INT -->|attractions| AKF["attractions_kid_friendly.md\n[Filter for family-friendly]"]:::domain
+  AKF --> AT_SUM["attractions_summarizer.md\n[Summarize POIs]"]:::domain
   INT -->|destinations| PREF["preference_extractor.md\n[Extract travel preferences]"]:::domain
+  PREF --> DREC["destinations_recommender.md\n[AI destination candidates]"]:::domain
   INT -->|packing| PLAN["blend_planner.md\n[Plan response: style, needs]"]:::domain
   INT -->|weather| PLAN
   INT -->|system| Z
   INT -->|unknown| CLAR
-  INT -->|flights| F_GATE{Live search ok?}
+  INT -->|flights| FSE["flight_slot_extractor.md\n[Post-LLM slot enhancement]"]:::nlp
+  FSE --> F_GATE{Live search ok?}
 
   %% Policy Agent path (RAG → receipts → summarize)
   PCLS --> PSUMM["policy_summarizer.md\n[Compose from policy docs]"]:::domain
-  PSUMM --> QC{Enough citations?}
+  PSUMM --> PQA["policy_quality_assessor.md\n[Info quality / needs web?]"]:::domain
+  PQA --> QC{Enough citations?}
   QC -->|Yes| CITANA["citation_analysis.md\n[Score/format citations]"]:::cite
   QC -->|No| PBR["policy_extractor.md\n[Extract clauses via browser receipts]"]:::domain
   PBR --> PCONF["policy_confidence.md\n[Confidence scoring]"]:::domain
@@ -50,8 +60,14 @@ flowchart TD
   CITVER --> Z
 
   %% Web Search path
-  WS_START["search_query_optimizer.md\n[Optimize web query]"]:::domain --> WS_SUM["search_summarize.md\n[Synthesize results with citations]"]:::domain
-  WS_SUM --> CITANA
+  WS_START["search_query_optimizer.md\n[Optimize web query]"]:::domain --> WS_SUM["search_summarize.md\n[Synthesize results]"]:::domain
+  %% LLM extraction helpers on results (used when applicable)
+  WS_SUM --> EXW["search_extract_weather.md\n[Extract weather signal]"]:::nlp
+  WS_SUM --> EXC["search_extract_country.md\n[Extract country facts]"]:::nlp
+  WS_SUM --> EXA["search_extract_attractions.md\n[Extract attractions list]"]:::nlp
+  EXW --> CITANA
+  EXC --> CITANA
+  EXA --> CITANA
 
   %% Deep Research (conditional)
   WS_START -->|DEEP_RESEARCH_ENABLED| CR1["crawlee_page_summary.md\n[Per-page summaries]"]:::domain
