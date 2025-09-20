@@ -1,13 +1,14 @@
 import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
-import { callLLM, optimizeSearchQuery, classifyContent, classifyIntent } from './llm.js';
-import { extractEntities } from './ner.js';
+import { callLLM, optimizeSearchQuery } from './llm.js';
 import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots, getLastUserMessage } from './slot_memory.js';
 import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
-import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
+import { RE, isDirectFlightHeuristic } from './router.optimizers.js';
 import type pino from 'pino';
 import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
+import { classifyConsentResponse } from './consent.js';
+import { assessQueryComplexity } from './complexity.js';
 
 const LOCATION_SLOT_KEYS = [
   'city',
@@ -251,26 +252,14 @@ export async function routeIntent({ message, threadId, logger }: {
   // 0) Guards (no LLM) - clear consent state for unrelated queries
   if (!m) return RouterResult.parse({ intent:'unknown', needExternal:false, slots:{}, confidence:0.1 });
   
-  // Only use regex guards for very specific system queries, not general "help" requests
-  if (/^(who are you|what can you do|how do you work)$/i.test(m)) {
-    clearConsentState(threadId);
-    return RouterResult.parse({ intent:'system', needExternal:false, slots:{}, confidence:0.9 });
-  }
-  
-  // Only use policy regex for very specific visa/passport queries
-  if (/\b(visa requirements?|passport requirements?|entry requirements?|immigration rules?)\b/i.test(m)) {
-    clearConsentState(threadId);
-    return RouterResult.parse({ intent:'policy', needExternal:true, slots:{}, confidence:0.9 });
-  }
-
   // Handle flight clarification responses (no recursion)
   let ctxSlots = threadId ? await await getThreadSlots(threadId) : {};
   
   // Clear old context for completely new, unrelated queries
   if (threadId && ctxSlots.awaiting_deep_research_consent === 'true') {
     // Check if this is a completely different query (not a consent response)
-    const isConsentResponse = /^(yes|no|sure|ok|proceed|search|continue|go ahead)/i.test(m);
-    if (!isConsentResponse) {
+    const consentVerdict = await classifyConsentResponse(m, logger?.log);
+    if (consentVerdict === 'unclear') {
       await clearConsentState(threadId);
       // Reload slots after clearing
       ctxSlots = await getThreadSlots(threadId);
@@ -334,41 +323,23 @@ export async function routeIntent({ message, threadId, logger }: {
     }
   }
 
-  // Explicit search (run after flight fast-path to avoid misrouting "find flights ...")
-  if (RE.explicitSearch.test(m)) {
-    clearConsentState(threadId);
-    const q = await optimizeSearchQuery(
-      m,
-      threadId ? await getThreadSlots(threadId) : {},
-      'web_search',
-      logger?.log
-    );
-    const r = RouterResult.parse({
-      intent: 'web_search',
-      needExternal: true,
-      slots: { search_query: q },
-      confidence: 0.9,
-    });
-    incTurn(r.intent);
-    if (threadId) noteTurn(threadId, r.intent);
-    return r;
-  }
-
   // 2) Deep-research consent? (no LLM)
   if (process.env.DEEP_RESEARCH_ENABLED === 'true') {
-    const cx = cheapComplexity(m);
-    if (cx.complex) {
+    const assessment = await assessQueryComplexity(m, logger?.log);
+    if (assessment.isComplex && assessment.confidence >= 0.75) {
       // Clear stale slots when processing a new complex query
       await clearConsentState(threadId);
+      const complexityScore = assessment.confidence.toFixed(2);
       threadId && await updateThreadSlots(threadId, {
         awaiting_deep_research_consent:'true',
         pending_deep_research_query:m,
-        complexity_reasoning:cx.reason
+        complexity_reasoning:assessment.reasoning,
+        complexity_score:complexityScore
       }, []);
-      logger?.log?.debug({ reason:cx.reason }, 'complexity_consent_gate');
+      logger?.log?.debug({ assessment }, 'complexity_consent_gate');
       return RouterResult.parse({
         intent:'system', needExternal:false,
-        slots:{ deep_research_consent_needed:'true', complexity_score:'0.80' },
+        slots:{ deep_research_consent_needed:'true', complexity_score },
         confidence:0.9
       });
     }
@@ -442,6 +413,13 @@ export async function routeIntent({ message, threadId, logger }: {
   }
 
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
+  if (['system','policy'].includes(llmNormalized.intent)) {
+    clearConsentState(threadId);
+  }
+  if (llmNormalized.intent === 'web_search' && !llmNormalized.slots?.search_query) {
+    const q = await optimizeSearchQuery(m, ctxSlots, 'web_search', logger?.log);
+    llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
+  }
   // metrics
   incTurn(llmNormalized.intent);
   if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);

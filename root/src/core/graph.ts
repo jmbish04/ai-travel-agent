@@ -38,6 +38,8 @@ import {
   getCombinationKey,
   ConstraintType,
 } from './constraintGraph.js';
+import { classifyConsentResponse } from './consent.js';
+import { parseCity } from './parsers.js';
 
 // Types
 export type NodeCtx = { msg: string; threadId: string; onStatus?: (status: string) => void };
@@ -91,9 +93,7 @@ export async function runGraphTurn(
   
   // === GUARD STAGE: Fast micro-rules first ===
   const { 
-    checkYesNoShortcut, 
-    checkPolicyHit, 
-    checkWebishHit,
+    checkYesNoShortcut,
     buildTurnCache 
   } = await import('./graph.optimizers.js');
   
@@ -105,36 +105,20 @@ export async function runGraphTurn(
   const consentState = readConsentState(earlySlots);
   
   if (consentState.awaiting) {
-    const yesNo = checkYesNoShortcut(message);
-    if (yesNo) {
-      ctx.log.debug({ yesNo, fastpath: 'consent' }, 'guard_yes_no_hit');
-      await await writeConsentState(threadId, { type: '', pending: '' }); // Clear
-      
-      if (yesNo === 'yes' && consentState.pending) {
+    const shortcut = checkYesNoShortcut(message);
+    const verdict = shortcut ?? await classifyConsentResponse(message, ctx.log);
+    if (verdict !== 'unclear') {
+      ctx.log.debug({ verdict, fastpath: 'consent' }, 'guard_yes_no_hit');
+      await writeConsentState(threadId, { type: '', pending: '' });
+
+      if (verdict === 'yes' && consentState.pending) {
         if (consentState.type === 'deep') {
           return await performDeepResearchNode(consentState.pending, ctx, threadId);
-        } else {
-          return await performWebSearchNode(consentState.pending, ctx, threadId);
         }
-      } else {
-        return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
+        return await performWebSearchNode(consentState.pending, ctx, threadId);
       }
+      return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
     }
-  }
-  
-  // Policy hit → force intent and clear consent state
-  if (checkPolicyHit(message)) {
-    C.forced = 'policy';
-    // Clear any pending consent state since this is a new, unrelated query
-    await writeConsentState(threadId, { type: '', pending: '' });
-    ctx.log.debug({ fastpath: 'policy' }, 'guard_policy_hit');
-  }
-  
-  // Web-ish hit → set consent and return (but never when another guard forced intent)
-  if (!C.forced && checkWebishHit(message)) {
-    await writeConsentState(threadId, { type: 'web', pending: message });
-    ctx.log.debug({ fastpath: 'webish' }, 'guard_webish_hit');
-    return { done: true, reply: 'I can look this up on the web. Want me to search now?' };
   }
   
   // Weather fast-path guard (optional). Disabled by default to avoid extra LLM calls.
@@ -209,9 +193,10 @@ export async function runGraphTurn(
   // Lightweight city extraction for weather/attractions/packing/destinations
   if (routedIntent && ['weather', 'attractions', 'packing', 'destinations'].includes(routedIntent) && !C.route?.slots.city) {
     promises.push((async () => {
-      const { extractCityLite } = await import('./graph.optimizers.js');
-      const city = await extractCityLite(message, ctx.log);
-      if (city && C.route) C.route.slots.city = city;
+      const cityResult = await parseCity(message, C.route?.slots ?? {}, ctx.log).catch(() => ({ success: false } as const));
+      if (cityResult?.success && cityResult.data?.normalized && C.route) {
+        C.route.slots.city = cityResult.data.normalized;
+      }
     })());
   }
   
@@ -256,30 +241,29 @@ export async function runGraphTurn(
   
   // === UNIFIED CONSENT HANDLING ===
   // Skip consent handling if this is handled by guards (policy, system, etc.)
-  const isGuardHandled = C.forced === 'policy' || 
-                        (C.route?.intent === 'system' && C.route?.confidence === 0.9) ||
-                        (C.route?.intent === 'web_search' && C.route?.confidence === 0.9);
-                        
+  const isGuardHandled = ['system', 'policy', 'web_search'].includes(C.route?.intent ?? '');
+
   if (!isGuardHandled) {
     const currentSlots = await getThreadSlots(threadId);
     const currentConsentState = readConsentState(currentSlots);
     
     if (currentConsentState.awaiting && currentConsentState.pending) {
-      const consent = await detectConsent(message, ctx);
-      llmCallsThisTurn++;
-      
+      const shortcut = checkYesNoShortcut(message);
+      const consent = shortcut ?? await classifyConsentResponse(message, ctx.log);
+      if (!shortcut && consent !== 'unclear') {
+        llmCallsThisTurn++;
+      }
+
       if (consent !== 'unclear') {
-        await writeConsentState(threadId, { type: '', pending: '' }); // Clear
-        
+        await writeConsentState(threadId, { type: '', pending: '' });
+
         if (consent === 'yes') {
           if (currentConsentState.type === 'deep') {
             return await performDeepResearchNode(currentConsentState.pending, ctx, threadId);
-          } else {
-            return await performWebSearchNode(currentConsentState.pending, ctx, threadId);
           }
-        } else {
-          return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
+          return await performWebSearchNode(currentConsentState.pending, ctx, threadId);
         }
+        return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
       }
     }
   }
@@ -327,37 +311,6 @@ export async function runGraphTurn(
 }
 
 // === HELPER FUNCTIONS ===
-
-async function detectConsent(
-  message: string,
-  ctx: { log: Logger }
-): Promise<'yes' | 'no' | 'unclear'> {
-  // Stage 1: Micro rules for obvious responses
-  const msg = message.toLowerCase().trim();
-  if (/^(yes|y|sure|ok|okay|go ahead|proceed)$/i.test(msg)) {
-    ctx.log.debug({ method: 'micro_rules' }, 'consent_yes');
-    return 'yes';
-  }
-  if (/^(no|n|nope|skip|pass|cancel)$/i.test(msg)) {
-    ctx.log.debug({ method: 'micro_rules' }, 'consent_no');
-    return 'no';
-  }
-
-  // Stage 2: LLM fallback
-  try {
-    const promptTemplate = await getPrompt('consent_detector');
-    const prompt = promptTemplate.replace('{message}', message);
-    const response = await callLLM(prompt, { log: ctx.log });
-    const answer = response.toLowerCase().trim();
-    
-    if (answer.includes('yes')) return 'yes';
-    if (answer.includes('no')) return 'no';
-  } catch (error) {
-    ctx.log.debug({ error: String(error) }, 'consent_detection_failed');
-  }
-  
-  return 'unclear';
-}
 
 function checkMissingSlots(intent: string, slots: Record<string, string>, message: string): string[] {
   const missing: string[] = [];
