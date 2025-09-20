@@ -20,7 +20,13 @@ const ExtractionSchema = z.object({
   relevanceScore: z.number().min(0).max(1).optional(),
 });
 
-export type ExtractionResultT = z.infer<typeof ExtractionSchema>;
+export type ExtractionResultT = {
+  summary: string;
+  confidence: number;
+  aiMethod: 'llm' | 'fallback';
+  entities?: Array<{ text: string; type: string; value?: string }>;
+  relevanceScore?: number;
+};
 
 function escapeForPrompt(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -46,7 +52,7 @@ function fallbackExtraction(results: SearchResult[]): ExtractionResultT {
     aiMethod: 'fallback',
     entities: [],
     relevanceScore: 0.2,
-  } as any;
+  };
 }
 
 export async function extractFromSearchResults(
@@ -62,7 +68,7 @@ export async function extractFromSearchResults(
       aiMethod: 'fallback',
       entities: [],
       relevanceScore: 0.1,
-    } as any;
+    };
   }
 
   try {
@@ -81,7 +87,7 @@ export async function extractFromSearchResults(
       aiMethod: 'llm',
       entities: parsed.entities,
       relevanceScore: parsed.relevanceScore ?? parsed.confidence,
-    } as any;
+    };
   } catch (error) {
     if (log?.debug) {
       log.debug({ error: String(error) }, 'llm_search_extraction_failed');
