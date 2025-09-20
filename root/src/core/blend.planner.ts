@@ -8,9 +8,6 @@ export type BlendPlan = {
   mixed_languages: boolean;
   query_facets: { wants_restaurants: boolean; wants_budget: boolean; wants_flights: boolean; };
   needs_web: boolean;
-  needs_weather: boolean;
-  needs_attractions: boolean;
-  needs_country_facts: boolean;
   style: 'bullet'|'short'|'narrative';
   summarize_web_with_llm: boolean;
   missing_slots: string[];
