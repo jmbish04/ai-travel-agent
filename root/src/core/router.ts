@@ -1,7 +1,15 @@
 import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
 import { callLLM, optimizeSearchQuery } from './llm.js';
-import { getThreadSlots, updateThreadSlots, normalizeSlots, clearThreadSlots, getLastUserMessage } from './slot_memory.js';
+import {
+  getThreadSlots,
+  updateThreadSlots,
+  normalizeSlots,
+  clearThreadSlots,
+  getLastUserMessage,
+  resolveLocationPlaceholder,
+  isTemporalReference,
+} from './slot_memory.js';
 import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic } from './router.optimizers.js';
@@ -67,8 +75,28 @@ const RESET_SLOT_KEYS = Array.from(new Set([
   ...AUX_SLOT_KEYS,
 ]));
 
-const PRONOUN_FOLLOWUP_REGEX = /\b(there|that|those|these|it|same|them|back there|this place|still)\b/i;
-const QUICK_ACK_REGEX = /^(thanks|thank you|sounds good|great|cool|awesome|perfect|nice)\b/i;
+// AI-first detection functions using existing prompts
+async function isPronounFollowup(message: string, log?: pino.Logger): Promise<boolean> {
+  // Use consent_detector to identify vague/unclear responses (pronouns typically create unclear responses)
+  const consentPrompt = await getPrompt('consent_detector');
+  const result = await callLLM(
+    consentPrompt + `\n\nUser message: "${message}"`,
+    { format: 'text', maxTokens: 5 },
+    log
+  );
+  return result.trim().toLowerCase() === 'unclear';
+}
+
+async function isQuickAck(message: string, log?: pino.Logger): Promise<boolean> {
+  // Use consent_detector to identify positive acknowledgments
+  const consentPrompt = await getPrompt('consent_detector');
+  const result = await callLLM(
+    consentPrompt + `\n\nUser message: "${message}"`,
+    { format: 'text', maxTokens: 5 },
+    log
+  );
+  return result.trim().toLowerCase() === 'yes';
+}
 
 function normalizeLocationName(name: string): string {
   return name
@@ -85,13 +113,13 @@ function getPrimaryLocation(slots: Record<string, string>): string | undefined {
   return undefined;
 }
 
-function shouldSkipContextDetector(message: string): boolean {
+async function shouldSkipContextDetector(message: string, log?: pino.Logger): Promise<boolean> {
   const trimmed = message.trim();
   if (!trimmed) return true;
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   if (wordCount <= 2) return true;
-  if (QUICK_ACK_REGEX.test(trimmed)) return true;
-  return PRONOUN_FOLLOWUP_REGEX.test(trimmed);
+  if (await isQuickAck(trimmed, log)) return true;
+  return await isPronounFollowup(trimmed, log);
 }
 
 async function callContextSwitchDetector(previous: string, current: string, log?: pino.Logger): Promise<boolean> {
@@ -121,6 +149,7 @@ async function maybeResetContextForMessage(params: {
   threadId?: string;
   message: string;
   slots: Record<string, string>;
+  newSlots?: Record<string, string | null | undefined>;
   logger?: pino.Logger;
 }): Promise<{ slots: Record<string, string>; reset: boolean; reason?: string }> {
   const { threadId, message, logger } = params;
@@ -128,14 +157,43 @@ async function maybeResetContextForMessage(params: {
   const previousLocation = getPrimaryLocation(sanitizedSlots);
   let reset = false;
   let reason: string | undefined;
-  const shouldSkip = shouldSkipContextDetector(message);
+  const shouldSkip = await shouldSkipContextDetector(message, params.log);
   const lastMessage = threadId ? await getLastUserMessage(threadId) : undefined;
 
   let freshSlots: Record<string, string> = {};
-  try {
-    freshSlots = await extractSlots(message, {}, logger);
-  } catch (error) {
-    logger?.debug({ err: String(error) }, 'context_slots_extraction_failed');
+  if (params.newSlots) {
+    for (const [key, value] of Object.entries(params.newSlots)) {
+      if (typeof value === 'string' && value.trim()) {
+        freshSlots[key] = value.trim();
+      }
+    }
+  } else {
+    try {
+      freshSlots = await extractSlots(message, sanitizedSlots, logger);
+    } catch (error) {
+      logger?.debug({ err: String(error) }, 'context_slots_extraction_failed');
+    }
+  }
+
+  const fallbackDestination = sanitizedSlots.destinationCity?.trim() || sanitizedSlots.city?.trim();
+  const fallbackOrigin = sanitizedSlots.originCity?.trim() || sanitizedSlots.city?.trim();
+  const fallbackCity = sanitizedSlots.city?.trim() || fallbackDestination || fallbackOrigin;
+
+  for (const key of ['destinationCity', 'city', 'originCity'] as const) {
+    const value = freshSlots[key];
+    if (typeof value === 'string') {
+      const fallback = key === 'destinationCity'
+        ? fallbackDestination || fallbackCity
+        : key === 'originCity'
+          ? fallbackOrigin || fallbackDestination || fallbackCity
+          : fallbackCity || fallbackDestination || fallbackOrigin;
+      const resolved = resolveLocationPlaceholder(value, fallback || previousLocation);
+      if (resolved) {
+        freshSlots[key] = resolved;
+      } else {
+        delete freshSlots[key];
+      }
+    }
   }
 
   const newLocation = getPrimaryLocation(freshSlots);
@@ -301,13 +359,6 @@ export async function routeIntent({ message, threadId, logger }: {
     }
   }
 
-  let contextReset = false;
-  if (threadId) {
-    const resetResult = await maybeResetContextForMessage({ threadId, message: m, slots: ctxSlots, logger: logger?.log });
-    ctxSlots = resetResult.slots;
-    contextReset = resetResult.reset;
-  }
-
   // 1) Flight fast-path (no LLM)
   if (RE.flights.test(m)) {
     const { isDirect } = isDirectFlightHeuristic(m);
@@ -370,6 +421,17 @@ export async function routeIntent({ message, threadId, logger }: {
   const json = JSON.parse(raw);
   const llm = RouterResult.parse(json);
 
+  if (threadId) {
+    const resetResult = await maybeResetContextForMessage({
+      threadId,
+      message: m,
+      slots: ctxSlots,
+      newSlots: llm.slots,
+      logger: logger?.log,
+    });
+    ctxSlots = resetResult.slots;
+  }
+
   // Normalize slots to handle null values from LLM
   const normalizedSlots = normalizeSlots(ctxSlots, llm.slots, llm.intent);
   const llmNormalized = { ...llm, slots: normalizedSlots };
@@ -381,7 +443,8 @@ export async function routeIntent({ message, threadId, logger }: {
       
       // Preserve relative dates from LLM (today, tomorrow, etc.) over enhanced parsing
       const preservedSlots = { ...enhancedSlots };
-      if (llmNormalized.slots?.dates && /^(today|tomorrow|tonight|now)$/i.test(llmNormalized.slots.dates)) {
+      // Use semantic temporal reference detection from slot_memory
+      if (llmNormalized.slots?.dates && isTemporalReference(llmNormalized.slots.dates)) {
         preservedSlots.dates = llmNormalized.slots.dates;
         preservedSlots.departureDate = llmNormalized.slots.dates;
         // Don't override month for relative dates
