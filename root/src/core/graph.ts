@@ -450,8 +450,17 @@ async function destinationsNode(
     logger.log?.warn({ error: String(error) }, 'destinations_tool_failed');
   }
   
-  // Fallback to web search
-  return webSearchNode(ctx, { ...mergedSlots, search_query: `travel destinations ${mergedSlots.month || ''} ${mergedSlots.travelerProfile || ''}`.trim() }, logger);
+  // Fallback to web search with city-aware query
+  const city = mergedSlots.city || mergedSlots.destinationCity || mergedSlots.originCity || '';
+  const when = mergedSlots.month || mergedSlots.dates || mergedSlots.travelWindow || '';
+  const profile = mergedSlots.travelerProfile || mergedSlots.groupType || '';
+
+  const parts = [city, 'travel guide'];
+  if (when) parts.push(when);
+  if (profile) parts.push(profile);
+  const searchQuery = parts.filter(Boolean).join(' ').trim() || 'travel destinations';
+
+  return webSearchNode(ctx, { ...mergedSlots, search_query: searchQuery }, logger);
 }
 
 async function packingNode(
