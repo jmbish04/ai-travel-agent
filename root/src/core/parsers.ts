@@ -275,7 +275,9 @@ export async function extractFlightSlotsOnce(
 ): Promise<Record<string, string>> {
   try {
     const template = await getPrompt('flight_slot_extractor');
-    const prompt = template.replace('{text}', escapeForPrompt(text));
+    const prompt = template
+      .replace('{text}', escapeForPrompt(text))
+      .replace('{context}', stringifyContext(context));
     const raw = await callLLM(prompt, { responseFormat: 'json', log: logger });
     const json = JSON.parse(raw) as Record<string, unknown>;
     const slots: Record<string, string> = {};

@@ -452,6 +452,8 @@ export async function routeIntent({ message, threadId, logger }: {
       
       // Merge LLM slots with enhanced slots, prioritizing preserved relative dates
       const mergedSlots = { ...enhancedSlots, ...llmNormalized.slots, ...preservedSlots };
+      // Final normalization pass to resolve any placeholders via context
+      const normalizedMerged = normalizeSlots(ctxSlots, mergedSlots, 'flights');
       
       logger?.log?.debug({ 
         llmSlots: llmNormalized.slots, 
@@ -462,7 +464,7 @@ export async function routeIntent({ message, threadId, logger }: {
       
       const enhanced = RouterResult.parse({
         ...llmNormalized,
-        slots: mergedSlots
+        slots: normalizedMerged
       });
       
       logger?.log?.debug({ intent: enhanced.intent, confidence: enhanced.confidence }, 'router_final_result');

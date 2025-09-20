@@ -10,6 +10,11 @@ Rules:
 - Cabin: one of the enum values; default economy if unclear.
 
 Input: "{text}"
+Context: {context}
+
+Deictic resolution:
+- If the text uses pronouns/placeholders like "there", "that city/place/destination", or "same city",
+  resolve them using Context. Prefer, in order: Context.destinationCity, Context.city, Context.originCity.
+- Do not return the literal words "there" or "that city". Always resolve to a concrete city string when possible.
 
 Return JSON only.
-
