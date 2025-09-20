@@ -17,6 +17,7 @@ import { routeIntent } from './router.js';
 declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
+import { incClarify } from '../util/metrics.js';
 import { 
   getThreadSlots, 
   updateThreadSlots, 
@@ -299,6 +300,7 @@ export async function runGraphTurn(
   const missing = intent ? checkMissingSlots(intent, slots, message) : [];
   if (missing.length > 0) {
     await updateThreadSlots(threadId, slots, missing);
+    try { if (intent && missing[0]) incClarify(intent, missing[0]); } catch {}
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
   }
@@ -898,6 +900,7 @@ async function performWebSearchNode(
   threadId: string,
 ): Promise<NodeOut> {
   ctx.log.debug({ query }, 'performing_web_search_node');
+  try { const { incFallback } = await import('../util/metrics.js'); incFallback('web'); } catch {}
   
   const searchResult = await searchTravelInfo(query, ctx.log);
   

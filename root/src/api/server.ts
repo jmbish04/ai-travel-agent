@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'node:path';
 import { createLogger } from '../util/logging.js';
 import { router } from './routes.js';
 import { preloadPrompts } from '../core/prompts.js';
@@ -70,6 +71,9 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Serve static dashboard and assets from /public
+app.use(express.static(path.join(process.cwd(), 'public')));
+
 function resOnFinish(res: express.Response, cb: () => void) {
   res.on('finish', cb);
   res.on('close', cb);
@@ -91,5 +95,4 @@ preloadPrompts()
   .finally(() => {
     app.listen(port, () => log.info({ port }, 'HTTP server started'));
   });
-
 

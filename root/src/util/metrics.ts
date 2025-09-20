@@ -21,6 +21,29 @@ export const metricsEnabled = IS_PROM || IS_JSON;
 
 // JSON fallback counters
 let messages = 0;
+let answersWithCitations = 0;
+let verifyPass = 0;
+let verifyFail = 0;
+let generatedAnswers = 0;
+
+// Flow counters (low-cardinality labels only)
+const chatTurns: Record<string, number> = {};
+const routerLowConf: Record<string, number> = {};
+const clarifyRequests: Record<string, number> = {};
+const clarifyResolved: Record<string, number> = {};
+const fallbacks: Record<string, number> = { web: 0, browser: 0 };
+const verifyFailsByReason: Record<string, number> = {};
+
+// Business/session metrics (lightweight approximation for dev/demo)
+const sessions = new Map<string, { startedAt: number; intent?: string; turns: number; resolved?: boolean }>();
+let totalSessions = 0;
+let resolvedSessions = 0;
+const sessionOutcomes: Record<'auto'|'escalated'|'abandoned', number> = { auto: 0, escalated: 0, abandoned: 0 };
+const ttrByIntent: Record<string, { count: number; sum: number; min: number; max: number }> = {};
+
+// E2E latency histogram (ms)
+const e2eBuckets = [300, 600, 1000, 2000, 3000, 5000, 8000];
+const e2eHist = { buckets: Object.fromEntries(e2eBuckets.map(b => [String(b), 0])) as Record<string, number>, count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
 
 // Lightweight JSON aggregation for external requests (works even when METRICS=off)
 type ExtAgg = {
@@ -44,6 +67,14 @@ let histExtLatency: HistogramT | undefined;
 let gaugeBreakerState: GaugeT | undefined;
 let counterBreakerEvents: CounterT | undefined;
 let counterRateLimitThrottled: CounterT | undefined;
+let counterChatTurn: CounterT | undefined;
+let counterRouterLowConf: CounterT | undefined;
+let counterClarify: CounterT | undefined;
+let counterClarifyResolved: CounterT | undefined;
+let counterFallback: CounterT | undefined;
+let counterAnswersWithCitations: CounterT | undefined;
+let counterVerifyFail: CounterT | undefined;
+let histE2ESeconds: HistogramT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -96,6 +127,55 @@ async function ensureProm(): Promise<void> {
       labelNames: ['target'],
       registers: [register],
     }) as CounterT;
+
+    // Conversation/flow metrics
+    counterChatTurn = new Counter({
+      name: 'chat_turn_total',
+      help: 'Chat turns by intent',
+      labelNames: ['intent'],
+      registers: [register],
+    }) as CounterT;
+    counterRouterLowConf = new Counter({
+      name: 'router_low_conf_total',
+      help: 'Router low confidence routes',
+      labelNames: ['intent'],
+      registers: [register],
+    }) as CounterT;
+    counterClarify = new Counter({
+      name: 'clarify_total',
+      help: 'Clarifications requested',
+      labelNames: ['intent', 'slot'],
+      registers: [register],
+    }) as CounterT;
+    counterClarifyResolved = new Counter({
+      name: 'clarify_resolved_total',
+      help: 'Clarifications resolved',
+      labelNames: ['intent'],
+      registers: [register],
+    }) as CounterT;
+    counterFallback = new Counter({
+      name: 'fallback_total',
+      help: 'Fallback usage count',
+      labelNames: ['kind'],
+      registers: [register],
+    }) as CounterT;
+    counterAnswersWithCitations = new Counter({
+      name: 'answers_with_citations_total',
+      help: 'Answers emitted with citations',
+      registers: [register],
+    }) as CounterT;
+    counterVerifyFail = new Counter({
+      name: 'verify_fail_total',
+      help: 'Verification failures by reason',
+      labelNames: ['reason'],
+      registers: [register],
+    }) as CounterT;
+    histE2ESeconds = new Histogram({
+      name: 'e2e_latency_seconds',
+      help: 'End-to-end chat latency in seconds',
+      buckets: [0.3, 0.6, 1, 2, 3, 5, 8],
+      registers: [register],
+    }) as HistogramT;
   })();
   return initPromise;
 }
@@ -107,6 +187,128 @@ void ensureProm().catch(() => undefined);
 export function incMessages() {
   messages += 1;
   if (counterMessages) counterMessages.inc();
+}
+
+// Optional remote push target to aggregate metrics across processes (e.g., CLI -> server)
+const PUSH_URL = process.env.METRICS_PUSH_URL;
+async function pushIngest(name: string, labels?: Record<string, string>, value?: number) {
+  if (!PUSH_URL) return;
+  try {
+    await fetch(PUSH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, labels, value }),
+    });
+  } catch {
+    // ignore push errors in dev
+  }
+}
+
+function bump(map: Record<string, number>, key: string, by = 1) {
+  map[key] = (map[key] ?? 0) + by;
+}
+
+export function incTurn(intent: string) {
+  bump(chatTurns, intent || 'unknown');
+  if (counterChatTurn) counterChatTurn.inc({ intent: intent || 'unknown' });
+  void pushIngest('chat_turn_total', { intent: intent || 'unknown' });
+}
+
+export function incRouterLowConf(intent: string) {
+  bump(routerLowConf, intent || 'unknown');
+  if (counterRouterLowConf) counterRouterLowConf.inc({ intent: intent || 'unknown' });
+  void pushIngest('router_low_conf_total', { intent: intent || 'unknown' });
+}
+
+export function incClarify(intent: string, slot: string) {
+  const key = `${intent || 'unknown'}:${slot || 'unknown'}`;
+  bump(clarifyRequests, key);
+  if (counterClarify) counterClarify.inc({ intent: intent || 'unknown', slot: slot || 'unknown' });
+  void pushIngest('clarify_total', { intent: intent || 'unknown', slot: slot || 'unknown' });
+}
+
+export function incClarifyResolved(intent: string) {
+  bump(clarifyResolved, intent || 'unknown');
+  if (counterClarifyResolved) counterClarifyResolved.inc({ intent: intent || 'unknown' });
+  void pushIngest('clarify_resolved_total', { intent: intent || 'unknown' });
+}
+
+export function incFallback(kind: 'web' | 'browser') {
+  bump(fallbacks, kind);
+  if (counterFallback) counterFallback.inc({ kind });
+  void pushIngest('fallback_total', { kind });
+}
+
+export function incAnswersWithCitations() {
+  answersWithCitations += 1;
+  if (counterAnswersWithCitations) counterAnswersWithCitations.inc();
+  void pushIngest('answers_with_citations_total');
+}
+
+export function incGeneratedAnswer() {
+  generatedAnswers += 1;
+}
+
+export function incVerifyPass() {
+  verifyPass += 1;
+}
+
+export function incVerifyFail(reason: string) {
+  verifyFail += 1;
+  const r = (reason || 'unknown').toLowerCase();
+  verifyFailsByReason[r] = (verifyFailsByReason[r] ?? 0) + 1;
+  if (counterVerifyFail) counterVerifyFail.inc({ reason: r });
+  void pushIngest('verify_fail_total', { reason: r });
+}
+
+export function observeE2E(durationMs: number) {
+  e2eHist.count += 1;
+  e2eHist.sum += durationMs;
+  e2eHist.min = Math.min(e2eHist.min, durationMs);
+  e2eHist.max = Math.max(e2eHist.max, durationMs);
+  for (const b of e2eBuckets) {
+    if (durationMs <= b) {
+      e2eHist.buckets[String(b)] += 1;
+      break;
+    }
+  }
+  if (histE2ESeconds) histE2ESeconds.observe({}, durationMs / 1000);
+  void pushIngest('e2e_latency_ms', {}, durationMs);
+}
+
+// Session helpers (best-effort, dev-only)
+export function startSession(threadId: string, intent?: string) {
+  if (!threadId) return;
+  if (!sessions.has(threadId)) {
+    sessions.set(threadId, { startedAt: Date.now(), intent, turns: 0, resolved: false });
+    totalSessions += 1;
+  }
+}
+
+export function noteTurn(threadId: string, intent?: string) {
+  if (!threadId) return;
+  const s = sessions.get(threadId) ?? { startedAt: Date.now(), turns: 0 } as any;
+  s.turns = (s.turns ?? 0) + 1;
+  if (!s.intent && intent) s.intent = intent;
+  sessions.set(threadId, s);
+}
+
+export function resolveSession(threadId: string, mode: 'auto' | 'escalated' | 'abandoned' = 'auto') {
+  if (!threadId) return;
+  const s = sessions.get(threadId);
+  if (!s || s.resolved) return;
+  s.resolved = true;
+  sessions.set(threadId, s);
+  resolvedSessions += 1;
+  sessionOutcomes[mode] = (sessionOutcomes[mode] ?? 0) + 1;
+  const intent = s.intent || 'unknown';
+  const dur = Date.now() - s.startedAt;
+  const agg = (ttrByIntent[intent] ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 });
+  agg.count += 1;
+  agg.sum += dur;
+  agg.min = Math.min(agg.min, dur);
+  agg.max = Math.max(agg.max, dur);
+  ttrByIntent[intent] = agg;
 }
 
 export function observeExternal(labels: Labels, durationMs: number) {
@@ -232,7 +434,41 @@ export function snapshot() {
   
   return { 
     messages_total: messages, 
+    chat_turns: chatTurns,
+    router_low_conf: routerLowConf,
+    clarify_requests: clarifyRequests,
+    clarify_resolved: clarifyResolved,
+    fallbacks,
+    answers_with_citations_total: answersWithCitations,
+    verify_fails: verifyFailsByReason,
+    verify_pass_total: verifyPass,
+    generated_answers_total: generatedAnswers,
+    quality: {
+      verify_pass_rate: generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0,
+      citation_coverage: generatedAnswers > 0 ? Number((answersWithCitations / Math.max(1, generatedAnswers)).toFixed(3)) : 0, // proxy
+    },
     external_requests: { targets },
+    performance: {
+      e2e_latency_ms: {
+        count: e2eHist.count,
+        avg_ms: e2eHist.count > 0 ? Number((e2eHist.sum / e2eHist.count).toFixed(1)) : 0,
+        min_ms: e2eHist.count > 0 ? e2eHist.min : 0,
+        max_ms: e2eHist.max,
+        buckets: e2eHist.buckets,
+      },
+    },
+    business: {
+      total_sessions: totalSessions,
+      resolved_sessions: resolvedSessions,
+      fcr_rate: totalSessions > 0 ? Number((resolvedSessions / totalSessions).toFixed(3)) : 0,
+      session_outcomes: sessionOutcomes,
+      ttr_ms_by_intent: Object.fromEntries(Object.entries(ttrByIntent).map(([intent, a]) => [intent, {
+        count: a.count,
+        avg_ms: a.count > 0 ? Number((a.sum / a.count).toFixed(1)) : 0,
+        min_ms: a.count > 0 ? a.min : 0,
+        max_ms: a.max,
+      }]))
+    },
     breaker: { byTarget: getAllBreakerStats() },
     rate_limit: { byTarget: getAllLimiterStats() },
     session_store_kind: sessionStoreKind,
@@ -244,4 +480,53 @@ export function metricsMode(): 'prom' | 'json' | 'off' {
   if (IS_PROM) return 'prom';
   if (IS_JSON) return 'json';
   return 'off';
+}
+
+// Ingestion from external processes (CLI) to merge metrics into this process snapshot
+export function ingestEvent(name: string, labels?: Record<string, string>, value?: number) {
+  switch (name) {
+    case 'messages_total':
+    case 'incMessages':
+      incMessages();
+      break;
+    case 'chat_turn_total':
+      incTurn(labels?.intent || 'unknown');
+      break;
+    case 'router_low_conf_total':
+      incRouterLowConf(labels?.intent || 'unknown');
+      break;
+    case 'clarify_total':
+      incClarify(labels?.intent || 'unknown', labels?.slot || 'unknown');
+      break;
+    case 'clarify_resolved_total':
+      incClarifyResolved(labels?.intent || 'unknown');
+      break;
+    case 'fallback_total':
+      incFallback((labels?.kind as any) || 'web');
+      break;
+    case 'answers_with_citations_total':
+      incAnswersWithCitations();
+      break;
+    case 'verify_fail_total':
+      incVerifyFail(labels?.reason || 'unknown');
+      break;
+    case 'e2e_latency_ms':
+      if (typeof value === 'number') observeE2E(value);
+      break;
+    case 'generated_answers_total':
+      incGeneratedAnswer();
+      break;
+    case 'verify_pass_total':
+      incVerifyPass();
+      break;
+    case 'session_start':
+      if (labels?.threadId) startSession(labels.threadId, labels.intent);
+      break;
+    case 'session_resolve':
+      if (labels?.threadId) resolveSession(labels.threadId, (labels.mode as any) || 'auto');
+      break;
+    default:
+      // ignore unknown
+      break;
+  }
 }

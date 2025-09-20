@@ -11,6 +11,12 @@ import { RATE_LIMITER_CONFIG } from './config/resilience.js';
 import { loadSessionConfig } from './config/session.js';
 import { createStore, initSessionStore } from './core/session_store.js';
 import type { Decision } from './core/receipts.js';
+import { incMessages, observeE2E } from './util/metrics.js';
+
+// Default push URL so CLI metrics appear on the server dashboard if running locally
+if (!process.env.METRICS_PUSH_URL) {
+  process.env.METRICS_PUSH_URL = 'http://localhost:3000/metrics/ingest';
+}
 
 const rl = readline.createInterface({ input, output });
 const log = createLogger();
@@ -274,9 +280,12 @@ async function main() {
     log.debug({ message: q, threadId }, 'Processing user message');
     
     spinner.start();
+    const t0 = Date.now();
     const wantReceipts = /^\s*\/why\b/i.test(q);
     
     try {
+      // Count CLI messages to include in dashboard via push-ingest (if configured)
+      incMessages();
       const res = await handleChat(
         { message: q, threadId, receipts: wantReceipts }, 
         { 
@@ -284,6 +293,8 @@ async function main() {
           onStatus: (status: string) => spinner.setStatus(status)
         }
       );
+      // e2e latency (best-effort)
+      try { observeE2E(Date.now() - t0); } catch {}
       spinner.stop();
 
       // Update threadId if returned

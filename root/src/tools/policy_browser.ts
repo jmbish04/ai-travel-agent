@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { observeExternal } from '../util/metrics.js';
+import { incFallback } from '../util/metrics.js';
 import { withBreaker } from '../util/circuit.js';
 import { scheduleWithLimit } from '../util/limiter.js';
 import { callLLM } from '../core/llm.js';
@@ -28,6 +29,7 @@ export async function extractPolicyClause(params: {
     // Use only Playwright with advanced stealth - no Crawlee fallback
     return await scheduleWithLimit(host, async () => {
       return await withBreaker(host, async () => {
+        try { incFallback('browser'); } catch {}
         const result = await withPlaywright(url, params.clause, timeoutSecs);
         return PolicyReceiptSchema.parse(result);
       });

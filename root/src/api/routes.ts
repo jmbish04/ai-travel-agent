@@ -3,7 +3,7 @@ import express from 'express';
 import type pino from 'pino';
 import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
-import { getPrometheusText, metricsMode, snapshot, incMessages } from '../util/metrics.js';
+import { getPrometheusText, metricsMode, snapshot, incMessages, observeE2E, ingestEvent, startSession, resolveSession, incVerifyFail, incVerifyPass } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
 import { getLastReceipts } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
@@ -16,8 +16,16 @@ export const router = (log: pino.Logger): Router => {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
     try {
+      const t0 = Date.now();
       incMessages();
       const out = await handleChat(parsed.data, { log });
+      // e2e latency
+      observeE2E(Date.now() - t0);
+      // Best-effort session start/resolve (dev/demo): treat each reply as resolved
+      if (out.threadId) {
+        startSession(out.threadId);
+        resolveSession(out.threadId, 'auto');
+      }
       // Build receipts only when requested via flag or '/why' command
       const wantReceipts = Boolean(parsed.data.receipts) ||
         /^\s*\/why\b/i.test(parsed.data.message);
@@ -37,6 +45,13 @@ export const router = (log: pino.Logger): Router => {
           facts: facts as Array<{ key: string; value: unknown; source: string }>,
           log
         });
+        // verification metrics
+        if (audit.verdict === 'fail') {
+          const reason = (audit.notes?.[0] || 'fail').toLowerCase();
+          incVerifyFail(reason);
+        } else {
+          incVerifyPass();
+        }
         const merged = {
           ...receipts,
           selfCheck: { verdict: audit.verdict, notes: audit.notes }
@@ -73,6 +88,18 @@ export const router = (log: pino.Logger): Router => {
     // Always provide JSON snapshot when Prometheus is not enabled
     return res.json(snapshot());
   });
+
+  // Lightweight ingest endpoint to merge CLI/off-process metrics
+  r.post('/metrics/ingest', express.json(), (req, res) => {
+    try {
+      const { name, labels, value } = (req.body || {}) as { name: string; labels?: Record<string, string>; value?: number };
+      if (!name) return res.status(400).json({ error: 'missing name' });
+      ingestEvent(name, labels, value);
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error({ err }, 'metrics_ingest_failed');
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
   return r;
 };
-

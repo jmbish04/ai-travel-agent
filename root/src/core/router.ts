@@ -7,6 +7,7 @@ import { extractSlots } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic, cheapComplexity } from './router.optimizers.js';
 import type pino from 'pino';
+import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
 
 // Helper function to clear consent state for unrelated queries
 async function clearConsentState(threadId?: string) {
@@ -114,7 +115,11 @@ export async function routeIntent({ message, threadId, logger }: {
       await clearConsentState(threadId); // Clear any pending consent for unrelated queries
       const slots = await extractSlots(m, ctxSlots, logger?.log);
       logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic)');
-      return RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
+      const result = RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
+      // metrics
+      incTurn(result.intent);
+      if (threadId) noteTurn(threadId, result.intent);
+      return result;
     }
   }
 
@@ -127,12 +132,15 @@ export async function routeIntent({ message, threadId, logger }: {
       'web_search',
       logger?.log
     );
-    return RouterResult.parse({
+    const r = RouterResult.parse({
       intent: 'web_search',
       needExternal: true,
       slots: { search_query: q },
       confidence: 0.9,
     });
+    incTurn(r.intent);
+    if (threadId) noteTurn(threadId, r.intent);
+    return r;
   }
 
   // 2) Deep-research consent? (no LLM)
@@ -164,7 +172,11 @@ export async function routeIntent({ message, threadId, logger }: {
       const refined = await extractSlots(m, ctxSlots, logger?.log);
       return RouterResult.parse({ ...tfm, slots: { ...tfm.slots, ...refined } });
     }
-    return RouterResult.parse(tfm);
+    const r = RouterResult.parse(tfm);
+    incTurn(r.intent);
+    if (r.confidence < 0.6) incRouterLowConf(r.intent);
+    if (threadId) noteTurn(threadId, r.intent);
+    return r;
   }
 
   // 4) Single LLM call (router_llm) → intent + slots at once
@@ -219,6 +231,10 @@ export async function routeIntent({ message, threadId, logger }: {
   }
   
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
+  // metrics
+  incTurn(llmNormalized.intent);
+  if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);
+  if (threadId) noteTurn(threadId, llmNormalized.intent);
   return llmNormalized;
 }
 

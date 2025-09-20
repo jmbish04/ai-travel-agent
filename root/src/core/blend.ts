@@ -24,6 +24,7 @@ import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
+import { incAnswersWithCitations, incFallback, incGeneratedAnswer } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
   results: Array<{ title: string; url: string; description: string }>
@@ -48,6 +49,7 @@ async function performWebSearch(
   plan?: BlendPlan,
 ): Promise<{ reply: string; citations?: string[] }> {
   ctx.log.debug({ query }, 'performing_web_search');
+  try { incFallback('web'); } catch {}
   // Opt-in deep research path
   if (process.env.DEEP_RESEARCH_ENABLED === 'true') {
     try {
@@ -166,6 +168,15 @@ export async function handleChat(
         facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
         log: ctx.log,
       });
+      try {
+        if (audit.verdict === 'fail') {
+          const { incVerifyFail } = await import('../util/metrics.js');
+          incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
+        } else {
+          const { incVerifyPass } = await import('../util/metrics.js');
+          incVerifyPass();
+        }
+      } catch {}
       if (audit.verdict === 'fail' && audit.revisedAnswer) {
         reply = audit.revisedAnswer;
       }
@@ -183,6 +194,7 @@ export async function handleChat(
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       
+      try { incGeneratedAnswer(); } catch {}
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources, receipts: safe });
     } catch {
       const formatDecision = (d: string | Decision) => {
@@ -194,6 +206,7 @@ export async function handleChat(
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
+      try { incGeneratedAnswer(); } catch {}
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources });
     }
   }
@@ -202,6 +215,8 @@ export async function handleChat(
   const result = await runGraphTurn(input.message, threadId, ctx);
   if ('done' in result) {
     await pushMessage(threadId, { role: 'assistant', content: result.reply });
+    try { if (result.citations && result.citations.length > 0) incAnswersWithCitations(); } catch {}
+    try { incGeneratedAnswer(); } catch {}
 
     // Handle receipts if requested
     const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
@@ -219,6 +234,15 @@ export async function handleChat(
           facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
           log: ctx.log,
         });
+        try {
+          if (audit.verdict === 'fail') {
+            const { incVerifyFail } = await import('../util/metrics.js');
+            incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
+          } else {
+            const { incVerifyPass } = await import('../util/metrics.js');
+            incVerifyPass();
+          }
+        } catch {}
         if (audit.verdict === 'fail' && audit.revisedAnswer) {
           reply = audit.revisedAnswer;
         }
