@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { observeExternal } from '../util/metrics.js';
 import { incFallback } from '../util/metrics.js';
-import { withBreaker } from '../util/circuit.js';
+import { withBreaker, getBreaker, getBreakerStats } from '../util/circuit.js';
 import { scheduleWithLimit } from '../util/limiter.js';
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
@@ -82,11 +82,28 @@ export async function extractPolicyClause(params: {
     
     // Use only Playwright with advanced stealth - no Crawlee fallback
     return await scheduleWithLimit(host, async () => {
-      return await withBreaker(host, async () => {
-        try { incFallback('browser'); } catch {}
+      try {
+        return await withBreaker(host, async () => {
+          try { incFallback('browser'); } catch {}
+          const result = await withPlaywright(url, params.clause, timeoutSecs);
+          return PolicyReceiptSchema.parse(result);
+        });
+      } catch (error) {
+        const openCircuit =
+          error instanceof Error && (
+            error.name === 'CircuitBreakerOpenError' ||
+            error.message.includes('Circuit breaker is open')
+          );
+        if (!openCircuit) throw error;
+
+        const breaker = getBreaker(host);
+        const stats = getBreakerStats(host);
+        console.warn('policy_browser_breaker_bypass', { host, stats });
+        try { (breaker as any).close?.(); } catch {}
+        try { incFallback('browser_breaker_bypass'); } catch {}
         const result = await withPlaywright(url, params.clause, timeoutSecs);
         return PolicyReceiptSchema.parse(result);
-      });
+      }
     });
     
   } finally {
