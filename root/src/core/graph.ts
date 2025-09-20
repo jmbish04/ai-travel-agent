@@ -179,16 +179,8 @@ export async function runGraphTurn(
   const routedIntent = C.forced ?? C.route?.intent;
   const promises = [];
   
-  // Only run NER for flights intent when Transformers are enabled
-  if (routedIntent === 'flights' && !C.ner) {
-    const { transformersEnabled } = await import('../config/transformers.js');
-    if (transformersEnabled()) {
-      promises.push((async () => {
-        C.ner = await extractEntitiesEnhanced(message, ctx.log) as Entities;
-        llmCallsThisTurn++;
-      })());
-    }
-  }
+  // NER extraction removed - using LLM-first approach instead
+  // Only run enhanced slot extraction for flights intent when needed
   
   // Lightweight city extraction for weather/attractions/packing/destinations
   if (routedIntent && ['weather', 'attractions', 'packing', 'destinations'].includes(routedIntent) && !C.route?.slots.city) {
