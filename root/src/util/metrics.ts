@@ -27,6 +27,16 @@ let verifyFail = 0;
 let generatedAnswers = 0;
 let answersUsingExternal = 0;
 
+// Verify score distributions (simple buckets) and averages
+type Dist = { buckets: Record<'0-0.4'|'0.4-0.7'|'0.7-1.0', number>; count: number; sum: number };
+const mkDist = (): Dist => ({ buckets: { '0-0.4': 0, '0.4-0.7': 0, '0.7-1.0': 0 }, count: 0, sum: 0 });
+const verifyScores = {
+  relevance: mkDist(),
+  grounding: mkDist(),
+  coherence: mkDist(),
+  context_consistency: mkDist(),
+};
+
 // Flow counters (low-cardinality labels only)
 const chatTurns: Record<string, number> = {};
 const routerLowConf: Record<string, number> = {};
@@ -283,6 +293,16 @@ export function incVerifyFail(reason: string) {
   void pushIngest('verify_fail_total', { reason: r });
 }
 
+export function observeVerifyScores(scores: { relevance: number; grounding: number; coherence: number; context_consistency: number }) {
+  const clamp = (v: number) => Math.max(0, Math.min(1, isFinite(v) ? v : 0));
+  const bucket = (v: number): keyof Dist['buckets'] => (v < 0.4 ? '0-0.4' : v < 0.7 ? '0.4-0.7' : '0.7-1.0');
+  const upd = (dist: Dist, v: number) => { const b = bucket(v); dist.buckets[b] += 1; dist.count += 1; dist.sum += v; };
+  upd(verifyScores.relevance, clamp(scores.relevance));
+  upd(verifyScores.grounding, clamp(scores.grounding));
+  upd(verifyScores.coherence, clamp(scores.coherence));
+  upd(verifyScores.context_consistency, clamp(scores.context_consistency));
+}
+
 export function observeE2E(durationMs: number) {
   e2eHist.count += 1;
   e2eHist.sum += durationMs;
@@ -480,6 +500,12 @@ export function snapshot() {
         const totalRes = Object.values(clarifyResolved).reduce((a, b) => a + b, 0);
         return totalReq > 0 ? Number((totalRes / totalReq).toFixed(3)) : 0;
       })(),
+      verify_scores: {
+        relevance: { count: verifyScores.relevance.count, avg: verifyScores.relevance.count > 0 ? Number((verifyScores.relevance.sum / verifyScores.relevance.count).toFixed(3)) : 0, buckets: verifyScores.relevance.buckets },
+        grounding: { count: verifyScores.grounding.count, avg: verifyScores.grounding.count > 0 ? Number((verifyScores.grounding.sum / verifyScores.grounding.count).toFixed(3)) : 0, buckets: verifyScores.grounding.buckets },
+        coherence: { count: verifyScores.coherence.count, avg: verifyScores.coherence.count > 0 ? Number((verifyScores.coherence.sum / verifyScores.coherence.count).toFixed(3)) : 0, buckets: verifyScores.coherence.buckets },
+        context_consistency: { count: verifyScores.context_consistency.count, avg: verifyScores.context_consistency.count > 0 ? Number((verifyScores.context_consistency.sum / verifyScores.context_consistency.count).toFixed(3)) : 0, buckets: verifyScores.context_consistency.buckets },
+      }
     },
     external_requests: { targets },
     performance: {
@@ -576,9 +602,9 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
 // Router confidence bucket observation
 export function observeRouterConfidence(confidence: number) {
   const c = isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-  if (c < 0.5) routerConfidenceBuckets['0.0-0.5'] += 1;
-  else if (c < 0.6) routerConfidenceBuckets['0.5-0.6'] += 1;
-  else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] += 1;
-  else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] += 1;
-  else routerConfidenceBuckets['0.9-1.0'] += 1;
+  if (c < 0.5) routerConfidenceBuckets['0.0-0.5'] = (routerConfidenceBuckets['0.0-0.5'] ?? 0) + 1;
+  else if (c < 0.6) routerConfidenceBuckets['0.5-0.6'] = (routerConfidenceBuckets['0.5-0.6'] ?? 0) + 1;
+  else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] = (routerConfidenceBuckets['0.6-0.75'] ?? 0) + 1;
+  else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] = (routerConfidenceBuckets['0.75-0.9'] ?? 0) + 1;
+  else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
 }

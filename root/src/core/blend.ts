@@ -2,7 +2,7 @@ import type pino from 'pino';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ChatInputT, ChatOutput } from '../schemas/chat.js';
-import { getThreadId, pushMessage } from './memory.js';
+import { getThreadId, pushMessage, getContext } from './memory.js';
 import { runGraphTurn } from './graph.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { classifyContentLLM } from './nlp.js';
@@ -42,7 +42,7 @@ function hasTravelContext(message: string): boolean {
   const lower = message.toLowerCase();
   return Array.from(contexts).some(term => lower.includes(term));
 }
-import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage } from './slot_memory.js';
+import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage, getLastVerification, setLastVerification, getLastIntent, getThreadSlots } from './slot_memory.js';
 import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
@@ -200,24 +200,52 @@ export async function handleChat(
     const token_estimate = 400;
     const receipts = buildReceiptsSkeleton(facts as Fact[], decisions, token_estimate);
     try {
-      const audit = await verifyAnswer({
-        reply,
-        facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
-        log: ctx.log,
-      });
-      try {
-        if (audit.verdict === 'fail') {
-          const { incVerifyFail } = await import('../util/metrics.js');
-          incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
-        } else {
-          const { incVerifyPass } = await import('../util/metrics.js');
-          incVerifyPass();
+      const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
+      let audit: Awaited<ReturnType<typeof verifyAnswer>> | undefined;
+      if (autoVerify) {
+        const last = await getLastVerification(threadId);
+        if (last) {
+          // Map stored artifact to VerifyResult shape (scores optional)
+          audit = {
+            verdict: last.verdict,
+            notes: last.notes || [],
+            scores: last.scores,
+            revisedAnswer: last.revisedAnswer,
+          } as any;
         }
-      } catch {}
+      }
+      if (!audit) {
+        audit = await verifyAnswer({
+          reply,
+          facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
+          log: ctx.log,
+          latestUser: await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))(),
+          previousUsers: await (async () => {
+            const msgs = await getContext(threadId);
+            const users = msgs.filter(m => m.role === 'user').map(m => m.content);
+            // exclude the very last if equal to latest
+            const last = users[users.length - 1];
+            const trimmed = (await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))()) || '';
+            const filtered = users.filter(u => u !== trimmed);
+            return filtered.slice(-2);
+          })(),
+          slotsSummary: await getThreadSlots(threadId),
+          lastIntent: await getLastIntent(threadId),
+        });
+        try {
+          if (audit.verdict === 'fail') {
+            const { incVerifyFail } = await import('../util/metrics.js');
+            incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
+          } else {
+            const { incVerifyPass } = await import('../util/metrics.js');
+            incVerifyPass();
+          }
+        } catch {}
+      }
       if (audit.verdict === 'fail' && audit.revisedAnswer) {
         reply = audit.revisedAnswer;
       }
-      const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes } };
+      const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores } };
       const safe = ReceiptsSchema.parse(merged);
       
       // For /why commands, return only receipts content as reply
@@ -261,6 +289,69 @@ export async function handleChat(
     } catch {}
     try { incGeneratedAnswer(); } catch {}
 
+    // Auto-verify every reply when enabled
+    const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
+    let verifiedReply = result.reply;
+    let lastAudit: Awaited<ReturnType<typeof verifyAnswer>> | undefined;
+    if (autoVerify) {
+      try {
+        const receiptsData = await getLastReceipts(threadId) || {};
+        const facts = (receiptsData.facts || []) as Fact[];
+        const msgs = await getContext(threadId);
+        const users = msgs.filter(m => m.role === 'user').map(m => m.content);
+        const latestUser = users[users.length - 1] || input.message;
+        const previousUsers = users.slice(0, -1).slice(-2);
+        const slots = await getThreadSlots(threadId);
+        const intent = await getLastIntent(threadId);
+
+        lastAudit = await verifyAnswer({
+          reply: result.reply,
+          facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
+          log: ctx.log,
+          latestUser,
+          previousUsers,
+          slotsSummary: slots,
+          lastIntent: intent,
+        });
+        // Metrics
+        try {
+          const { incVerifyFail, incVerifyPass, observeVerifyScores } = await import('../util/metrics.js');
+          if (lastAudit.verdict === 'fail') {
+            incVerifyFail((lastAudit.notes?.[0] || 'fail').toLowerCase());
+          } else {
+            incVerifyPass();
+          }
+          if ((lastAudit as any).scores) {
+            observeVerifyScores((lastAudit as any).scores);
+          }
+        } catch {}
+
+        // Apply routing on verdict
+        if (lastAudit.verdict === 'fail') {
+          if (lastAudit.revisedAnswer) {
+            verifiedReply = lastAudit.revisedAnswer;
+          } else {
+            verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
+          }
+        } else if (lastAudit.verdict === 'warn') {
+          const warnInline = (process.env.VERIFY_WARN_INLINE ?? 'true') === 'true';
+          if (warnInline) {
+            verifiedReply = `${result.reply}\n\nNote: Automated self-check flagged minor uncertainties.`;
+          }
+        }
+        // Persist verification artifact for /why
+        await setLastVerification(threadId, {
+          verdict: lastAudit.verdict,
+          notes: lastAudit.notes || [],
+          scores: (lastAudit as any).scores,
+          revisedAnswer: lastAudit.revisedAnswer,
+          reply: verifiedReply,
+        });
+      } catch {
+        // Swallow verify errors; keep original reply
+      }
+    }
+
     // Handle receipts if requested
     const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
       /^\s*\/why\b/i.test(input.message);
@@ -268,28 +359,31 @@ export async function handleChat(
       const stored = await getLastReceipts(threadId) || {};
       const facts = stored.facts || [];
       const decisions = stored.decisions || [];
-      let reply = result.reply;
+      let reply = verifiedReply;
       const token_estimate = 400;
       const receipts = buildReceiptsSkeleton(facts as Fact[], decisions, token_estimate);
       try {
+        const auto = process.env.AUTO_VERIFY_REPLIES === 'true';
+        const existing = auto ? await getLastVerification(threadId) : undefined;
+        if (existing) {
+          const merged = { ...receipts, selfCheck: { verdict: existing.verdict, notes: existing.notes || [], scores: existing.scores } };
+          const safe = ReceiptsSchema.parse(merged);
+          return ChatOutput.parse({ reply, threadId, sources: receipts.sources, receipts: safe });
+        }
+        // Fallback: compute verify now
         const audit = await verifyAnswer({
           reply,
           facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
           log: ctx.log,
+          latestUser: input.message,
+          previousUsers: [],
+          slotsSummary: await getThreadSlots(threadId),
+          lastIntent: await getLastIntent(threadId),
         });
-        try {
-          if (audit.verdict === 'fail') {
-            const { incVerifyFail } = await import('../util/metrics.js');
-            incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
-          } else {
-            const { incVerifyPass } = await import('../util/metrics.js');
-            incVerifyPass();
-          }
-        } catch {}
         if (audit.verdict === 'fail' && audit.revisedAnswer) {
           reply = audit.revisedAnswer;
         }
-        const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes } };
+        const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores } };
         const safe = ReceiptsSchema.parse(merged);
         return ChatOutput.parse({ reply, threadId, sources: receipts.sources, receipts: safe });
       } catch {
@@ -301,7 +395,7 @@ export async function handleChat(
     resolveSession(threadId, 'auto');
     
     return ChatOutput.parse({
-      reply: result.reply,
+      reply: verifiedReply,
       threadId,
       citations: result.citations,
     });

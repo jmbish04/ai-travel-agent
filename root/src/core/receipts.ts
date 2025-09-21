@@ -37,6 +37,14 @@ export const ReceiptsSchema = z.object({
   selfCheck: z.object({
     verdict: z.enum(['pass', 'warn', 'fail']),
     notes: z.array(z.string()),
+    scores: z
+      .object({
+        relevance: z.number().min(0).max(1),
+        grounding: z.number().min(0).max(1),
+        coherence: z.number().min(0).max(1),
+        context_consistency: z.number().min(0).max(1),
+      })
+      .optional(),
   }),
   budgets: z.object({
     ext_api_latency_ms: z.number().optional(),
@@ -79,5 +87,4 @@ export function buildReceiptsSkeleton(
     budgets: { ext_api_latency_ms, token_estimate },
   };
 }
-
 

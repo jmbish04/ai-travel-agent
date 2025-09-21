@@ -23,6 +23,15 @@ type SlotState = {
   lastDecisions?: Array<string | Decision>;
   lastReply?: string;
   lastUserMessage?: string;
+  prevUserMessage?: string;
+  lastVerification?: {
+    verdict: 'pass'|'warn'|'fail';
+    notes: string[];
+    scores?: { relevance: number; grounding: number; coherence: number; context_consistency: number };
+    revisedAnswer?: string;
+    reply?: string;
+    createdAt?: number;
+  };
 };
 
 export async function getThreadSlots(threadId: string): Promise<Record<string, string>> {
@@ -112,7 +121,26 @@ export async function getLastUserMessage(threadId: string): Promise<string | und
 export async function setLastUserMessage(threadId: string, message: string): Promise<void> {
   const store = getSessionStore();
   const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastUserMessage: message });
+  const withPrev = { ...prev, prevUserMessage: prev.lastUserMessage, lastUserMessage: message };
+  await store.setJson('state', threadId, withPrev);
+}
+
+export async function getPrevUserMessage(threadId: string): Promise<string | undefined> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return state?.prevUserMessage;
+}
+
+export async function setLastVerification(threadId: string, artifact: Required<Pick<SlotState,'lastVerification'>>['lastVerification']): Promise<void> {
+  const store = getSessionStore();
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  await store.setJson('state', threadId, { ...prev, lastVerification: { ...artifact, createdAt: Date.now() } });
+}
+
+export async function getLastVerification(threadId: string): Promise<SlotState['lastVerification'] | undefined> {
+  const store = getSessionStore();
+  const state = await store.getJson<SlotState>('state', threadId);
+  return state?.lastVerification;
 }
 
 const LOCATION_KEY_ORDER = ['city', 'destinationCity', 'country', 'originCity', 'region', 'state', 'countryName'];
