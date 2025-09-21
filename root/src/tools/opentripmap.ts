@@ -1,12 +1,21 @@
 import { z } from 'zod';
 import { fetchJSON, ExternalFetchError } from '../util/fetch.js';
-import { CircuitBreaker } from '../core/circuit-breaker.js';
-import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
+import { retry, handleAll, ExponentialBackoff } from 'cockatiel';
+import Bottleneck from 'bottleneck';
 
 const BASE_URL = 'https://api.opentripmap.com/0.1/en/places';
 
-// Circuit breaker for OpenTripMap API
-const openTripMapCircuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_CONFIG, 'opentripmap');
+// Define resilience policy
+const retryPolicy = retry(handleAll, {
+    maxAttempts: 3,
+    backoff: new ExponentialBackoff({ initialDelay: 100, maxDelay: 5000 }),
+});
+
+// Define rate limiter
+const limiter = new Bottleneck({
+  maxConcurrent: 1,
+  minTime: 250, // 4 requests per second
+});
 
 // Two possible formats from OpenTripMap:
 // 1) format=json → features: [{ xid, name, kinds, point: { lat, lon } }]
@@ -61,13 +70,11 @@ export async function searchPOIs(input: {
     `&radius=${radius}&format=geojson&limit=${limit}` +
     `&kinds=${encodeURIComponent(kinds)}&apikey=${encodeURIComponent(key)}`;
   try {
-    const json = await openTripMapCircuitBreaker.execute(async () => {
-      return await fetchJSON<unknown>(url, {
-        timeoutMs: 5000,
-        retries: 2,
+    const json = await retryPolicy.execute(async () => {
+      return await limiter.schedule(() => fetchJSON<unknown>(url, {
         target: 'opentripmap',
         headers: { 'Accept': 'application/json' },
-      });
+      }));
     });
     // Try GeoJSON first, then JSON fallback
     const geo = GeoResponseSchema.safeParse(json);
@@ -138,13 +145,11 @@ export async function getPOIDetail(xid: string): Promise<
   if (!key) return { ok: false, reason: 'missing_api_key' };
   const url = `${BASE_URL}/xid/${encodeURIComponent(xid)}?apikey=${encodeURIComponent(key)}`;
   try {
-    const json = await openTripMapCircuitBreaker.execute(async () => {
-      return await fetchJSON<unknown>(url, {
-        timeoutMs: 5000,
-        retries: 1,
+    const json = await retryPolicy.execute(async () => {
+      return await limiter.schedule(() => fetchJSON<unknown>(url, {
         target: 'opentripmap',
         headers: { Accept: 'application/json' },
-      });
+      }));
     });
     const parsed = PoiDetailSchema.safeParse(json);
     if (!parsed.success) return { ok: false, reason: 'invalid_schema', source: 'opentripmap' };

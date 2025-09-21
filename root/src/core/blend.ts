@@ -746,36 +746,7 @@ export async function blendWithFacts(
         // Use destinations catalog for new recommendations with dates
         ctx.onStatus?.('Finding destinations...');
         ctx.log.debug({ intent: input.route.intent, slots: input.route.slots }, 'destinations_block_entered');
-        try {
-          const { recommendDestinations } = await import('../tools/destinations.js');
-          ctx.log.debug('destinations_function_imported');
-          const destinationFacts = await recommendDestinations(input.route.slots);
-          ctx.log.debug({ factsCount: destinationFacts.length }, 'destinations_function_called');
-        
-        if (destinationFacts.length > 0) {
-          cits.push('Catalog+REST Countries');
-          const destinations = destinationFacts.map(f => 
-            `${f.value.city}, ${f.value.country} (${f.value.tags.climate}, ${f.value.tags.budget} budget, family-friendly: ${f.value.tags.family_friendly ? 'yes' : 'no'})`
-          ).join('; ');
-          facts += `DESTINATION OPTIONS: ${destinations}\n`;
-          factsArr.push(...destinationFacts);
-          decisions.push(createDecision(
-            'Filtered destinations catalog by month/profile',
-            'User requested destination recommendations, so filtered catalog by travel month and profile preferences with factual anchors from REST Countries API',
-            ['Use web search only', 'Generic recommendations'],
-            0.9
-          ));
-          ctx.log.debug({ destinationCount: destinationFacts.length, destinations }, 'destinations_facts_added');
-        }
-      } catch (e) {
-        ctx.log.debug({ error: e }, 'destinations_catalog_failed');
-        decisions.push(createDecision(
-          'Destinations catalog unavailable',
-          'Destinations catalog lookup failed due to API error, so falling back to generic travel guidance',
-          ['Use web search instead', 'Skip recommendations'],
-          0.6
-        ));
-      }
+
       }
       
       // Get weather for origin city (use originCity if available, fallback to city)

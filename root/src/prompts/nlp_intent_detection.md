@@ -9,7 +9,7 @@ Return strict JSON with:
 - intent: "weather", "packing", "attractions", "destinations", "flights", or "unknown"
 - confidence: 0.00-1.00 score
 - needExternal: boolean (true if external APIs needed)
-- slots: { city?: string, dates?: string, month?: string, originCity?: string, destinationCity?: string, departureDate?: string, returnDate?: string, passengers?: number, cabinClass?: string }
+- slots: { city?: string, region?: string, dates?: string, month?: string, originCity?: string, destinationCity?: string, departureDate?: string, returnDate?: string, passengers?: number, cabinClass?: string }
 
 Date extraction rules:
 - Extract dates in natural language format (e.g., "October 12", "next month", "March 2025")
@@ -122,6 +122,9 @@ Output: {"intent":"unknown","confidence":0.30,"needExternal":false,"slots":{"cit
 
 Input: "что взять в Токио в марте" (Russian)
 Output: {"intent":"packing","confidence":0.80,"needExternal":false,"slots":{"city":"Tokyo","month":"March","dates":"March"}}
+
+Input: "recommend some destinations in Asia"
+Output: {"intent":"destinations","confidence":0.90,"needExternal":true,"slots":{"region":"Asia"}}
 
 Edge Cases:
 Input: "I need to find..." (incomplete)
