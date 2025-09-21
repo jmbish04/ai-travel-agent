@@ -29,28 +29,18 @@ export class DestinationEngine {
     
     try {
       const result: any = await fetchCountriesByRegion(region);
-      logger.info('DestinationEngine fetchCountriesByRegion result:', { 
-        count: result.length, 
-        sample: result.slice(0, 2) 
-      });
+      logger.info('DestinationEngine.fetchCountriesByRegion result count: ' + result.length + ', sample: ' + JSON.stringify(result.slice(0, 2)));
       
       // Filter out excluded countries
       const filteredResult = result.filter((country: any) => 
         !EXCLUDED_COUNTRIES.includes(country.name.common)
       );
       
-      logger.info('DestinationEngine filtered result:', { 
-        originalCount: result.length,
-        filteredCount: filteredResult.length
-      });
+      logger.info('DestinationEngine.filtered result originalCount: ' + result.length + ', filteredCount: ' + filteredResult.length);
       
       return filteredResult;
     } catch (error: any) {
-      logger.error('DestinationEngine fetchCountriesByRegion error:', {
-        error: error.message,
-        stack: error.stack,
-        region
-      });
+      logger.error('DestinationEngine.fetchCountriesByRegion error region: ' + region + ', error: ' + error.message + ', stack: ' + error.stack);
       throw error;
     }
   }

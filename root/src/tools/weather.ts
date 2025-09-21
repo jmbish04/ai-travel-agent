@@ -121,7 +121,9 @@ export async function getWeather(input: { city: string; datesOrMonth?: string })
     const search = await searchTravelInfo(`weather in ${input.city}`, null as any);
     if (search.ok && search.results.length > 0) {
       const first = search.results[0];
-      return { ok: true, summary: `${first.title} - ${first.description}`, source: getSearchSource() };
+      if (first) {
+        return { ok: true, summary: `${first.title} - ${first.description}`, source: getSearchSource() };
+      }
     }
     return { ok: false, reason: 'unknown_city', source: 'geocode.maps.co' };
   }

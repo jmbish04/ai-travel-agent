@@ -604,7 +604,7 @@ export async function blendWithFacts(
     if (input.route.intent === 'weather') {
       ctx.onStatus?.('Checking weather data...');
       const wx = await getWeather({
-        city: cityHint,
+        city: cityHint || 'Unknown',
         datesOrMonth: whenHint || 'today',
       });
       if (wx.ok) {
@@ -642,7 +642,7 @@ export async function blendWithFacts(
     } else if (input.route.intent === 'packing') {
       ctx.onStatus?.('Preparing packing recommendations...');
       const wx = await getWeather({
-        city: cityHint,
+        city: cityHint || 'Unknown',
         datesOrMonth: whenHint || 'today',
       });
       if (wx.ok) {

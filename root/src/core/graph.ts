@@ -349,16 +349,18 @@ export async function runGraphTurn(
 
 // === HELPER FUNCTIONS ===
 
-export function checkMissingSlots(intent: string, slots: Record<string, string>, message: string): string[] {
+function checkMissingSlots(intent: string, slots: Record<string, string>, message: string): string[] {
   const missing: string[] = [];
   
-  const needsLocation = ['attractions', 'packing', 'weather', 'flights']
+  const needsLocation = ['attractions', 'packing', 'destinations', 'weather', 'flights']
     .includes(intent);
   const hasOrigin = !!slots.originCity?.trim();
   const hasDestination = !!(slots.destinationCity?.trim() || slots.city?.trim());
   const hasLocation = intent === 'flights'
     ? hasOrigin && hasDestination
-    : !!slots.city?.trim();
+    : intent === 'destinations'
+      ? !!(slots.city?.trim() || slots.originCity?.trim() || slots.region?.trim())
+      : !!slots.city?.trim();
   
   const hasWhen = !!(slots.dates?.trim() || slots.month?.trim());
   const hasImmediateContext = /\b(today|now|currently|right now)\b/i.test(message);
@@ -466,11 +468,87 @@ async function weatherNode(
   }
 }
 
-import pino from 'pino';
-const fileLogger = pino(pino.destination('/Users/sasha/IdeaProjects/navan/root/debug/logs/destination.log'));
+async function destinationsNode(
+  ctx: NodeCtx,
+  slots: Record<string, string>,
+  logger: { log: Logger; onStatus?: (status: string) => void }
+): Promise<NodeOut> {
+  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
+  const mergedSlots = { ...threadSlots, ...slots };
+  
+  logger.log?.debug({ 
+    threadSlots, 
+    inputSlots: slots, 
+    mergedSlots, 
+    message: ctx.msg 
+  }, 'destinations_node_start');
+
+  try {
+    logger.log?.debug('destinations_engine_import_start');
+    const { DestinationEngine } = await import('../core/destination_engine.js');
+    logger.log?.debug('destinations_engine_import_success');
+    
+    logger.log?.debug({ mergedSlots }, 'destinations_engine_call_start');
+    const destinations = await DestinationEngine.getRecommendations(mergedSlots);
+    logger.log?.debug({ 
+      destinationsCount: destinations.length, 
+      destinations: destinations.slice(0, 2) 
+    }, 'destinations_engine_call_result');
+    
+    if (destinations.length > 0) {
+      // Use LLM to create a better summary with grouping and interactive suggestions
+      const destinationList = destinations.map((d: any) => 
+        `${d.name.common}, ${d.capital ? d.capital[0] : ''}, ${d.subregion || d.region}`
+      ).join('\n');
+      
+      // Get the summarizer prompt
+      const summarizerPrompt = await getPrompt('destination_summarizer');
+      const prompt = summarizerPrompt.replace('{destinations}', destinationList);
+      
+      // Call LLM for summarization
+      const summary = await callLLM(prompt, { log: logger.log });
+      
+      const reply = "Based on your preferences, here are some recommended destinations:\n\n" + summary;
+      const citations = ['REST Countries API'];
+      
+      const facts = [{ source: 'REST Countries API', key: 'destinations_list', value: destinationList }];
+      const decisions = [createDecision(
+        'Recommended destinations from API',
+        'User asked for destinations; used REST Countries API',
+        ['Skip destinations lookup', 'Use generic guidance'],
+        0.9
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, reply);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'destinations' }, 'receipts_written');
+      
+      logger.log?.debug({ reply: reply.slice(0, 100) + '...' }, 'destinations_node_success');
+      return { done: true, reply, citations };
+    } else {
+      logger.log?.debug('destinations_engine_returned_empty');
+      writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
+      return { 
+        done: true, 
+        reply: `I couldn't find any destinations based on your preferences. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+        citations: ['Internal Knowledge Base (Insufficient Results)']
+      };
+    }
+  } catch (error) {
+    logger.log?.error({ 
+      error: String(error), 
+      stack: error instanceof Error ? error.stack : undefined,
+      mergedSlots 
+    }, 'destinations_tool_failed');
+    writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
+    return { 
+      done: true, 
+      reply: `I'm sorry, I'm having trouble searching for destinations right now. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+      citations: ['Internal Knowledge Base (Insufficient Results)']
+    };
+  }
+}
 
 async function packingNode(
-export async function destinationsNode(\n  ctx: NodeCtx,\n  slots: Record<string, string>,\n  logger: { log: Logger; onStatus?: (status: string) => void }\n): Promise<NodeOut> {\n  const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));\n  const mergedSlots = { ...threadSlots, ...slots };\n  \n  fileLogger.info({ \n    threadSlots, \n    inputSlots: slots, \n    mergedSlots, \n    message: ctx.msg \n  }, 'destinations_node_start');\n\n  try {\n    fileLogger.info('destinations_engine_import_start');\n    const { DestinationEngine } = await import('../core/destination_engine.js');\n    fileLogger.info('destinations_engine_import_success');\n    \n    fileLogger.info({ mergedSlots }, 'destinations_engine_call_start');\n    const destinations = await DestinationEngine.getRecommendations(mergedSlots);\n    fileLogger.info({ \n      destinationsCount: destinations.length, \n      destinations: destinations.slice(0, 2) \n    }, 'destinations_engine_call_result');\n    \n    if (destinations.length > 0) {\n      // Use LLM to create a better summary with grouping and interactive suggestions\n      const destinationList = destinations.map((d: any) => \n        `${d.name.common}, ${d.capital ? d.capital[0] : ''}, ${d.subregion || d.region}`\n      ).join('\\n');\n      \n      // Get the summarizer prompt\n      const summarizerPrompt = await getPrompt('destination_summarizer');\n      const prompt = summarizerPrompt.replace('{destinations}', destinationList);\n      \n      // Call LLM for summarization\n      const summary = await callLLM(prompt, { log: logger.log });\n      \n      const reply = \"Based on your preferences, here are some recommended destinations:\\n\\n\" + summary;\n      const citations = ['REST Countries API'];\n      \n      const facts = [{ source: 'REST Countries API', key: 'destinations_list', value: destinationList }];\n      const decisions = [createDecision(\n        'Recommended destinations from API',\n        'User asked for destinations; used REST Countries API',\n        ['Skip destinations lookup', 'Use generic guidance'],\n        0.9\n      )];\n      await setLastReceipts(ctx.threadId, facts, decisions, reply);\n      fileLogger.info({ wroteFacts: facts.length, node: 'destinations' }, 'receipts_written');\n      \n      fileLogger.info({ reply: reply.slice(0, 100) + '...' }, 'destinations_node_success');\n      return { done: true, reply, citations };\n    } else {\n      fileLogger.info('destinations_engine_returned_empty');\n      writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });\n      return { \n        done: true, \n        reply: `I couldn't find any destinations based on your preferences. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,\n        citations: ['Internal Knowledge Base (Insufficient Results)']\n      };\n    }\n  } catch (error) {\n    fileLogger.error({ \n      error: String(error), \n      stack: error instanceof Error ? error.stack : undefined,\n      mergedSlots \n    }, 'destinations_tool_failed');\n    writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });\n    return { \n      done: true, \n      reply: `I'm sorry, I'm having trouble searching for destinations right now. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,\n      citations: ['Internal Knowledge Base (Insufficient Results)']\n    };\n  }\n}  ctx: NodeCtx,
+  ctx: NodeCtx,
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {

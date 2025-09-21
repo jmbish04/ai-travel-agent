@@ -43,7 +43,7 @@ type PromptName =
   | 'country_disambiguator'
   | 'crawlee_page_summary'
   | 'crawlee_overall_summary'
-  | 'destinations_recommender'
+  | 'destination_summarizer'
   | 'llm_test_evaluator'
   | 'entity_extraction_retry'
   | 'citation_analysis'
@@ -187,8 +187,8 @@ export async function preloadPrompts(): Promise<void> {
   PROMPTS.crawlee_overall_summary = await loadFileSafe(
     path.join(base, 'crawlee_overall_summary.md'),
   );
-  PROMPTS.destinations_recommender = await loadFileSafe(
-    path.join(base, 'destinations_recommender.md'),
+  PROMPTS.destination_summarizer = await loadFileSafe(
+    path.join(base, 'destination_summarizer.md'),
   );
   PROMPTS.llm_test_evaluator = await loadFileSafe(
     path.join(base, 'llm_test_evaluator.md'),
