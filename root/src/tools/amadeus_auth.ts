@@ -40,7 +40,7 @@ export async function getAmadeusToken(signal?: AbortSignal): Promise<string> {
         client_id: clientId,
         client_secret: clientSecret,
       }).toString(),
-      signal: signal || AbortSignal.timeout(5000),
+      signal: signal || AbortSignal.timeout(Number(process.env.AMADEUS_AUTH_TIMEOUT_MS || 5000)),
     });
 
     if (!response.ok) {
