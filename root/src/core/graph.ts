@@ -906,7 +906,7 @@ async function policyNode(
     // Check if user wants receipts/citations
     const wantReceipts = /receipt|citation|proof|evidence|source/i.test(ctx.msg);
     
-    const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts);
+    const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts, slots);
     
     // Check if no results found or quality assessment suggests web search
     const noRelevantInfo = !citations.length || 

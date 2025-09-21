@@ -25,7 +25,8 @@ export class PolicyAgent {
     corpusHint?: 'airlines' | 'hotels' | 'visas', 
     threadId?: string, 
     log?: pino.Logger,
-    wantReceipts?: boolean
+    wantReceipts?: boolean,
+    slots?: Record<string, any>
   ): Promise<PolicyAnswer> {
     if (!VECTARA.ENABLED) {
       throw new Error('Vectara RAG is disabled');
@@ -88,7 +89,7 @@ export class PolicyAgent {
     // Try browser mode if receipts wanted and quality is low
     let receipts: Array<{ url: string; quote: string; confidence: number; imgPath?: string }> | undefined;
     if (wantReceipts && (assessment.needsWebSearch || avgScore < 0.7)) {
-      receipts = await this.tryBrowserMode(question, citations, threadId, log);
+      receipts = await this.tryBrowserMode(question, citations, threadId, log, slots);
     }
 
     return { 
@@ -323,14 +324,17 @@ export class PolicyAgent {
     question: string,
     citations: Array<{ url?: string; title?: string; snippet?: string }>,
     threadId?: string,
-    log?: pino.Logger
+    log?: pino.Logger,
+    slots?: Record<string, any>
   ): Promise<Array<{ url: string; quote: string; confidence: number; imgPath?: string }>> {
     try {
       const { extractPolicyClause } = await import('../tools/policy_browser.js');
+      const { filterResultsByDomainAuthenticity } = await import('../tools/policy_browser.js');
       const { savePolicyReceipt } = await import('./policy_receipts.js');
       const { searchTravelInfo } = await import('../tools/search.js');
       
-      // Extract clause type from question
+      // Get company name from router slots
+      const companyName = slots?.company || slots?.city; // fallback to city if company not extracted
       const clauseType = this.inferClauseType(question);
       const receipts: Array<{ url: string; quote: string; confidence: number; imgPath?: string }> = [];
       
@@ -341,28 +345,63 @@ export class PolicyAgent {
       if (urlsToTry.length === 0) {
         log?.debug({ question }, 'No citation URLs, searching for official policy pages');
         
-        // Create a search query for official policy pages
-        const policySearchQuery = `${question} official site policy`;
-        const searchResults = await searchTravelInfo(policySearchQuery, { maxResults: 3 });
+        // Create targeted search query with specific policy terms
+        const policySearchQuery = companyName 
+          ? `${companyName} ${clauseType} fee fare rules tariff conditions site:${companyName.toLowerCase().replace(/\s+/g, '')}.com OR site:${companyName.toLowerCase().replace(/\s+/g, '')}.ru -booking -agent -forum`
+          : `${question} official site policy -booking -agent`;
+        
+        const searchResults = await searchTravelInfo(policySearchQuery, { maxResults: 10 });
         
         if (searchResults.ok && searchResults.results.length > 0) {
-          urlsToTry = searchResults.results
-            .filter(r => r.url && this.isOfficialPolicyUrl(r.url))
-            .map(r => r.url!)
-            .slice(0, 2);
+          // Batch domain scoring if company name available
+          if (companyName) {
+            const scoredResults = await filterResultsByDomainAuthenticity(
+              searchResults.results.map(r => ({
+                url: r.url!,
+                title: r.title || '',
+                snippet: r.description || ''
+              })),
+              companyName
+            );
+            
+            // Take top results, prioritizing official domains
+            urlsToTry = scoredResults
+              .filter(r => r.domainScore.confidence > 0.3)
+              .slice(0, 3)
+              .map(r => r.url);
+              
+            log?.debug({ 
+              urlsFound: urlsToTry.length, 
+              urls: urlsToTry,
+              scores: scoredResults.slice(0, 3).map(r => ({ url: r.url, score: r.domainScore.confidence }))
+            }, 'Found and scored policy URLs');
+          } else {
+            // Fallback to basic filtering
+            urlsToTry = searchResults.results
+              .filter(r => r.url && this.isOfficialPolicyUrl(r.url))
+              .map(r => r.url!)
+              .slice(0, 3);
+          }
           
           log?.debug({ urlsFound: urlsToTry.length, urls: urlsToTry }, 'Found policy URLs via search');
         }
       }
       
-      // Try browser extraction on URLs
-      for (const url of urlsToTry.slice(0, 2)) { // Limit to 2 URLs for performance
+      // Try browser extraction on URLs - stop after first successful high-confidence result
+      for (const url of urlsToTry.slice(0, 3)) {
+        // Skip PDF URLs as they can't be processed by Playwright
+        if (url.toLowerCase().includes('.pdf')) {
+          log?.debug({ url }, 'Skipping PDF URL - not supported by browser extraction');
+          continue;
+        }
+        
         try {
           log?.debug({ url, clauseType }, 'Attempting browser extraction');
           
           const receipt = await extractPolicyClause({
             url,
             clause: clauseType,
+            airlineName: companyName,
             timeoutMs: 8000
           });
           
@@ -379,6 +418,12 @@ export class PolicyAgent {
             }
             
             log?.debug({ url, confidence: receipt.confidence }, 'Browser extraction successful');
+            
+            // Stop after first high confidence result (>= 0.8) to avoid unnecessary processing
+            if (receipt.confidence >= 0.8) {
+              log?.debug({ url, confidence: receipt.confidence }, 'High confidence result found, stopping extraction');
+              break;
+            }
           } else {
             log?.debug({ url, confidence: receipt.confidence }, 'Browser extraction low confidence');
           }
@@ -392,6 +437,25 @@ export class PolicyAgent {
       log?.warn({ error: String(error) }, 'Browser mode initialization failed');
       return [];
     }
+  }
+
+  private async extractAirlineName(question: string): Promise<string | undefined> {
+    try {
+      const tpl = await getPrompt('nlp_intent_detection');
+      const prompt = tpl.replace('{question}', question);
+      
+      const response = await callLLM(prompt, { responseFormat: 'text' });
+      const airlineName = response.trim();
+      
+      // Return airline name if it looks valid (not empty, not generic words)
+      if (airlineName && airlineName.length > 2 && !['none', 'unknown', 'n/a'].includes(airlineName.toLowerCase())) {
+        return airlineName;
+      }
+    } catch (error) {
+      // LLM extraction failed, continue without airline name
+    }
+    
+    return undefined;
   }
 
   private isOfficialPolicyUrl(url: string): boolean {

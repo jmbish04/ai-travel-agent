@@ -48,7 +48,8 @@ type PromptName =
   | 'entity_extraction_retry'
   | 'citation_analysis'
   | 'citation_verification'
-  | 'flight_slot_extractor';
+  | 'flight_slot_extractor'
+  | 'domain_authenticity_classifier';
 
 let loaded = false;
 const PROMPTS: Partial<Record<PromptName, string>> = {};
@@ -204,6 +205,9 @@ export async function preloadPrompts(): Promise<void> {
   );
   PROMPTS.flight_slot_extractor = await loadFileSafe(
     path.join(base, 'flight_slot_extractor.md'),
+  );
+  PROMPTS.domain_authenticity_classifier = await loadFileSafe(
+    path.join(base, 'domain_authenticity_classifier.md'),
   );
   loaded = true;
 }

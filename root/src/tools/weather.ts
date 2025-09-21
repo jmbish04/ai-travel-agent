@@ -95,6 +95,10 @@ async function getGeocode(city: string): Promise<{ lat: string; lon: string } | 
       return null;
     }
     const result = parsed.data.results[0];
+    if (!result) {
+      console.log(`🌍 GEOCODE: No results found for ${city}`);
+      return null;
+    }
     console.log(`🌍 GEOCODE: Success - lat: ${result.latitude}, lon: ${result.longitude}`);
     return { lat: result.latitude.toString(), lon: result.longitude.toString() };
   } catch (error) {
