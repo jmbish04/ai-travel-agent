@@ -4,7 +4,7 @@ import { getSearchSource, searchTravelInfo } from './search.js';
 import { retry, handleAll, ExponentialBackoff } from 'cockatiel';
 import Bottleneck from 'bottleneck';
 
-const GEOCODE_URL = 'https://geocode.maps.co/search';
+const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast';
 
 // Define resilience policy
@@ -19,13 +19,15 @@ const limiter = new Bottleneck({
   minTime: 250, // 4 requests per second
 });
 
-const GeocodeSchema = z.array(
-  z.object({
-    lat: z.string(),
-    lon: z.string(),
-    display_name: z.string(),
-  }),
-);
+const GeocodeSchema = z.object({
+  results: z.array(
+    z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+      name: z.string(),
+    }),
+  ),
+});
 
 const WeatherSchema = z.object({
   latitude: z.number(),
@@ -73,19 +75,22 @@ function weatherCodeToText(code: number): string {
 }
 
 async function getGeocode(city: string): Promise<{ lat: string; lon: string } | null> {
-  const url = `${GEOCODE_URL}?q=${encodeURIComponent(city)}`;
+  const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}`;
   try {
     const json = await retryPolicy.execute(async () => {
       return await limiter.schedule(() => fetchJSON<unknown>(url, {
-        target: 'geocode.maps.co',
+        target: 'geocoding-api.open-meteo.com',
         headers: { 'Accept': 'application/json' },
       }));
     });
+    console.log(`🗺️ Raw geocode response:`, JSON.stringify(json).substring(0, 200));
     const parsed = GeocodeSchema.safeParse(json);
-    if (!parsed.success || parsed.data.length === 0) return null;
-    const g: any = parsed.data[0];
-    return { lat: g.lat, lon: g.lon };
-  } catch {
+    console.log(`🗺️ Schema validation:`, parsed.success, parsed.success ? 'OK' : parsed.error);
+    if (!parsed.success || parsed.data.results.length === 0) return null;
+    const g = parsed.data.results[0];
+    return { lat: g.latitude.toString(), lon: g.longitude.toString() };
+  } catch (error) {
+    console.log(`❌ Geocode error:`, error);
     return null;
   }
 }
@@ -115,8 +120,11 @@ export async function getWeather(input: { city: string; datesOrMonth?: string })
   | { ok: true; summary: string; source?: string }
   | { ok: false; reason: string; source?: string }
 > {
+  console.log(`🌤️ Weather request for: ${input.city}`);
   const geocode = await getGeocode(input.city);
+  console.log(`🗺️ Geocode result:`, geocode);
   if (!geocode) {
+    console.log(`❌ Geocoding failed, falling back to search`);
     // Fallback to Brave search if geocode fails
     const search = await searchTravelInfo(`weather in ${input.city}`, null as any);
     if (search.ok && search.results.length > 0) {
@@ -127,8 +135,11 @@ export async function getWeather(input: { city: string; datesOrMonth?: string })
     }
     return { ok: false, reason: 'unknown_city', source: 'geocode.maps.co' };
   }
+  console.log(`🌡️ Getting weather for coordinates: ${geocode.lat}, ${geocode.lon}`);
   const weather = await getMeteoWeather(geocode.lat, geocode.lon);
+  console.log(`🌤️ Weather result:`, weather);
   if (!weather) {
+    console.log(`❌ Weather API failed, no fallback implemented`);
     return { ok: false, reason: 'weather_unavailable', source: 'open-meteo.com' };
   }
   return { ok: true, summary: weather, source: 'open-meteo.com' };
