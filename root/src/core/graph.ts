@@ -938,10 +938,9 @@ async function webSearchNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const searchQuery = sanitizeSearchQuery(slots.search_query || ctx.msg);
-  const optimizedQuery = slots.search_query 
-    ? searchQuery 
-    : await optimizeSearchQuery(searchQuery, slots, 'web_search', logger.log);
+  // Always optimize the current message for web search, don't reuse old search_query
+  const searchQuery = sanitizeSearchQuery(ctx.msg);
+  const optimizedQuery = await optimizeSearchQuery(searchQuery, slots, 'web_search', logger.log);
   
   return await performWebSearchNode(optimizedQuery, logger, ctx.threadId);
 }
@@ -1005,7 +1004,8 @@ async function performWebSearchNode(
     try {
       const { setLastReceipts } = await import('./slot_memory.js');
       const { createDecision } = await import('./receipts.js');
-      const facts = searchResult.results.slice(0, 3).map(
+      // Store same number of facts as LLM sees (up to 7) to avoid verification mismatches
+      const facts = searchResult.results.slice(0, 7).map(
         (result: SearchResult, index: number) => ({
           source: getSearchCitation(),
           key: `search_result_${index}`,
