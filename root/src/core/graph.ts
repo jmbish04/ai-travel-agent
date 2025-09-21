@@ -460,7 +460,7 @@ async function weatherNode(
       logger.log?.debug({ wroteFacts: facts.length, node: 'weather' }, 'receipts_written');
       return { done: true, reply: result.summary, citations: [normalizedSource] };
     } else {
-      return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${result.reason}` };
+      return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${'reason' in result ? result.reason : 'Unknown error'}` };
     }
   } catch (error) {
     logger.log?.warn({ error: String(error), city }, 'weather_fetch_failed');
