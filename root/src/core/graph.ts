@@ -875,7 +875,7 @@ async function irropsNode(
       {
         source: 'IRROPS Engine',
         key: `irrops_option_${i}_route`,
-        value: `Route: ${opt.segments[0].flightNumber} ${opt.segments[0].origin}-${opt.segments[0].destination}`
+        value: `Route: ${opt.segments?.[0]?.flightNumber || 'N/A'} ${opt.segments?.[0]?.origin || 'N/A'}-${opt.segments?.[0]?.destination || 'N/A'}`
       }
     ]);
     const decisions = [createDecision(
