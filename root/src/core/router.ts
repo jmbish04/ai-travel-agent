@@ -195,9 +195,17 @@ async function maybeResetContextForMessage(params: {
   }
 
   const newLocation = getPrimaryLocation(freshSlots);
+  
+  // Check if only origin was added/changed and destination exists in prior context
+  const priorDest = sanitizedSlots.destinationCity || sanitizedSlots.city;
+  const newDest = freshSlots.destinationCity || freshSlots.city;
+  const onlyOriginChanged = freshSlots.originCity && !newDest && !!priorDest;
 
   if (previousLocation && newLocation) {
-    if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
+    if (onlyOriginChanged) {
+      // Don't reset if only origin was added and we have a prior destination
+      reset = false;
+    } else if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
       reset = true;
       reason = 'new_location';
     }

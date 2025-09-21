@@ -296,14 +296,33 @@ export async function handleChat(
     if (autoVerify) {
       try {
         const receiptsData = await getLastReceipts(threadId) || {};
-        const facts = (receiptsData.facts || []) as Fact[];
+        let facts = (receiptsData.facts || []) as Fact[];
+        
+        // Grace wait for flights/destinations if no facts initially
+        const intent = await getLastIntent(threadId);
+        if (facts.length === 0 && ['flights', 'destinations'].includes(intent || '')) {
+          for (let i = 0; i < 3; i++) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            const again = await getLastReceipts(threadId);
+            if ((again?.facts?.length || 0) > 0) { 
+              facts = again.facts as Fact[]; 
+              break; 
+            }
+          }
+        }
+        
+        ctx.log.debug({ factsCount: facts.length, factsSample: facts.slice(0, 2), threadId }, 'auto_verify_facts_loaded');
         const msgs = await getContext(threadId);
         const users = msgs.filter(m => m.role === 'user').map(m => m.content);
         const latestUser = users[users.length - 1] || input.message;
         const previousUsers = users.slice(0, -1).slice(-2);
         const slots = await getThreadSlots(threadId);
-        const intent = await getLastIntent(threadId);
 
+        // Fallback: if facts missing but citations exist, synthesize minimal evidence from citations
+        if ((!facts || facts.length === 0) && Array.isArray(result.citations) && result.citations.length > 0) {
+          facts = result.citations.map((src, i) => ({ source: String(src), key: `citation_${i}`, value: 'source_only' }));
+          ctx.log.debug({ synthesizedFacts: facts, citations: result.citations }, 'auto_verify_facts_synthesized');
+        }
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -598,7 +617,7 @@ export async function blendWithFacts(
             ['Skip weather lookup', 'Use web search instead'],
             0.95
           )];
-          setLastReceipts(input.threadId, factsArr, decisions, reply);
+          await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
         // Metrics instrumentation
@@ -646,7 +665,7 @@ export async function blendWithFacts(
             ['Generic packing list', 'Skip weather lookup'],
             0.9
           )];
-          setLastReceipts(input.threadId, factsArr, decisions, reply);
+          await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
         // Metrics instrumentation
@@ -843,7 +862,7 @@ export async function blendWithFacts(
             ['Use web search instead', 'Skip attractions lookup'],
             0.9
           )];
-          setLastReceipts(input.threadId, factsArr, decisions, reply);
+          await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
         // Metrics instrumentation
@@ -939,7 +958,7 @@ export async function blendWithFacts(
       // Persist receipts components for this thread
       if (input.threadId && factsArr.length > 0) {
         try {
-          setLastReceipts(input.threadId, factsArr, decisions, replyWithSource);
+          await setLastReceipts(input.threadId, factsArr, decisions, replyWithSource);
         } catch {
           // ignore
         }

@@ -27,8 +27,10 @@ import {
   normalizeSlots,
   readConsentState,
   writeConsentState,
-  getLastReceipts
+  getLastReceipts,
+  setLastReceipts
 } from './slot_memory.js';
+import { createDecision } from './receipts.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { getPrompt } from './prompts.js';
 import { detectLanguage } from './transformers-detector.js';
@@ -448,7 +450,17 @@ async function weatherNode(
     const result = await getWeather({ city });
     
     if (result.ok) {
-      return { done: true, reply: result.summary, citations: [result.source || 'Weather API'] };
+      const normalizedSource = (result.source || 'Open-Meteo').toString();
+      const facts = [{ source: normalizedSource, key: 'weather_summary', value: result.summary }];
+      const decisions = [createDecision(
+        'Used weather API for forecast',
+        `Retrieved weather for ${city} using Open-Meteo`,
+        ['Skip weather lookup', 'Use web search instead'],
+        0.95
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, result.summary);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'weather' }, 'receipts_written');
+      return { done: true, reply: result.summary, citations: [normalizedSource] };
     } else {
       return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${result.reason}` };
     }
@@ -478,6 +490,16 @@ async function destinationsNode(
       
       const reply = `Based on your preferences, here are some recommended destinations:\n\n${destinationList}`;
       const citations = ['AI-Enhanced Catalog', 'REST Countries API'];
+      
+      const facts = [{ source: 'AI-Enhanced Catalog', key: 'destinations_list', value: destinationList }];
+      const decisions = [createDecision(
+        'Recommended destinations from catalog',
+        'User asked for destinations; used curated catalog + REST Countries',
+        ['Skip destinations lookup', 'Use generic guidance'],
+        0.9
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, reply);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'destinations' }, 'receipts_written');
       
       return { done: true, reply, citations };
     }
@@ -590,6 +612,19 @@ async function flightsNode(
       });
 
       if (result.ok) {
+        const facts = [{
+          source: 'Amadeus',
+          key: 'flight_offers_summary',
+          value: result.summary
+        }];
+        const decisions = [createDecision(
+          'Searched live flight offers (Amadeus)',
+          `Queried ${mergedSlots.originCity}→${mergedSlots.destinationCity || mergedSlots.city} for ${departureDate}`,
+          ['Fallback to web results', 'Ask for different date'],
+          0.9
+        )];
+        await setLastReceipts(ctx.threadId, facts, decisions, result.summary);
+        logger.log?.debug({ wroteFacts: facts.length, node: 'flights' }, 'receipts_written');
         return { 
           done: true, 
           reply: result.summary, 
