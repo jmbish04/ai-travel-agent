@@ -6,7 +6,7 @@ Hard requirements:
 - Round `confidence` to two decimals.
 
 Return strict JSON with:
-- intent: "weather", "packing", "attractions", "destinations", "flights", or "unknown"
+- intent: "weather", "packing", "attractions", "destinations", "flights", "policy", or "unknown"
 - confidence: 0.00-1.00 score
 - needExternal: boolean (true if external APIs needed)
 - slots: { city?: string, region?: string, dates?: string, month?: string, originCity?: string, destinationCity?: string, departureDate?: string, returnDate?: string, passengers?: number, cabinClass?: string }
@@ -23,6 +23,7 @@ Intent definitions:
 - attractions: specific requests for things to do, places to visit, activities ("attractions in Paris", "what to do in Paris")
 - destinations: asking for destination recommendations ("where should I go?", "recommend places to visit"), NOT asking about specific places
 - flights: flight search, booking, schedules, prices, airlines
+- policy: airline policies, change fees, cancellation rules, baggage policies, travel insurance, visa requirements, official travel policies
 - unknown: unclear, unrelated, insufficient information, OR asking for general information about specific places ("tell me about Paris", "what's Paris like?", general city overviews)
 
 Key distinction:
@@ -44,7 +45,7 @@ Context: {context}
 
 Return strict JSON:
 {
-  "intent": "weather|packing|attractions|destinations|flights|unknown",
+  "intent": "weather|packing|attractions|destinations|flights|policy|unknown",
   "confidence": 0.00-1.00,
   "needExternal": true/false,
   "slots": { "city": "", "dates": "", "month": "", "originCity": "", "destinationCity": "", "departureDate": "", "returnDate": "", "passengers": 0, "cabinClass": "" }
@@ -147,6 +148,12 @@ Output: {"intent":"unknown","confidence":0.40,"needExternal":false,"slots":{}}
 
 Input: "any good places?" (attraction-related but missing location)
 Output: {"intent":"unknown","confidence":0.30,"needExternal":false,"slots":{}}
+
+Input: "What are the change fees for Arkia flights?"
+Output: {"intent":"policy","confidence":0.90,"needExternal":true,"slots":{}}
+
+Input: "Delta baggage policy"
+Output: {"intent":"policy","confidence":0.95,"needExternal":true,"slots":{}}
 
 Input: "how much does it cost?" (budget-related but missing specifics)
 Output: {"intent":"unknown","confidence":0.45,"needExternal":true,"slots":{}}
