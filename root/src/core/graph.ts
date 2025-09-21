@@ -352,20 +352,19 @@ export async function runGraphTurn(
 function checkMissingSlots(intent: string, slots: Record<string, string>, message: string): string[] {
   const missing: string[] = [];
   
-  const needsCity = ['attractions', 'packing', 'destinations', 'weather', 'flights']
+  const needsLocation = ['attractions', 'packing', 'destinations', 'weather', 'flights']
     .includes(intent);
   const hasOrigin = !!slots.originCity?.trim();
   const hasDestination = !!(slots.destinationCity?.trim() || slots.city?.trim());
-  const hasCity = intent === 'flights'
+  const hasLocation = intent === 'flights'
     ? hasOrigin && hasDestination
     : intent === 'destinations'
-      ? !!(slots.city?.trim() || slots.originCity?.trim())
+      ? !!(slots.city?.trim() || slots.originCity?.trim() || slots.region?.trim())
       : !!slots.city?.trim();
   
   const hasWhen = !!(slots.dates?.trim() || slots.month?.trim());
   const hasImmediateContext = /\b(today|now|currently|right now)\b/i.test(message);
   const hasSpecialContext = /\b(kids?|children|family|business|work|summer|winter|spring|fall)\b/i.test(message);
-  const wantsOverview = /\b(tell me about|information about|info about|facts about|overview of|what is)\b/i.test(message);
   
   if (intent === 'flights') {
     if (!hasOrigin && !hasDestination) {
@@ -374,10 +373,9 @@ function checkMissingSlots(intent: string, slots: Record<string, string>, messag
       if (!hasOrigin) missing.push('origin');
       if (!hasDestination) missing.push('destination');
     }
-  } else if (needsCity && !hasCity) {
-    missing.push('city');
+  } else if (needsLocation && !hasLocation) {
+    missing.push('location');
   }
-  if (intent === 'destinations' && !hasWhen && !wantsOverview) missing.push('dates');
   if (intent === 'packing' && !hasWhen && !hasImmediateContext && !hasSpecialContext) missing.push('dates');
   
   return missing;
@@ -477,47 +475,98 @@ async function destinationsNode(
 ): Promise<NodeOut> {
   const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
+  
+  logger.log?.debug({ 
+    threadSlots, 
+    inputSlots: slots, 
+    mergedSlots, 
+    message: ctx.msg 
+  }, 'destinations_node_start');
 
-  // Try AI-enhanced destinations tool first
   try {
-    const { recommendDestinations } = await import('../tools/destinations.js');
-    const destinations = await recommendDestinations(mergedSlots, logger.log);
+    logger.log?.debug('destinations_engine_import_start');
+    const { DestinationEngine } = await import('../core/destination_engine.js');
+    logger.log?.debug('destinations_engine_import_success');
+    
+    logger.log?.debug({ mergedSlots }, 'destinations_engine_call_start');
+    const destinations = await DestinationEngine.getRecommendations(mergedSlots);
+    logger.log?.debug({ 
+      destinationsCount: destinations.length, 
+      destinations: destinations.slice(0, 2) 
+    }, 'destinations_engine_call_result');
     
     if (destinations.length > 0) {
-      const destinationList = destinations.map(d => 
-        `${d.value.city}, ${d.value.country} (${d.value.tags.climate} climate, ${d.value.tags.budget} budget${d.value.tags.family_friendly ? ', family-friendly' : ''})`
-      ).join('; ');
+      // Use LLM to create a better summary with grouping and interactive suggestions
+      const destinationList = destinations.map((d: any) => {
+        const capital = d.capital ? d.capital[0] : 'N/A';
+        const subregion = d.subregion || d.region;
+        const population = d.population ? `${Math.round(d.population / 1000000)}M people` : '';
+        return `${d.name.common}, ${capital} (${subregion}${population ? `, ${population}` : ''})`;
+      }).join('\n');
       
-      const reply = `Based on your preferences, here are some recommended destinations:\n\n${destinationList}`;
-      const citations = ['AI-Enhanced Catalog', 'REST Countries API'];
+      // Get the summarizer prompt
+      const summarizerPrompt = await getPrompt('destination_summarizer');
+      const prompt = summarizerPrompt.replace('{destinations}', destinationList);
       
-      const facts = [{ source: 'AI-Enhanced Catalog', key: 'destinations_list', value: destinationList }];
+      // Debug: log the full prompt being sent to LLM
+      logger.log?.debug({ 
+        promptLength: prompt.length, 
+        destinationCount: destinations.length,
+        promptPreview: prompt.substring(0, 200) + '...'
+      }, 'destination_summarizer_prompt_debug');
+      
+      // Call LLM for summarization with JSON format
+      const summary = await callLLM(prompt, { responseFormat: 'json', log: logger.log });
+      
+      // Parse and format the JSON response
+      let formattedSummary;
+      try {
+        const parsed = JSON.parse(summary);
+        formattedSummary = parsed.regions.map((region: any) => 
+          `## ${region.name}\n${region.description}`
+        ).join('\n\n') + '\n\n> "' + parsed.interactive_suggestion + '"';
+      } catch (e) {
+        logger.log?.warn({ error: e, summary }, 'destination_summarizer_json_parse_failed');
+        formattedSummary = summary; // fallback to raw response
+      }
+      
+      const reply = "Based on your preferences, here are some recommended destinations:\n\n" + formattedSummary;
+      const citations = ['REST Countries API'];
+      
+      const facts = [{ source: 'REST Countries API', key: 'destinations_list', value: destinationList }];
       const decisions = [createDecision(
-        'Recommended destinations from catalog',
-        'User asked for destinations; used curated catalog + REST Countries',
+        'Recommended destinations from API',
+        'User asked for destinations; used REST Countries API',
         ['Skip destinations lookup', 'Use generic guidance'],
         0.9
       )];
       await setLastReceipts(ctx.threadId, facts, decisions, reply);
       logger.log?.debug({ wroteFacts: facts.length, node: 'destinations' }, 'receipts_written');
       
+      logger.log?.debug({ reply: reply.slice(0, 100) + '...' }, 'destinations_node_success');
       return { done: true, reply, citations };
+    } else {
+      logger.log?.debug('destinations_engine_returned_empty');
+      writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
+      return { 
+        done: true, 
+        reply: `I couldn't find any destinations based on your preferences. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+        citations: ['Internal Knowledge Base (Insufficient Results)']
+      };
     }
   } catch (error) {
-    logger.log?.warn({ error: String(error) }, 'destinations_tool_failed');
+    logger.log?.error({ 
+      error: String(error), 
+      stack: error instanceof Error ? error.stack : undefined,
+      mergedSlots 
+    }, 'destinations_tool_failed');
+    writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
+    return { 
+      done: true, 
+      reply: `I'm sorry, I'm having trouble searching for destinations right now. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+      citations: ['Internal Knowledge Base (Insufficient Results)']
+    };
   }
-  
-  // Fallback to web search with city-aware query
-  const city = mergedSlots.city || mergedSlots.destinationCity || mergedSlots.originCity || '';
-  const when = mergedSlots.month || mergedSlots.dates || mergedSlots.travelWindow || '';
-  const profile = mergedSlots.travelerProfile || mergedSlots.groupType || '';
-
-  const parts = [city, 'travel guide'];
-  if (when) parts.push(when);
-  if (profile) parts.push(profile);
-  const searchQuery = parts.filter(Boolean).join(' ').trim() || 'travel destinations';
-
-  return webSearchNode(ctx, { ...mergedSlots, search_query: searchQuery }, logger);
 }
 
 async function packingNode(
@@ -800,6 +849,43 @@ async function irropsNode(
 
     const citations = options.flatMap(opt => opt.citations).slice(0, 3);
     
+    // Store receipts for the IRROPS response
+    const facts = options.flatMap((opt, i) => [
+      ...opt.citations.map((cit, j) => ({
+        source: cit,
+        key: `irrops_option_${i}_citation_${j}`,
+        value: `Alternative flight option ${i + 1}`
+      })),
+      // Add detailed option data as facts
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_price`,
+        value: `Additional cost: $${opt.priceChange.amount} ${opt.priceChange.currency}`
+      },
+      {
+        source: 'IRROPS Engine', 
+        key: `irrops_option_${i}_confidence`,
+        value: `Confidence: ${Math.round(opt.confidence * 100)}%`
+      },
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_rules`,
+        value: `Rules: ${opt.rulesApplied.join(', ')}`
+      },
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_route`,
+        value: `Route: ${opt.segments[0].flightNumber} ${opt.segments[0].origin}-${opt.segments[0].destination}`
+      }
+    ]);
+    const decisions = [createDecision(
+      `Processed flight disruption for ${pnr.recordLocator}`,
+      `User reported cancellation of flight ${pnr.segments[0]?.carrier}${pnr.segments[0]?.flightNumber} from ${pnr.segments[0]?.origin} to ${pnr.segments[0]?.destination}`,
+      ['Skip rebooking', 'Use web search instead'],
+      0.9
+    )];
+    await setLastReceipts(ctx.threadId, facts, decisions, reply);
+    
     return { done: true, reply, citations };
     
   } catch (error) {
@@ -938,10 +1024,9 @@ async function webSearchNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  const searchQuery = sanitizeSearchQuery(slots.search_query || ctx.msg);
-  const optimizedQuery = slots.search_query 
-    ? searchQuery 
-    : await optimizeSearchQuery(searchQuery, slots, 'web_search', logger.log);
+  // Always optimize the current message for web search, don't reuse old search_query
+  const searchQuery = sanitizeSearchQuery(ctx.msg);
+  const optimizedQuery = await optimizeSearchQuery(searchQuery, slots, 'web_search', logger.log);
   
   return await performWebSearchNode(optimizedQuery, logger, ctx.threadId);
 }
@@ -1005,7 +1090,8 @@ async function performWebSearchNode(
     try {
       const { setLastReceipts } = await import('./slot_memory.js');
       const { createDecision } = await import('./receipts.js');
-      const facts = searchResult.results.slice(0, 3).map(
+      // Store same number of facts as LLM sees (up to 7) to avoid verification mismatches
+      const facts = searchResult.results.slice(0, 7).map(
         (result: SearchResult, index: number) => ({
           source: getSearchCitation(),
           key: `search_result_${index}`,

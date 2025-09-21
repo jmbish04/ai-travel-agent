@@ -6,6 +6,7 @@ export const RouterSlots = z.object({
   city: z.string().nullable().optional(),
   originCity: z.string().nullable().optional(),
   destinationCity: z.string().nullable().optional(),
+  region: z.string().nullable().optional(),
   month: z.string().nullable().optional(),
   dates: z.string().nullable().optional(),
   departureDate: z.string().nullable().optional(),

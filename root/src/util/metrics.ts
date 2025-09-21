@@ -516,10 +516,11 @@ export function snapshot() {
         max_ms: e2eHist.max,
         buckets: e2eHist.buckets,
       },
-      tool_calls_per_turn: (() => {
+      avg_tool_calls_per_conversation: (() => {
         const totalTurns = Object.values(chatTurns).reduce((a, b) => a + b, 0);
-        return totalTurns > 0 ? Number((toolCallsTotal / totalTurns).toFixed(3)) : 0;
+        return totalTurns > 0 ? Number((toolCallsTotal / totalTurns).toFixed(2)) : 0;
       })(),
+      total_tool_calls: toolCallsTotal,
     },
     business: {
       total_sessions: totalSessions,

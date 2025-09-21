@@ -1,124 +1,136 @@
+import { z } from 'zod';
 import { fetchJSON, ExternalFetchError } from '../util/fetch.js';
-import {
-  searchTravelInfo,
-  extractWeatherFromResults,
-  llmExtractWeatherFromResults,
-  getSearchSource,
-} from './search.js';
+import { getSearchSource, searchTravelInfo } from './search.js';
+import { retry, handleAll, ExponentialBackoff } from 'cockatiel';
+import Bottleneck from 'bottleneck';
 
+const GEOCODE_URL = 'https://geocode.maps.co/search';
+const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast';
 
-function withTimeout(ms: number, signal?: AbortSignal) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(new Error('timeout')), ms);
-  const linked = signal ? AbortSignal.any([ctrl.signal, signal]) : ctrl.signal;
-  return { signal: linked, cancel: () => clearTimeout(t) };
-}
+// Define resilience policy
+const retryPolicy = retry(handleAll, {
+    maxAttempts: 3,
+    backoff: new ExponentialBackoff({ initialDelay: 100, maxDelay: 5000 }),
+});
 
-type OpenMeteoDaily = {
-  temperature_2m_max?: number[];
-  temperature_2m_min?: number[];
-  precipitation_probability_mean?: number[];
-};
+// Define rate limiter
+const limiter = new Bottleneck({
+  maxConcurrent: 1,
+  minTime: 250, // 4 requests per second
+});
 
-type OpenMeteoResp = { daily?: OpenMeteoDaily };
+const GeocodeSchema = z.array(
+  z.object({
+    lat: z.string(),
+    lon: z.string(),
+    display_name: z.string(),
+  }),
+);
 
+const WeatherSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  daily: z.object({
+    time: z.array(z.string()),
+    weathercode: z.array(z.number()),
+    temperature_2m_max: z.array(z.number()),
+    temperature_2m_min: z.array(z.number()),
+  }),
+});
 
-type Out = { ok: true; summary: string; source?: string; reason?: string } | { ok: false; reason: string };
-
-
-export async function getWeather(input: {
-  city?: string;
-  datesOrMonth?: string;
-}): Promise<Out> {
-  if (!input.city) return { ok: false, reason: 'no_city' };
-
-  // Try primary API first
-  const primaryResult = await tryPrimaryWeatherAPI(input.city);
-  if (primaryResult.ok) {
-    return primaryResult;
-  }
-  // For unknown cities, avoid falling back to generic web search to prevent hallucinations
-  if (!primaryResult.ok && primaryResult.reason === 'unknown_city') {
-    return primaryResult;
-  }
-
-  // Fallback to configured web search
-  const fallbackResult = await tryWeatherFallback(input.city, input.datesOrMonth);
-  if (fallbackResult.ok) {
-    return { 
-      ...fallbackResult, 
-      summary: `The weather service is currently unavailable, but here are some web search results: ${fallbackResult.summary}`,
-      source: getSearchSource(),
-    };
-  }
-
-  return primaryResult; // Return original error
-}
-
-async function tryPrimaryWeatherAPI(city: string): Promise<Out> {
-  // Resolve city to coordinates via Open-Meteo Geocoding API (no hardcoded cities)
-  type GeoItem = {
-    name?: string;
-    latitude?: number;
-    longitude?: number;
-    country?: string;
-    country_code?: string;
+function weatherCodeToText(code: number): string {
+  const map: Record<number, string> = {
+    0: 'Clear sky',
+    1: 'Mainly clear',
+    2: 'Partly cloudy',
+    3: 'Overcast',
+    45: 'Fog',
+    48: 'Depositing rime fog',
+    51: 'Light drizzle',
+    53: 'Moderate drizzle',
+    55: 'Dense drizzle',
+    56: 'Light freezing drizzle',
+    57: 'Dense freezing drizzle',
+    61: 'Slight rain',
+    63: 'Moderate rain',
+    65: 'Heavy rain',
+    66: 'Light freezing rain',
+    67: 'Heavy freezing rain',
+    71: 'Slight snow fall',
+    73: 'Moderate snow fall',
+    75: 'Heavy snow fall',
+    77: 'Snow grains',
+    80: 'Slight rain showers',
+    81: 'Moderate rain showers',
+    82: 'Violent rain showers',
+    85: 'Slight snow showers',
+    86: 'Heavy snow showers',
+    95: 'Thunderstorm',
+    96: 'Thunderstorm with slight hail',
+    99: 'Thunderstorm with heavy hail',
   };
-  type GeoResp = { results?: GeoItem[] };
+  return map[code] || 'Unknown';
+}
+
+async function getGeocode(city: string): Promise<{ lat: string; lon: string } | null> {
+  const url = `${GEOCODE_URL}?q=${encodeURIComponent(city)}`;
   try {
-    const g = await fetchJSON<GeoResp>(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-        city,
-      )}&count=1&language=en&format=json`,
-      { timeoutMs: 4000, retries: 3, target: 'open-meteo:geocode' },
-    );
-    const first = (g.results ?? [])[0];
-    if (!first || typeof first.latitude !== 'number' || typeof first.longitude !== 'number') {
-      return { ok: false, reason: 'unknown_city' };
-    }
-    const url =
-      `https://api.open-meteo.com/v1/forecast?latitude=${first.latitude}&longitude=${first.longitude}` +
-      `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_mean&timezone=auto`;
-    try {
-      const j = await fetchJSON<OpenMeteoResp>(url, {
-        timeoutMs: 4000,
-        retries: 3,
-        target: 'open-meteo',
-      });
-      const max = j.daily?.temperature_2m_max?.[0];
-      const min = j.daily?.temperature_2m_min?.[0];
-      const pp = j.daily?.precipitation_probability_mean?.[0];
-      const summary = `High ${max}°C / Low ${min}°C; precip prob ${pp}%`;
-      return { ok: true, summary, source: 'open-meteo' };
-    } catch (e) {
-      if (e instanceof ExternalFetchError) {
-        return { ok: false, reason: e.kind === 'timeout' ? 'timeout' : e.status && e.status >= 500 ? 'http_5xx' : 'http_4xx' };
-      }
-      return { ok: false, reason: 'network' };
-    }
-  } catch (e) {
-    if (e instanceof ExternalFetchError) {
-      return { ok: false, reason: e.kind === 'timeout' ? 'timeout' : 'network' };
-    }
-    return { ok: false, reason: 'network' };
+    const json = await retryPolicy.execute(async () => {
+      return await limiter.schedule(() => fetchJSON<unknown>(url, {
+        target: 'geocode.maps.co',
+        headers: { 'Accept': 'application/json' },
+      }));
+    });
+    const parsed = GeocodeSchema.safeParse(json);
+    if (!parsed.success || parsed.data.length === 0) return null;
+    const g: any = parsed.data[0];
+    return { lat: g.lat, lon: g.lon };
+  } catch {
+    return null;
   }
 }
 
-async function tryWeatherFallback(city: string, datesOrMonth?: string): Promise<Out> {
-  const timeContext = datesOrMonth ? ` ${datesOrMonth}` : '';
-  const query = `weather in ${city}${timeContext} temperature forecast`;
-  
-  const searchResult = await searchTravelInfo(query);
-  if (!searchResult.ok) {
-    return { ok: false, reason: 'fallback_failed' };
+async function getMeteoWeather(lat: string, lon: string): Promise<string | null> {
+  const url = `${WEATHER_URL}?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&forecast_days=3`;
+  try {
+    const json = await retryPolicy.execute(async () => {
+      return await limiter.schedule(() => fetchJSON<unknown>(url, {
+        target: 'open-meteo.com',
+        headers: { 'Accept': 'application/json' },
+      }));
+    });
+    const parsed = WeatherSchema.safeParse(json);
+    if (!parsed.success) return null;
+    const j: any = parsed.data;
+    const code = j.daily.weathercode[0];
+    const max = j.daily.temperature_2m_max[0];
+    const min = j.daily.temperature_2m_min[0];
+    return `${weatherCodeToText(code)} with a high of ${max}°C and a low of ${min}°C`;
+  } catch {
+    return null;
   }
+}
 
-  // LLM-first extraction
-  const weatherInfoLLM = await llmExtractWeatherFromResults(searchResult.results, city);
-  if (weatherInfoLLM) {
-    return { ok: true, summary: weatherInfoLLM, source: getSearchSource() };
+export async function getWeather(input: { city: string; datesOrMonth?: string }): Promise<
+  | { ok: true; summary: string; source?: string }
+  | { ok: false; reason: string; source?: string }
+> {
+  const geocode = await getGeocode(input.city);
+  if (!geocode) {
+    // Fallback to Brave search if geocode fails
+    const search = await searchTravelInfo(`weather in ${input.city}`, null as any);
+    if (search.ok && search.results.length > 0) {
+      const first = search.results[0];
+      if (first) {
+        return { ok: true, summary: `${first.title} - ${first.description}`, source: getSearchSource() };
+      }
+    }
+    return { ok: false, reason: 'unknown_city', source: 'geocode.maps.co' };
   }
-
-  return { ok: false, reason: 'no_weather_data' };
+  const weather = await getMeteoWeather(geocode.lat, geocode.lon);
+  if (!weather) {
+    return { ok: false, reason: 'weather_unavailable', source: 'open-meteo.com' };
+  }
+  return { ok: true, summary: weather, source: 'open-meteo.com' };
 }
 

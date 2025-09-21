@@ -454,7 +454,7 @@
                     <div class="card-icon">
                         <i class="fas fa-briefcase"></i>
                     </div>
-                    <h2>Business Overview</h2>
+                    <h2>Business KPIs (Quantitative)</h2>
                 </div>
                 <p class="hint">Key business metrics including session resolution and time to resolution.</p>
                 <div id="business"></div>
@@ -465,9 +465,9 @@
                     <div class="card-icon">
                         <i class="fas fa-comments"></i>
                     </div>
-                    <h2>Chat Activity</h2>
+                    <h2>Usage Metrics (Quantitative)</h2>
                 </div>
-                <p class="hint">Conversation metrics highlighting user engagement patterns.</p>
+                <p class="hint">Conversation volume and engagement patterns.</p>
                 <div id="chatActivity"></div>
             </div>
 
@@ -509,7 +509,7 @@
                     <div class="card-icon">
                         <i class="fas fa-bookmark"></i>
                     </div>
-                    <h2>Citations & Verification</h2>
+                    <h2>Quality Metrics (Qualitative)</h2>
                 </div>
                 <p class="hint">Source grounding and factual accuracy of assistant responses.</p>
                 <div id="citations"></div>
@@ -520,7 +520,7 @@
                     <div class="card-icon">
                         <i class="fas fa-globe"></i>
                     </div>
-                    <h2>External Requests</h2>
+                    <h2>External API Performance</h2>
                 </div>
                 <p class="hint">Performance and reliability of external API integrations.</p>
                 <div id="external"></div>
@@ -531,7 +531,7 @@
                     <div class="card-icon">
                         <i class="fas fa-tachometer-alt"></i>
                     </div>
-                    <h2>Performance</h2>
+                    <h2>System Performance (Quantitative)</h2>
                 </div>
                 <p class="hint">System response times and operational efficiency metrics.</p>
                 <div id="perf"></div>
@@ -542,9 +542,9 @@
                     <div class="card-icon">
                         <i class="fas fa-wrench"></i>
                     </div>
-                    <h2>Tool Reliability</h2>
+                    <h2>System Health & Reliability</h2>
                 </div>
-                <p class="hint">Reliability metrics for integrated tools and services.</p>
+                <p class="hint">Circuit breakers, rate limiting, and tool reliability metrics.</p>
                 <div id="tools"></div>
             </div>
 
@@ -564,9 +564,9 @@
                     <div class="card-icon">
                         <i class="fas fa-chart-bar"></i>
                     </div>
-                    <h2>Trends</h2>
+                    <h2>Trends & System Info</h2>
                 </div>
-                <p class="hint">Historical trends for key performance indicators.</p>
+                <p class="hint">Historical trends and system configuration.</p>
                 <div id="trends"></div>
             </div>
         </div>
@@ -628,47 +628,52 @@
                     document.getElementById(id).innerHTML = '';
                 });
 
-                // Business Overview
+                // Business Overview (Quantitative)
                 const bizDiv = document.getElementById('business');
                 if (data.business) {
-                    renderMetrics('Total Sessions', data.business.total_sessions || 0, bizDiv);
-                    renderMetrics('Resolved Sessions', data.business.resolved_sessions || 0, bizDiv);
-                    renderMetrics('FCR Rate', (data.business.fcr_rate || 0).toFixed(3), bizDiv);
+                    renderMetrics('Total Sessions (count)', data.business.total_sessions || 0, bizDiv);
+                    renderMetrics('Resolved Sessions (count)', data.business.resolved_sessions || 0, bizDiv);
+                    renderMetrics('FCR Rate (%)', ((data.business.fcr_rate || 0) * 100).toFixed(1), bizDiv);
                     if (typeof data.business.deflection_rate === 'number') {
-                        renderMetrics('Deflection Rate', data.business.deflection_rate.toFixed(3), bizDiv);
+                        renderMetrics('Deflection Rate (%)', (data.business.deflection_rate * 100).toFixed(1), bizDiv);
                     }
                     if (data.business.session_outcomes) {
-                        renderMetrics('Outcomes', data.business.session_outcomes, bizDiv);
+                        renderMetrics('Auto-resolved (count)', data.business.session_outcomes.auto || 0, bizDiv);
+                        renderMetrics('Escalated (count)', data.business.session_outcomes.escalated || 0, bizDiv);
+                        renderMetrics('Abandoned (count)', data.business.session_outcomes.abandoned || 0, bizDiv);
                     }
                     if (data.business.ttr_ms_by_intent) {
-                        const ttrView = {};
-                        for (const [k,v] of Object.entries(data.business.ttr_ms_by_intent)) {
-                            // show avg_ms per intent
-                            // @ts-ignore
-                            ttrView[k] = (v && v.avg_ms) ? v.avg_ms : 0;
+                        for (const [intent, stats] of Object.entries(data.business.ttr_ms_by_intent)) {
+                            renderMetrics(`${intent} Avg TTR (ms)`, stats.avg_ms || 0, bizDiv);
                         }
-                        renderMetrics('TTR Avg (ms)', ttrView, bizDiv);
                     }
                 } else {
                     bizDiv.innerHTML = '<div class="metric"><span class="metric-name">Sessions</span><span class="metric-value">No data</span></div>';
                 }
 
-                // Chat Activity
+                // Chat Activity (Quantitative)
                 const chatDiv = document.getElementById('chatActivity');
-                renderMetrics('Total Messages', data.messages_total, chatDiv);
+                renderMetrics('Total Messages (count)', data.messages_total, chatDiv);
                 if (data.chat_turns && Object.keys(data.chat_turns).length > 0) {
-                    renderMetrics('Chat Turns', data.chat_turns, chatDiv);
+                    for (const [intent, count] of Object.entries(data.chat_turns)) {
+                        renderMetrics(`${intent} Conversations (count)`, count, chatDiv);
+                    }
                 }
 
-                // Router Performance
+                // Router Performance (Quality Metrics)
                 const routerDiv = document.getElementById('routerPerf');
-                if (data.router_low_conf && Object.keys(data.router_low_conf).length > 0) {
-                    renderMetrics('Low Confidence', data.router_low_conf, routerDiv);
-                } else {
-                    routerDiv.innerHTML = '<div class="metric"><span class="metric-name">Low Confidence</span><span class="metric-value">0</span></div>';
-                }
                 if (data.router_confidence_buckets) {
-                    renderMetrics('Confidence Buckets', data.router_confidence_buckets, routerDiv);
+                    for (const [bucket, count] of Object.entries(data.router_confidence_buckets)) {
+                        routerDiv.innerHTML += `<div class="metric"><span class="metric-name">Confidence ${bucket} (count)</span><span class="metric-value">${count}</span></div>`;
+                    }
+                }
+                if (data.router_low_conf && Object.keys(data.router_low_conf).length > 0) {
+                    for (const [intent, count] of Object.entries(data.router_low_conf)) {
+                        routerDiv.innerHTML += `<div class="metric"><span class="metric-name">Low Conf ${intent} (count)</span><span class="metric-value">${count}</span></div>`;
+                    }
+                }
+                if (routerDiv.innerHTML === '') {
+                    routerDiv.innerHTML = '<div class="metric"><span class="metric-name">All routing confidence > 0.9</span><span class="metric-value ok">✓</span></div>';
                 }
 
                 // Clarifications
@@ -691,63 +696,99 @@
                     fallbackDiv.innerHTML = '<div class="metric"><span class="metric-name">No fallbacks yet</span><span class="metric-value">-</span></div>';
                 }
 
-                // Citations & Verification
+                // Citations & Verification (Quality Metrics)
                 const citDiv = document.getElementById('citations');
-                renderMetrics('With Citations', data.answers_with_citations_total || 0, citDiv);
+                renderMetrics('Answers with Citations (count)', data.answers_with_citations_total || 0, citDiv);
+                renderMetrics('Generated Answers (count)', data.generated_answers_total || 0, citDiv);
                 if (typeof data.answers_using_external_data_total === 'number') {
-                    renderMetrics('Using External Data', data.answers_using_external_data_total, citDiv);
+                    renderMetrics('Using External Data (count)', data.answers_using_external_data_total, citDiv);
                 }
                 if (data.quality) {
-                    renderMetrics('Verify Pass Rate', (data.quality.verify_pass_rate || 0).toFixed(3), citDiv);
+                    renderMetrics('Verification Pass Rate (%)', ((data.quality.verify_pass_rate || 0) * 100).toFixed(1), citDiv);
                     if (typeof data.quality.verify_fail_rate === 'number') {
-                        renderMetrics('Verify Fail Rate', data.quality.verify_fail_rate.toFixed(3), citDiv);
+                        renderMetrics('Verification Fail Rate (%)', (data.quality.verify_fail_rate * 100).toFixed(1), citDiv);
                     }
-                    renderMetrics('Citation Coverage', (data.quality.citation_coverage || 0).toFixed(3), citDiv);
+                    renderMetrics('Citation Coverage (%)', ((data.quality.citation_coverage || 0) * 100).toFixed(1), citDiv);
                     if (typeof data.quality.clarification_efficacy === 'number') {
-                        renderMetrics('Clarification Efficacy', data.quality.clarification_efficacy.toFixed(3), citDiv);
+                        renderMetrics('Clarification Success (%)', (data.quality.clarification_efficacy * 100).toFixed(1), citDiv);
+                    }
+                    
+                    // Add verify scores
+                    if (data.quality.verify_scores) {
+                        const scores = data.quality.verify_scores;
+                        if (scores.relevance) renderMetrics('Avg Relevance Score', scores.relevance.avg.toFixed(2), citDiv);
+                        if (scores.grounding) renderMetrics('Avg Grounding Score', scores.grounding.avg.toFixed(2), citDiv);
+                        if (scores.coherence) renderMetrics('Avg Coherence Score', scores.coherence.avg.toFixed(2), citDiv);
+                        if (scores.context_consistency) renderMetrics('Avg Context Score', scores.context_consistency.avg.toFixed(2), citDiv);
                     }
                 }
                 if (data.verify_fails && Object.keys(data.verify_fails).length > 0) {
-                    renderMetrics('Verify Fails', data.verify_fails, citDiv);
+                    for (const [reason, count] of Object.entries(data.verify_fails)) {
+                        if (!reason.includes('/metrics') && !reason.includes('/why')) {
+                            citDiv.innerHTML += `<div class="metric"><span class="metric-name">Fail: ${reason.substring(0, 30)}... (count)</span><span class="metric-value">${count}</span></div>`;
+                        }
+                    }
                 }
 
-                // External Requests
+                // External Requests (Performance Metrics)
                 const extDiv = document.getElementById('external');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     data.external_requests.targets.forEach(target => {
-                        const tr = (typeof target.timeout_rate === 'number') ? `, timeout ${(target.timeout_rate*100).toFixed(1)}%` : '';
-                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target}</span><span class="metric-value">${target.total} (${target.latency.avg_ms}ms avg${tr})</span></div>`;
+                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Requests (count)</span><span class="metric-value">${target.total}</span></div>`;
+                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Avg Latency (ms)</span><span class="metric-value">${target.latency.avg_ms.toFixed(1)}</span></div>`;
+                        if (typeof target.timeout_rate === 'number') {
+                            extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Timeout Rate (%)</span><span class="metric-value">${(target.timeout_rate * 100).toFixed(1)}</span></div>`;
+                        }
                     });
                 } else {
                     extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external requests yet</span><span class="metric-value">-</span></div>';
                 }
 
-                // Performance
+                // Performance (Quantitative)
                 const perfDiv = document.getElementById('perf');
                 if (data.performance && data.performance.e2e_latency_ms) {
-                    renderMetrics('E2E Avg (ms)', data.performance.e2e_latency_ms.avg_ms || 0, perfDiv);
-                    renderMetrics('E2E Min (ms)', data.performance.e2e_latency_ms.min_ms || 0, perfDiv);
-                    renderMetrics('E2E Max (ms)', data.performance.e2e_latency_ms.max_ms || 0, perfDiv);
-                    if (data.performance.e2e_latency_ms.buckets) {
-                        renderMetrics('Latency Buckets', data.performance.e2e_latency_ms.buckets, perfDiv);
+                    renderMetrics('Avg Response Time (ms)', data.performance.e2e_latency_ms.avg_ms || 0, perfDiv);
+                    renderMetrics('Min Response Time (ms)', data.performance.e2e_latency_ms.min_ms || 0, perfDiv);
+                    renderMetrics('Max Response Time (ms)', data.performance.e2e_latency_ms.max_ms || 0, perfDiv);
+                    renderMetrics('Total Requests (count)', data.performance.e2e_latency_ms.count || 0, perfDiv);
+                    if (data.performance.avg_tool_calls_per_conversation !== undefined) {
+                        renderMetrics('Avg Tools per Conversation', data.performance.avg_tool_calls_per_conversation.toFixed(2), perfDiv);
                     }
-                    if (typeof data.performance.tool_calls_per_turn === 'number') {
-                        renderMetrics('Tool Calls/Turn', data.performance.tool_calls_per_turn.toFixed(2), perfDiv);
+                    if (data.performance.total_tool_calls !== undefined) {
+                        renderMetrics('Total Tool Calls (count)', data.performance.total_tool_calls, perfDiv);
                     }
                 } else {
                     perfDiv.innerHTML = '<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value">No data</span></div>';
                 }
 
-                // Tools
+                // Tools (System Health)
                 const toolsDiv = document.getElementById('tools');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     const totals = data.external_requests.targets.reduce((acc, t) => acc + (t.total || 0), 0);
-                    renderMetrics('Total Tool Calls', totals, toolsDiv);
-                    data.external_requests.targets.forEach(t => {
-                        const rate = typeof t.timeout_rate === 'number' ? (t.timeout_rate * 100).toFixed(1) + '%' : 'n/a';
-                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${t.target} timeout</span><span class="metric-value">${rate}</span></div>`;
-                    });
-                } else {
+                    renderMetrics('Total Tool Calls (count)', totals, toolsDiv);
+                }
+                
+                // Circuit breaker status
+                if (data.breaker && data.breaker.byTarget) {
+                    for (const [target, status] of Object.entries(data.breaker.byTarget)) {
+                        const state = status.state === 'closed' ? '✓ Closed' : `⚠ ${status.state}`;
+                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Circuit</span><span class="metric-value ${status.state === 'closed' ? 'ok' : 'warn'}">${state}</span></div>`;
+                        if (status.failures > 0) {
+                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Failures (count)</span><span class="metric-value">${status.failures}</span></div>`;
+                        }
+                    }
+                }
+                
+                // Rate limiting
+                if (data.rate_limit && data.rate_limit.byTarget) {
+                    for (const [target, limits] of Object.entries(data.rate_limit.byTarget)) {
+                        if (limits.queued_current > 0) {
+                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Queued (count)</span><span class="metric-value">${limits.queued_current}</span></div>`;
+                        }
+                    }
+                }
+                
+                if (toolsDiv.innerHTML === '') {
                     toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">No tool data</span><span class="metric-value">-</span></div>';
                 }
 
@@ -768,14 +809,24 @@
                     alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${level}">${msg}</span><span class="metric-value"></span></div>`;
                 });
 
-                // Trends
+                // Trends & System Info
                 const trendsDiv = document.getElementById('trends');
+                
+                // System info
+                if (data.session_store_kind) {
+                    trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Session Store</span><span class="metric-value">${data.session_store_kind}</span></div>`;
+                }
+                if (data.session_ttl_sec) {
+                    trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Session TTL (sec)</span><span class="metric-value">${data.session_ttl_sec}</span></div>`;
+                }
+                
+                // Trends
                 pushHistory('e2e_avg_ms', e2eAvg);
                 pushHistory('fcr_rate', fcr);
                 pushHistory('verify_fail_rate', vfr);
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">FCR Rate</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Fail Rate</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">E2E Latency Trend</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">FCR Rate Trend</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
+                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Fail Rate Trend</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
 
             } catch (error) {
                 const statusEl = document.getElementById('status');

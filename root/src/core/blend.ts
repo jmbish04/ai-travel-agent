@@ -327,6 +327,20 @@ export async function handleChat(
           facts = result.citations.map((src, i) => ({ source: String(src), key: `citation_${i}`, value: 'source_only' }));
           ctx.log.debug({ synthesizedFacts: facts, citations: result.citations }, 'auto_verify_facts_synthesized');
         }
+        
+        // Debug: log what reply is being verified
+        ctx.log.debug({ 
+          replyLength: result.reply.length, 
+          replyPreview: result.reply.substring(0, 100) + '...',
+          factsCount: facts.length 
+        }, 'auto_verify_reply_debug');
+        
+        // Skip verification for technical commands only (allow IRROPS verification)
+        if (input.message.startsWith('/')) {
+          ctx.log.debug({ command: input.message }, 'skipping_verification_for_command');
+          return ChatOutput.parse({ reply: result.reply, threadId });
+        }
+        
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -351,7 +365,10 @@ export async function handleChat(
 
         // Apply routing on verdict
         if (lastAudit.verdict === 'fail') {
-          if (lastAudit.revisedAnswer) {
+          // Don't rewrite IRROPS responses - they have structured format
+          if (input.route.intent === 'irrops') {
+            ctx.log.debug({ intent: input.route.intent }, 'preserving_irrops_structured_output');
+          } else if (lastAudit.revisedAnswer) {
             verifiedReply = lastAudit.revisedAnswer;
           } else {
             verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
@@ -604,7 +621,7 @@ export async function blendWithFacts(
     if (input.route.intent === 'weather') {
       ctx.onStatus?.('Checking weather data...');
       const wx = await getWeather({
-        city: cityHint,
+        city: cityHint || 'Unknown',
         datesOrMonth: whenHint || 'today',
       });
       if (wx.ok) {
@@ -642,7 +659,7 @@ export async function blendWithFacts(
     } else if (input.route.intent === 'packing') {
       ctx.onStatus?.('Preparing packing recommendations...');
       const wx = await getWeather({
-        city: cityHint,
+        city: cityHint || 'Unknown',
         datesOrMonth: whenHint || 'today',
       });
       if (wx.ok) {
@@ -746,36 +763,7 @@ export async function blendWithFacts(
         // Use destinations catalog for new recommendations with dates
         ctx.onStatus?.('Finding destinations...');
         ctx.log.debug({ intent: input.route.intent, slots: input.route.slots }, 'destinations_block_entered');
-        try {
-          const { recommendDestinations } = await import('../tools/destinations.js');
-          ctx.log.debug('destinations_function_imported');
-          const destinationFacts = await recommendDestinations(input.route.slots);
-          ctx.log.debug({ factsCount: destinationFacts.length }, 'destinations_function_called');
-        
-        if (destinationFacts.length > 0) {
-          cits.push('Catalog+REST Countries');
-          const destinations = destinationFacts.map(f => 
-            `${f.value.city}, ${f.value.country} (${f.value.tags.climate}, ${f.value.tags.budget} budget, family-friendly: ${f.value.tags.family_friendly ? 'yes' : 'no'})`
-          ).join('; ');
-          facts += `DESTINATION OPTIONS: ${destinations}\n`;
-          factsArr.push(...destinationFacts);
-          decisions.push(createDecision(
-            'Filtered destinations catalog by month/profile',
-            'User requested destination recommendations, so filtered catalog by travel month and profile preferences with factual anchors from REST Countries API',
-            ['Use web search only', 'Generic recommendations'],
-            0.9
-          ));
-          ctx.log.debug({ destinationCount: destinationFacts.length, destinations }, 'destinations_facts_added');
-        }
-      } catch (e) {
-        ctx.log.debug({ error: e }, 'destinations_catalog_failed');
-        decisions.push(createDecision(
-          'Destinations catalog unavailable',
-          'Destinations catalog lookup failed due to API error, so falling back to generic travel guidance',
-          ['Use web search instead', 'Skip recommendations'],
-          0.6
-        ));
-      }
+
       }
       
       // Get weather for origin city (use originCity if available, fallback to city)
@@ -894,7 +882,8 @@ export async function blendWithFacts(
   ctx.onStatus?.('Preparing your response...');
   
   // For complex cases that need narrative generation, use batched LLM
-  if (plan.style === 'narrative' || input.route.intent === 'destinations') {
+  // Skip narrative rewriting for IRROPS - it has structured output
+  if (plan.style === 'narrative' && input.route.intent !== 'irrops') {
     const systemMd = await getPrompt('system');
     const blendMd = await getPrompt('blend');
     const cotMd = await getPrompt('cot');

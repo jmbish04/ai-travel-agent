@@ -45,7 +45,7 @@ export async function summarizeSearch(
     }
     
     // Always add sources section with URLs, regardless of what LLM generated
-    const sourcesBlock = ['Sources:', ...formattedResults.slice(0, 5).map(r => `${r.id}. ${r.title} - ${r.url}`)].join('\n');
+    const sourcesBlock = ['Sources:', ...formattedResults.map(r => `${r.id}. ${r.title} - ${r.url}`)].join('\n');
     
     // Remove any existing Sources section from LLM response to avoid duplication
     const cleanedResponse = sanitized.replace(/Sources:\s*[\s\S]*$/i, '').trim();
