@@ -7,7 +7,7 @@ const logger = pino({ name: 'DestinationEngine' });
 // This is a placeholder for the DestinationEngine.
 // The full implementation will use AWS Step Functions.
 
-// List of countries to exclude from recommendations (war zones, extremely unsafe, etc.)
+// List of countries to exclude from recommendations (war zones, extremely unsafe, unrecognized states, etc.)
 const EXCLUDED_COUNTRIES = [
   'Afghanistan',
   'North Korea',
@@ -16,7 +16,12 @@ const EXCLUDED_COUNTRIES = [
   'Yemen',
   'Somalia',
   'South Sudan',
-  'Central African Republic'
+  'Central African Republic',
+  'Palestine',
+  'Libya',
+  'Mali',
+  'Burkina Faso',
+  'Niger'
 ];
 
 export class DestinationEngine {

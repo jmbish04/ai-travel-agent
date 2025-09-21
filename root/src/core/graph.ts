@@ -497,18 +497,40 @@ async function destinationsNode(
     
     if (destinations.length > 0) {
       // Use LLM to create a better summary with grouping and interactive suggestions
-      const destinationList = destinations.map((d: any) => 
-        `${d.name.common}, ${d.capital ? d.capital[0] : ''}, ${d.subregion || d.region}`
-      ).join('\n');
+      const destinationList = destinations.map((d: any) => {
+        const capital = d.capital ? d.capital[0] : 'N/A';
+        const subregion = d.subregion || d.region;
+        const population = d.population ? `${Math.round(d.population / 1000000)}M people` : '';
+        return `${d.name.common}, ${capital} (${subregion}${population ? `, ${population}` : ''})`;
+      }).join('\n');
       
       // Get the summarizer prompt
       const summarizerPrompt = await getPrompt('destination_summarizer');
       const prompt = summarizerPrompt.replace('{destinations}', destinationList);
       
-      // Call LLM for summarization
-      const summary = await callLLM(prompt, { log: logger.log });
+      // Debug: log the full prompt being sent to LLM
+      logger.log?.debug({ 
+        promptLength: prompt.length, 
+        destinationCount: destinations.length,
+        promptPreview: prompt.substring(0, 200) + '...'
+      }, 'destination_summarizer_prompt_debug');
       
-      const reply = "Based on your preferences, here are some recommended destinations:\n\n" + summary;
+      // Call LLM for summarization with JSON format
+      const summary = await callLLM(prompt, { responseFormat: 'json', log: logger.log });
+      
+      // Parse and format the JSON response
+      let formattedSummary;
+      try {
+        const parsed = JSON.parse(summary);
+        formattedSummary = parsed.regions.map((region: any) => 
+          `## ${region.name}\n${region.description}`
+        ).join('\n\n') + '\n\n> "' + parsed.interactive_suggestion + '"';
+      } catch (e) {
+        logger.log?.warn({ error: e, summary }, 'destination_summarizer_json_parse_failed');
+        formattedSummary = summary; // fallback to raw response
+      }
+      
+      const reply = "Based on your preferences, here are some recommended destinations:\n\n" + formattedSummary;
       const citations = ['REST Countries API'];
       
       const facts = [{ source: 'REST Countries API', key: 'destinations_list', value: destinationList }];

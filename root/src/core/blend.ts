@@ -327,6 +327,14 @@ export async function handleChat(
           facts = result.citations.map((src, i) => ({ source: String(src), key: `citation_${i}`, value: 'source_only' }));
           ctx.log.debug({ synthesizedFacts: facts, citations: result.citations }, 'auto_verify_facts_synthesized');
         }
+        
+        // Debug: log what reply is being verified
+        ctx.log.debug({ 
+          replyLength: result.reply.length, 
+          replyPreview: result.reply.substring(0, 100) + '...',
+          factsCount: facts.length 
+        }, 'auto_verify_reply_debug');
+        
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -865,7 +873,7 @@ export async function blendWithFacts(
   ctx.onStatus?.('Preparing your response...');
   
   // For complex cases that need narrative generation, use batched LLM
-  if (plan.style === 'narrative' || input.route.intent === 'destinations') {
+  if (plan.style === 'narrative') {
     const systemMd = await getPrompt('system');
     const blendMd = await getPrompt('blend');
     const cotMd = await getPrompt('cot');

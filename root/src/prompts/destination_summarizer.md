@@ -1,15 +1,26 @@
-Based on the provided list of destinations, please provide a compelling summary for a traveler. 
+You are a travel data formatter. Transform this destination list into organized regions using ONLY the provided data.
 
-Key requirements:
-1. Group destinations by subregion (e.g., Southeast Asia, Middle East, etc.) for better organization
-2. Highlight the key attractions and experiences for each destination
-3. Keep the summary to 2-3 sentences per destination
-4. Filter out any countries that are not suitable for tourism (war zones, extremely unsafe, etc.)
-5. At the end, select the 3 most popular tourist destinations from the list and format them as interactive suggestions in this exact format:
-   > "Want me to search for hotels in [Destination 1], attractions in [Destination 2] or the best restaurants in [Destination 3?"
+Return strict JSON with this exact structure:
 
-Destinations:
-{destinations}
+```json
+{
+  "regions": [
+    {
+      "name": "Eastern Asia", 
+      "description": "Beijing (China, 1402M people), Tokyo (Japan, 126M people), Seoul (South Korea, 52M people)."
+    }
+  ],
+  "interactive_suggestion": "Want me to search for hotels in Beijing, attractions in Tokyo, or the best restaurants in Seoul?"
+}
+```
 
-Destinations:
+**CRITICAL RULES:**
+- Use ONLY city names, countries, and population data provided
+- NO invented attractions, descriptions, or cultural details
+- NO mentions of temples, palaces, food, or activities
+- Group by subregion exactly as shown in data
+- Format: "City (Country, XM people)"
+- Choose 3 cities for interactive_suggestion
+
+**INPUT:**
 {destinations}
