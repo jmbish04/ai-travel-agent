@@ -335,7 +335,7 @@ export async function handleChat(
           factsCount: facts.length 
         }, 'auto_verify_reply_debug');
         
-        // Skip verification for technical commands
+        // Skip verification for technical commands only (allow IRROPS verification)
         if (input.message.startsWith('/')) {
           ctx.log.debug({ command: input.message }, 'skipping_verification_for_command');
           return ChatOutput.parse({ reply: result.reply, threadId });
@@ -365,7 +365,10 @@ export async function handleChat(
 
         // Apply routing on verdict
         if (lastAudit.verdict === 'fail') {
-          if (lastAudit.revisedAnswer) {
+          // Don't rewrite IRROPS responses - they have structured format
+          if (input.route.intent === 'irrops') {
+            ctx.log.debug({ intent: input.route.intent }, 'preserving_irrops_structured_output');
+          } else if (lastAudit.revisedAnswer) {
             verifiedReply = lastAudit.revisedAnswer;
           } else {
             verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
@@ -879,7 +882,8 @@ export async function blendWithFacts(
   ctx.onStatus?.('Preparing your response...');
   
   // For complex cases that need narrative generation, use batched LLM
-  if (plan.style === 'narrative') {
+  // Skip narrative rewriting for IRROPS - it has structured output
+  if (plan.style === 'narrative' && input.route.intent !== 'irrops') {
     const systemMd = await getPrompt('system');
     const blendMd = await getPrompt('blend');
     const cotMd = await getPrompt('cot');

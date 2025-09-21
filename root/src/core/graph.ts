@@ -850,11 +850,34 @@ async function irropsNode(
     const citations = options.flatMap(opt => opt.citations).slice(0, 3);
     
     // Store receipts for the IRROPS response
-    const facts = options.flatMap((opt, i) => opt.citations.map((cit, j) => ({
-      source: cit,
-      key: `irrops_option_${i}_citation_${j}`,
-      value: `Alternative flight option ${i + 1}`
-    })));
+    const facts = options.flatMap((opt, i) => [
+      ...opt.citations.map((cit, j) => ({
+        source: cit,
+        key: `irrops_option_${i}_citation_${j}`,
+        value: `Alternative flight option ${i + 1}`
+      })),
+      // Add detailed option data as facts
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_price`,
+        value: `Additional cost: $${opt.priceChange.amount} ${opt.priceChange.currency}`
+      },
+      {
+        source: 'IRROPS Engine', 
+        key: `irrops_option_${i}_confidence`,
+        value: `Confidence: ${Math.round(opt.confidence * 100)}%`
+      },
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_rules`,
+        value: `Rules: ${opt.rulesApplied.join(', ')}`
+      },
+      {
+        source: 'IRROPS Engine',
+        key: `irrops_option_${i}_route`,
+        value: `Route: ${opt.segments[0].flightNumber} ${opt.segments[0].origin}-${opt.segments[0].destination}`
+      }
+    ]);
     const decisions = [createDecision(
       `Processed flight disruption for ${pnr.recordLocator}`,
       `User reported cancellation of flight ${pnr.segments[0]?.carrier}${pnr.segments[0]?.flightNumber} from ${pnr.segments[0]?.origin} to ${pnr.segments[0]?.destination}`,
