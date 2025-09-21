@@ -8,7 +8,7 @@ export async function summarizeSearch(
   useLLM: boolean,
   ctx: { log: any },
 ): Promise<{ reply: string; citations: string[] }> {
-  if (!useLLM || results.length <= 2) {
+  if (!useLLM || results.length <= 1) {
     return formatSearchResultsDeterministic(results);
   }
 
@@ -44,12 +44,13 @@ export async function summarizeSearch(
       sanitized = truncated;
     }
     
-    const hasLinks = /https?:\/\//i.test(sanitized) || /Sources:/i.test(sanitized);
-    let finalText = sanitized;
-    if (!hasLinks) {
-      const sourcesBlock = ['Sources:', ...formattedResults.slice(0, 5).map(r => `${r.id}. ${r.title} - ${r.url}`)].join('\n');
-      finalText = `${sanitized}\n\n${sourcesBlock}`;
-    }
+    // Always add sources section with URLs, regardless of what LLM generated
+    const sourcesBlock = ['Sources:', ...formattedResults.slice(0, 5).map(r => `${r.id}. ${r.title} - ${r.url}`)].join('\n');
+    
+    // Remove any existing Sources section from LLM response to avoid duplication
+    const cleanedResponse = sanitized.replace(/Sources:\s*[\s\S]*$/i, '').trim();
+    
+    const finalText = `${cleanedResponse}\n\n${sourcesBlock}`;
     return {
       reply: finalText,
       citations: [getSearchCitation()]
@@ -63,15 +64,19 @@ function formatSearchResultsDeterministic(
   results: Array<{ title: string; url: string; description: string }>
 ): { reply: string; citations: string[] } {
   const topResults = results.slice(0, 3);
-  const formattedResults = topResults.map(result => {
+  const formattedResults = topResults.map((result, index) => {
     const cleanTitle = result.title.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/<[^>]*>/g, '');
     const cleanDesc = result.description.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/<[^>]*>/g, '');
-    const truncatedDesc = cleanDesc.slice(0, 100) + (cleanDesc.length > 100 ? '...' : '');
+    const truncatedDesc = cleanDesc.slice(0, 150) + (cleanDesc.length > 150 ? '...' : '');
     return `• ${cleanTitle} - ${truncatedDesc}`;
   }).join('\n');
   
+  const sourcesBlock = topResults.map((result, index) => 
+    `${index + 1}. ${result.title.replace(/<[^>]*>/g, '')} - ${result.url}`
+  ).join('\n');
+  
   return {
-    reply: `Based on web search results:\n\n${formattedResults}\n\nSources: ${getSearchCitation()}`,
+    reply: `Based on web search results:\n\n${formattedResults}\n\nSources:\n${sourcesBlock}`,
     citations: [getSearchCitation()]
   };
 }

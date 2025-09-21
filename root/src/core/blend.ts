@@ -61,8 +61,12 @@ function formatSearchResultsFallback(
     return `• ${cleanTitle} - ${truncatedDesc}`;
   }).join('\n');
   
+  const sourcesBlock = topResults.map((result, index) => 
+    `${index + 1}. ${result.title.replace(/<[^>]*>/g, '')} - ${result.url}`
+  ).join('\n');
+  
   return {
-    reply: `Based on web search results:\n\n${formattedResults}\n\nSources: ${getSearchCitation()}`,
+    reply: `Based on web search results:\n\n${formattedResults}\n\nSources:\n${sourcesBlock}`,
     citations: [getSearchCitation()]
   };
 }

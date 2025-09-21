@@ -426,9 +426,12 @@ export async function routeIntent({ message, threadId, logger }: {
 
   // 4) Single LLM call (router_llm) → intent + slots at once
   const prompt = (await getPrompt('router_llm')).replace('{message}', m).replace('{instructions}','');
+  logger?.log?.debug({ message: m, promptLength: prompt.length }, 'router_llm_call_start');
   const raw = await callLLM(prompt, { responseFormat:'json', log:logger?.log });
+  logger?.log?.debug({ rawResponse: raw, message: m }, 'router_llm_raw_response');
   const json = JSON.parse(raw);
   const llm = RouterResult.parse(json);
+  logger?.log?.debug({ parsedResult: llm, message: m }, 'router_llm_parsed_result');
 
   if (threadId) {
     const resetResult = await maybeResetContextForMessage({

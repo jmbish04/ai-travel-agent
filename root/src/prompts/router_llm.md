@@ -24,12 +24,16 @@ Intent Classification Rules:
 - `flights`: ANY flight-related query including "flights", "fly", "book flight", "airline", flight prices, flight schedules, flight booking, travel from X to Y with dates
 - `irrops`: Flight disruptions, cancellations, delays, rebooking requests, equipment changes, missed connections, "my flight was cancelled", "flight delayed", "need to rebook"
 - `policy`: Visa requirements, immigration rules, passport info, entry requirements, travel policies
-- `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests, and ANY hotel/accommodation/lodging query (e.g., "best hotels in Bangkok", "hotel near LAX", "accommodation in Tokyo")
+- `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests, ANY hotel/accommodation/lodging query (e.g., "best hotels in Bangkok", "hotel near LAX", "accommodation in Tokyo"), AND general information about specific places (e.g., "tell me about Paris", "what's Paris like?")
 - `system`: Questions about the AI assistant, consent responses, clarifications, app functionality
-- `destinations`: Travel destination recommendations, "where to go" questions
+- `destinations`: Travel destination recommendations, "where should I go" questions, asking for destination suggestions (NOT asking about specific places)
 - `weather`: Weather forecasts, climate information, temperature queries
 - `packing`: What to pack, clothing advice, luggage recommendations
 - `attractions`: Things to do, sightseeing, activities, tourist attractions
+
+Key Distinction:
+- "Where should I go?" or "Recommend destinations" → destinations intent
+- "Tell me about Paris" or "What's Paris like?" → web_search intent (for comprehensive city information)
 
 CRITICAL: Flight Intent Recognition
 - ANY mention of "flights", "fly", "flying", "book", "travel" with two cities = flights intent

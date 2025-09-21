@@ -20,10 +20,15 @@ Date extraction rules:
 Intent definitions:
 - weather: asking about weather conditions, temperature, forecast
 - packing: what to bring, clothes, items for travel
-- attractions: things to do, places to visit, activities
-- destinations: where to go, travel recommendations, general city information, "tell me about [city]", city overviews
+- attractions: specific requests for things to do, places to visit, activities ("attractions in Paris", "what to do in Paris")
+- destinations: asking for destination recommendations ("where should I go?", "recommend places to visit"), NOT asking about specific places
 - flights: flight search, booking, schedules, prices, airlines
-- unknown: unclear, unrelated, or insufficient information
+- unknown: unclear, unrelated, insufficient information, OR asking for general information about specific places ("tell me about Paris", "what's Paris like?", general city overviews)
+
+Key distinction:
+- "Where should I go?" or "Recommend destinations" → destinations intent
+- "What to do in Paris?" or "Paris attractions" → attractions intent  
+- "Tell me about Paris" or "What's Paris like?" → unknown intent (will use web search for comprehensive info)
 
 Explicit search mapping (Option A alignment):
 - If the message explicitly asks to search (e.g., "search for", "google", "look up", "find info") or requests live data (events, restaurants, hotels, safety, transport, prices, visas, flights), keep intent within the allowed set (usually "unknown" or the closest domain) and set needExternal=true.
