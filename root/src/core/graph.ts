@@ -27,8 +27,10 @@ import {
   normalizeSlots,
   readConsentState,
   writeConsentState,
-  getLastReceipts
+  getLastReceipts,
+  setLastReceipts
 } from './slot_memory.js';
+import { createDecision } from './receipts.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { getPrompt } from './prompts.js';
 import { detectLanguage } from './transformers-detector.js';
@@ -168,8 +170,13 @@ export async function runGraphTurn(
     
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
       ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_detected');
-      // Directly perform deep research for better search results
-      return await performDeepResearchNode(previousQuery, ctx, threadId);
+      // Deepen the user's current topic using their latest message + context,
+      // not the stale previousQuery, to avoid losing intent like "hotels".
+      const slotCtx = await getThreadSlots(threadId);
+      const optimizedCurrent = await optimizeSearchQuery(message, slotCtx, 'web_search', ctx.log);
+      // Persist the optimized query for continuity across turns
+      await updateThreadSlots(threadId, { last_search_query: optimizedCurrent }, []);
+      return await performDeepResearchNode(optimizedCurrent, ctx, threadId);
     }
   }
   
@@ -315,7 +322,15 @@ export async function runGraphTurn(
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
   }
-  
+  // Clarification resolved: if we previously had awaiting_* flags and now no missing slots
+  const hadAwaiting = Object.keys(prior || {}).some((k) => k.startsWith('awaiting_') && (prior as any)[k]);
+  if (hadAwaiting && intent) {
+    try {
+      const { incClarifyResolved } = await import('../util/metrics.js');
+      incClarifyResolved(intent);
+    } catch {}
+  }
+
   // Update slots and set intent
   await updateThreadSlots(threadId, slots, []);
   await setLastIntent(threadId, intent as any);
@@ -435,7 +450,17 @@ async function weatherNode(
     const result = await getWeather({ city });
     
     if (result.ok) {
-      return { done: true, reply: result.summary, citations: [result.source || 'Weather API'] };
+      const normalizedSource = (result.source || 'Open-Meteo').toString();
+      const facts = [{ source: normalizedSource, key: 'weather_summary', value: result.summary }];
+      const decisions = [createDecision(
+        'Used weather API for forecast',
+        `Retrieved weather for ${city} using Open-Meteo`,
+        ['Skip weather lookup', 'Use web search instead'],
+        0.95
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, result.summary);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'weather' }, 'receipts_written');
+      return { done: true, reply: result.summary, citations: [normalizedSource] };
     } else {
       return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${result.reason}` };
     }
@@ -465,6 +490,16 @@ async function destinationsNode(
       
       const reply = `Based on your preferences, here are some recommended destinations:\n\n${destinationList}`;
       const citations = ['AI-Enhanced Catalog', 'REST Countries API'];
+      
+      const facts = [{ source: 'AI-Enhanced Catalog', key: 'destinations_list', value: destinationList }];
+      const decisions = [createDecision(
+        'Recommended destinations from catalog',
+        'User asked for destinations; used curated catalog + REST Countries',
+        ['Skip destinations lookup', 'Use generic guidance'],
+        0.9
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, reply);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'destinations' }, 'receipts_written');
       
       return { done: true, reply, citations };
     }
@@ -534,6 +569,21 @@ async function attractionsNode(
       const sourceName = result.source === 'opentripmap' ? 'OpenTripMap' : getSearchCitation();
       const reply = `Here are some attractions in ${city}:\n\n${result.summary}\n\nSource: ${sourceName}`;
       const citations = result.source ? [sourceName] : [];
+      
+      const facts = [{
+        source: sourceName,
+        key: 'attractions_summary',
+        value: result.summary
+      }];
+      const decisions = [createDecision(
+        'Found attractions using OpenTripMap',
+        `Retrieved ${profile === 'kid_friendly' ? 'family-friendly ' : ''}attractions for ${city}`,
+        ['Fallback to web search', 'Skip attractions lookup'],
+        0.9
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, reply);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'attractions' }, 'receipts_written');
+      
       return { done: true, reply, citations };
     }
   } catch (error) {
@@ -577,6 +627,19 @@ async function flightsNode(
       });
 
       if (result.ok) {
+        const facts = [{
+          source: 'Amadeus',
+          key: 'flight_offers_summary',
+          value: result.summary
+        }];
+        const decisions = [createDecision(
+          'Searched live flight offers (Amadeus)',
+          `Queried ${mergedSlots.originCity}→${mergedSlots.destinationCity || mergedSlots.city} for ${departureDate}`,
+          ['Fallback to web results', 'Ask for different date'],
+          0.9
+        )];
+        await setLastReceipts(ctx.threadId, facts, decisions, result.summary);
+        logger.log?.debug({ wroteFacts: facts.length, node: 'flights' }, 'receipts_written');
         return { 
           done: true, 
           reply: result.summary, 
@@ -974,9 +1037,11 @@ async function performDeepResearchNode(
   threadId: string,
 ): Promise<NodeOut> {
   try {
-    const optimizedQuery = await optimizeSearchQuery(query, {}, 'destinations', ctx.log);
-    // Persist the optimized query so subsequent "search deeper/more" upgrades
-    // maintain topic continuity across turns without re-routing.
+    // Optimize with full slot context and a neutral web_search intent so
+    // location pronouns (e.g., "there") resolve to the active city.
+    const slotCtx = await getThreadSlots(threadId);
+    const optimizedQuery = await optimizeSearchQuery(query, slotCtx, 'web_search', ctx.log);
+    // Persist the optimized query so subsequent upgrades keep continuity.
     await updateThreadSlots(threadId, { last_search_query: optimizedQuery }, []);
     
     const { performDeepResearch } = await import('./deep_research.js');

@@ -230,7 +230,7 @@ export async function flightOffersGet(
       const response = await amadeus.shopping.flightOffersSearch.get(params);
       console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
       return response.data;
-    }, signal, 45000); // 30 seconds timeout
+    }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
     
     // Log successful result
     console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
@@ -303,7 +303,7 @@ export async function flightOffersPost(
       const amadeus = await getAmadeusClient();
       const response = await amadeus.shopping.flightOffersSearch.post(body);
       return response.data;
-    }, signal, 45000);
+    }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPost');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -332,7 +332,7 @@ export async function flightOffersPrice(
       
       const response = await amadeus.shopping.flightOffers.pricing.post(body);
       return response.data;
-    }, signal, 45000);
+    }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
   } catch (error) {
     const stdError = toStdError(error, 'flightOffersPrice');
     throw new Error(`${stdError.code}: ${stdError.message}`);
@@ -356,7 +356,7 @@ export async function seatmapsFromOffer(
       
       const response = await amadeus.shopping.seatmaps.post(body);
       return response.data;
-    }, signal, 45000);
+    }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
   } catch (error) {
     const stdError = toStdError(error, 'seatmapsFromOffer');
     throw new Error(`${stdError.code}: ${stdError.message}`);

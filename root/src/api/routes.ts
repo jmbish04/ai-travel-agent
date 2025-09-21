@@ -5,7 +5,7 @@ import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
 import { getPrometheusText, metricsMode, snapshot, incMessages, observeE2E, ingestEvent, startSession, resolveSession, incVerifyFail, incVerifyPass } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
-import { getLastReceipts } from '../core/slot_memory.js';
+import { getLastReceipts, getLastVerification } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
 
 export const router = (log: pino.Logger): Router => {
@@ -42,7 +42,28 @@ export const router = (log: pino.Logger): Router => {
       const lastReply = receiptsData.reply;
       const token_estimate = 400;
       const receipts = buildReceiptsSkeleton(facts, decisions, token_estimate);
-      // Self-check second pass
+      // Prefer stored auto-verify artifact when enabled
+      const auto = process.env.AUTO_VERIFY_REPLIES === 'true';
+      if (auto) {
+        try {
+          const artifact = await getLastVerification(out.threadId);
+          if (artifact) {
+            const merged = {
+              ...receipts,
+              selfCheck: { verdict: artifact.verdict, notes: artifact.notes || [], scores: artifact.scores }
+            };
+            const safe = ReceiptsSchema.parse(merged);
+            const response = {
+              ...out,
+              reply: out.reply,
+              sources: receipts.sources,
+              receipts: safe
+            };
+            return res.json(ChatOutput.parse(response));
+          }
+        } catch {}
+      }
+      // Self-check second pass (fallback when no artifact)
       try {
         const audit = await verifyAnswer({
           reply: lastReply ?? out.reply,
@@ -58,7 +79,7 @@ export const router = (log: pino.Logger): Router => {
         }
         const merged = {
           ...receipts,
-          selfCheck: { verdict: audit.verdict, notes: audit.notes }
+          selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores }
         };
         let finalReply = out.reply;
         if (audit.verdict === 'fail' && audit.revisedAnswer) {

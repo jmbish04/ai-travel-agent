@@ -14,7 +14,7 @@ import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic } from './router.optimizers.js';
 import type pino from 'pino';
-import { incTurn, incRouterLowConf, noteTurn } from '../util/metrics.js';
+import { incTurn, incRouterLowConf, noteTurn, observeRouterConfidence } from '../util/metrics.js';
 import { classifyConsentResponse } from './consent.js';
 import { assessQueryComplexity } from './complexity.js';
 
@@ -195,9 +195,17 @@ async function maybeResetContextForMessage(params: {
   }
 
   const newLocation = getPrimaryLocation(freshSlots);
+  
+  // Check if only origin was added/changed and destination exists in prior context
+  const priorDest = sanitizedSlots.destinationCity || sanitizedSlots.city;
+  const newDest = freshSlots.destinationCity || freshSlots.city;
+  const onlyOriginChanged = freshSlots.originCity && !newDest && !!priorDest;
 
   if (previousLocation && newLocation) {
-    if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
+    if (onlyOriginChanged) {
+      // Don't reset if only origin was added and we have a prior destination
+      reset = false;
+    } else if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
       reset = true;
       reason = 'new_location';
     }
@@ -368,6 +376,7 @@ export async function routeIntent({ message, threadId, logger }: {
       const result = RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
       // metrics
       incTurn(result.intent);
+      try { observeRouterConfidence(result.confidence); } catch {}
       if (threadId) noteTurn(threadId, result.intent);
       return result;
     }
@@ -409,6 +418,7 @@ export async function routeIntent({ message, threadId, logger }: {
     }
     const r = RouterResult.parse(tfm);
     incTurn(r.intent);
+    try { observeRouterConfidence(r.confidence); } catch {}
     if (r.confidence < 0.6) incRouterLowConf(r.intent);
     if (threadId) noteTurn(threadId, r.intent);
     return r;
@@ -416,9 +426,12 @@ export async function routeIntent({ message, threadId, logger }: {
 
   // 4) Single LLM call (router_llm) → intent + slots at once
   const prompt = (await getPrompt('router_llm')).replace('{message}', m).replace('{instructions}','');
+  logger?.log?.debug({ message: m, promptLength: prompt.length }, 'router_llm_call_start');
   const raw = await callLLM(prompt, { responseFormat:'json', log:logger?.log });
+  logger?.log?.debug({ rawResponse: raw, message: m }, 'router_llm_raw_response');
   const json = JSON.parse(raw);
   const llm = RouterResult.parse(json);
+  logger?.log?.debug({ parsedResult: llm, message: m }, 'router_llm_parsed_result');
 
   if (threadId) {
     const resetResult = await maybeResetContextForMessage({
@@ -479,6 +492,30 @@ export async function routeIntent({ message, threadId, logger }: {
     logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
   }
 
+  // 7) AI-first correction pass using nlp_intent_detection prompt when low confidence/unknown
+  if (llmNormalized.confidence < 0.6 || llmNormalized.intent === 'unknown') {
+    try {
+      const { classifyIntent } = await import('./llm.js');
+      const det = await classifyIntent(m, ctxSlots, logger?.log);
+      if (det && det.confidence >= 0.75 && det.intent !== 'unknown') {
+        const corrected = RouterResult.parse({
+          intent: det.intent,
+          needExternal: det.needExternal,
+          slots: normalizeSlots(ctxSlots, (det.slots as Record<string, string>) || {}, det.intent),
+          confidence: det.confidence,
+        });
+        incTurn(corrected.intent);
+        try { observeRouterConfidence(corrected.confidence); } catch {}
+        if (corrected.confidence < 0.6) incRouterLowConf(corrected.intent);
+        if (threadId) noteTurn(threadId, corrected.intent);
+        logger?.log?.debug({ intent: corrected.intent, confidence: corrected.confidence }, 'router_final_result');
+        return corrected;
+      }
+    } catch (e) {
+      logger?.log?.debug({ error: String(e) }, 'nlp_intent_detection_correction_failed');
+    }
+  }
+
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
   if (['system','policy'].includes(llmNormalized.intent)) {
     clearConsentState(threadId);
@@ -497,6 +534,7 @@ export async function routeIntent({ message, threadId, logger }: {
   }
   // metrics
   incTurn(llmNormalized.intent);
+  try { observeRouterConfidence(llmNormalized.confidence); } catch {}
   if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);
   if (threadId) noteTurn(threadId, llmNormalized.intent);
   return llmNormalized;
