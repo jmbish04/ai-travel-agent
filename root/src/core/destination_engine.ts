@@ -7,6 +7,18 @@ const logger = pino({ name: 'DestinationEngine' });
 // This is a placeholder for the DestinationEngine.
 // The full implementation will use AWS Step Functions.
 
+// List of countries to exclude from recommendations (war zones, extremely unsafe, etc.)
+const EXCLUDED_COUNTRIES = [
+  'Afghanistan',
+  'North Korea',
+  'Syria',
+  'Iraq',
+  'Yemen',
+  'Somalia',
+  'South Sudan',
+  'Central African Republic'
+];
+
 export class DestinationEngine {
   static async getRecommendations(preferences: any) {
     logger.info('DestinationEngine.getRecommendations called with:', preferences);
@@ -21,7 +33,18 @@ export class DestinationEngine {
         count: result.length, 
         sample: result.slice(0, 2) 
       });
-      return result;
+      
+      // Filter out excluded countries
+      const filteredResult = result.filter((country: any) => 
+        !EXCLUDED_COUNTRIES.includes(country.name.common)
+      );
+      
+      logger.info('DestinationEngine filtered result:', { 
+        originalCount: result.length,
+        filteredCount: filteredResult.length
+      });
+      
+      return filteredResult;
     } catch (error: any) {
       logger.error('DestinationEngine fetchCountriesByRegion error:', {
         error: error.message,

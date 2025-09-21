@@ -97,7 +97,7 @@ function mergeSlots(target: Record<string, string>, source?: Record<string, stri
   return target;
 }
 
-async function detectIntentAndSlots(
+export async function detectIntentAndSlots(
   text: string,
   context?: Record<string, any>,
   logger?: pino.Logger,

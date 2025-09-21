@@ -14,6 +14,7 @@ Guidelines:
   - `city`: expand common abbreviations (e.g., NYC → New York City, LA → Los Angeles)
   - `originCity`: departure city for flights (e.g., "Tel Aviv", "New York City")
   - `destinationCity`: arrival city for flights (e.g., "Moscow", "Paris")
+  - `region`: geographic region for destination recommendations (e.g., "Asia", "Europe", "North America")
   - `month`: full month name (e.g., "June"); if a date range implies a month, infer the month name
   - `dates`: concise human-readable span if present (e.g., "2025-06-12 to 2025-06-18" or "June 2025" or "today")
   - `travelerProfile`: short phrase like "family with kids", "solo traveler", "couple", "business"
@@ -69,7 +70,7 @@ Output schema (strict JSON only):
 {
   "intent": "destinations|packing|attractions|weather|flights|irrops|policy|web_search|system|unknown",
   "needExternal": true|false,
-  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "month": "...", "dates": "...", "travelerProfile": "..."},
+  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "region": "...", "month": "...", "dates": "...", "travelerProfile": "..."},
   "confidence": 0..1
 }
 
@@ -136,6 +137,9 @@ Output: {"intent":"flights","needExternal":true,"slots":{"originCity":"New York 
 
 Input: "Passport requirements for Thailand"
 Output: {"intent":"policy","needExternal":true,"slots":{"city":"Thailand"},"confidence":0.90}
+
+Input: "recommend some destinations in Asia"
+Output: {"intent":"destinations","needExternal":true,"slots":{"region":"Asia"},"confidence":0.90}
 
 Input: "Where to go from Tel Aviv in August?"
 Output: {"intent":"destinations","needExternal":true,"slots":{"city":"Tel Aviv","month":"August","dates":"August"},"confidence":0.85}
