@@ -569,6 +569,21 @@ async function attractionsNode(
       const sourceName = result.source === 'opentripmap' ? 'OpenTripMap' : getSearchCitation();
       const reply = `Here are some attractions in ${city}:\n\n${result.summary}\n\nSource: ${sourceName}`;
       const citations = result.source ? [sourceName] : [];
+      
+      const facts = [{
+        source: sourceName,
+        key: 'attractions_summary',
+        value: result.summary
+      }];
+      const decisions = [createDecision(
+        'Found attractions using OpenTripMap',
+        `Retrieved ${profile === 'kid_friendly' ? 'family-friendly ' : ''}attractions for ${city}`,
+        ['Fallback to web search', 'Skip attractions lookup'],
+        0.9
+      )];
+      await setLastReceipts(ctx.threadId, facts, decisions, reply);
+      logger.log?.debug({ wroteFacts: facts.length, node: 'attractions' }, 'receipts_written');
+      
       return { done: true, reply, citations };
     }
   } catch (error) {
