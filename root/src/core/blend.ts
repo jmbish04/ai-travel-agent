@@ -1008,13 +1008,27 @@ function extractMonthOrDates(text: string): string | undefined {
 function parseTemps(
   summary: string,
 ): { maxC: number; minC: number } | undefined {
-  const m = summary.match(
+  // Try the new OpenMeteo format: "high of X°C and a low of Y°C"
+  let m = summary.match(
+    /high\s+of\s+(-?\d+(?:\.\d+)?)°C\s+and\s+a\s+low\s+of\s+(-?\d+(?:\.\d+)?)°C/i,
+  );
+  if (m) {
+    const maxC = Number(m[1]);
+    const minC = Number(m[2]);
+    return { maxC, minC };
+  }
+  
+  // Fallback to old format: "High X°C / Low Y°C"
+  m = summary.match(
     /High\s+(-?\d+(?:\.\d+)?)°C\s*\/\s*Low\s+(-?\d+(?:\.\d+)?)°C/i,
   );
-  if (!m) return undefined;
-  const maxC = Number(m[1]);
-  const minC = Number(m[2]);
-  return { maxC, minC };
+  if (m) {
+    const maxC = Number(m[1]);
+    const minC = Number(m[2]);
+    return { maxC, minC };
+  }
+  
+  return undefined;
 }
 
 function chooseBandFromTemps(
