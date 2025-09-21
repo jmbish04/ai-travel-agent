@@ -335,6 +335,12 @@ export async function handleChat(
           factsCount: facts.length 
         }, 'auto_verify_reply_debug');
         
+        // Skip verification for technical commands
+        if (input.message.startsWith('/')) {
+          ctx.log.debug({ command: input.message }, 'skipping_verification_for_command');
+          return ChatOutput.parse({ reply: result.reply, threadId });
+        }
+        
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),

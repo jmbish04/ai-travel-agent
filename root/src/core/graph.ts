@@ -849,6 +849,20 @@ async function irropsNode(
 
     const citations = options.flatMap(opt => opt.citations).slice(0, 3);
     
+    // Store receipts for the IRROPS response
+    const facts = options.flatMap((opt, i) => opt.citations.map((cit, j) => ({
+      source: cit,
+      key: `irrops_option_${i}_citation_${j}`,
+      value: `Alternative flight option ${i + 1}`
+    })));
+    const decisions = [createDecision(
+      `Processed flight disruption for ${pnr.recordLocator}`,
+      `User reported cancellation of flight ${pnr.segments[0]?.carrier}${pnr.segments[0]?.flightNumber} from ${pnr.segments[0]?.origin} to ${pnr.segments[0]?.destination}`,
+      ['Skip rebooking', 'Use web search instead'],
+      0.9
+    )];
+    await setLastReceipts(ctx.threadId, facts, decisions, reply);
+    
     return { done: true, reply, citations };
     
   } catch (error) {
