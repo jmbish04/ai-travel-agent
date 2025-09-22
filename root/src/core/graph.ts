@@ -28,7 +28,8 @@ import {
   readConsentState,
   writeConsentState,
   getLastReceipts,
-  setLastReceipts
+  setLastReceipts,
+  getLastUserMessage
 } from './slot_memory.js';
 import { createDecision } from './receipts.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
@@ -443,9 +444,30 @@ async function weatherNode(
     return { done: true, reply: 'Which city would you like weather information for?' };
   }
   
+  // Fallback slot extraction if month/dates not already extracted
+  let finalSlots = mergedSlots;
+  if (!mergedSlots.month && !mergedSlots.dates) {
+    try {
+      const { extractSlots } = await import('./parsers.js');
+      const lastMessage = await getLastUserMessage(ctx.threadId);
+      if (lastMessage) {
+        const extractedSlots = await extractSlots(lastMessage, mergedSlots, logger.log);
+        finalSlots = { ...mergedSlots, ...extractedSlots };
+        console.log(`🌍 WEATHER: Extracted additional slots:`, extractedSlots);
+      }
+    } catch (error) {
+      logger.log?.debug({ error: String(error) }, 'weather_slot_extraction_failed');
+    }
+  }
+  
   try {
     const { getWeather } = await import('../tools/weather.js');
-    const result = await getWeather({ city });
+    const result = await getWeather({ 
+      city,
+      month: finalSlots.month,
+      dates: finalSlots.dates,
+      datesOrMonth: finalSlots.datesOrMonth
+    });
     
     if (result.ok) {
       const normalizedSource = (result.source || 'Open-Meteo').toString();

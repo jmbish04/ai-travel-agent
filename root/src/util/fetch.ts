@@ -18,6 +18,7 @@ async function getFetch() {
 
 const ALLOWLIST = new Set<string>([
   'api.open-meteo.com',
+  'archive-api.open-meteo.com',
   'geocoding-api.open-meteo.com',
   'restcountries.com',
   'api.search.brave.com',
