@@ -13,7 +13,7 @@ export const amadeusLimiter = new Bottleneck({
 export async function withPolicies<T>(
   fn: () => Promise<T>, 
   signal?: AbortSignal, 
-  timeoutMs = 15000
+  timeoutMs = Number(process.env.AMADEUS_TIMEOUT_MS || 15000)
 ): Promise<T> {
   return withResilience('amadeus', fn, signal);
 }
