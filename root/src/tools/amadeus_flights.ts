@@ -229,11 +229,22 @@ export async function flightOffersGet(
       console.log('📡 Making Amadeus API call with params:', params);
       const response = await amadeus.shopping.flightOffersSearch.get(params);
       console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
+      if (!response.data || response.data.length === 0) {
+        console.log('🔍 Empty response details:', {
+          status: response.status,
+          headers: response.headers,
+          body: JSON.stringify(response.body || response, null, 2).slice(0, 1000)
+        });
+      }
       return response.data;
     }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
     
     // Log successful result
     console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
+    
+    // Check for warnings in the response
+    const responseBody = JSON.parse(response.body || '{}');
+    const warnings = responseBody.warnings || [];
     
     // Return in expected format for graph
     if (result && result.length > 0) {
@@ -269,6 +280,16 @@ ${result.length > 3 ? `\n...and ${result.length - 3} more options available.` : 
         offers: result,
         count: result.length,
         summary
+      };
+    }
+    
+    // Handle case with warnings but no results
+    if (warnings.length > 0) {
+      const warningDetails = warnings.map((w: any) => w.detail).join('; ');
+      return { 
+        ok: false, 
+        reason: 'incomplete_search',
+        message: `Flight search incomplete: ${warningDetails}. This may be due to limited test data availability.`
       };
     }
     

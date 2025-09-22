@@ -53,10 +53,10 @@ export async function updateThreadSlots(
   expectedMissing: string[] = [],
   remove: string[] = [],
 ): Promise<void> {
-  // Filter out null values
+  // Filter out null values but allow empty strings for clearing
   const filteredSlots: Record<string, string> = {};
   for (const [k, v] of Object.entries(slots)) {
-    if (typeof v === 'string' && v.trim().length > 0) {
+    if (typeof v === 'string') {
       filteredSlots[k] = v;
     }
   }
@@ -347,5 +347,6 @@ export async function writeConsentState(threadId: string, next: { type: 'web' | 
     updates.pending_web_search_query = next.pending;
   }
   
+  console.log(`🔧 CONSENT: writeConsentState called with type='${next.type}', updates:`, updates);
   await updateThreadSlots(threadId, updates, []);
 }

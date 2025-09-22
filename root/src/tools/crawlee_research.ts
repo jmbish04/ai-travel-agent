@@ -242,7 +242,7 @@ async function summarizePage(content: string, query: string): Promise<string> {
   const tpl = await getPrompt('crawlee_page_summary');
   const prompt = tpl
     .replace('{query}', query)
-    .replace('{content}', content.slice(0, 1500));
+    .replace('{content}', content.slice(0, 16000));
 
   try {
     const response = await callLLM(prompt);

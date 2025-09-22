@@ -673,6 +673,11 @@ async function flightsNode(
   const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
   
+  // Clear any previous Amadeus failure flags to allow retry
+  if (mergedSlots.amadeus_failed) {
+    await updateThreadSlots(ctx.threadId, { amadeus_failed: '' }, []);
+  }
+  
   // Try Amadeus API first
   try {
     const { searchFlights, convertToAmadeusDate } = await import('../tools/amadeus_flights.js');
@@ -718,6 +723,7 @@ async function flightsNode(
         };
       } else {
         // Amadeus returned no results or error → fallback to web with notice
+        await updateThreadSlots(ctx.threadId, { amadeus_failed: 'true' }, []);
         const converted = departureDate ? await convertToAmadeusDate(departureDate) : '';
         const query = `${mergedSlots.originCity} ${mergedSlots.destinationCity || mergedSlots.city} flights ${converted}`.trim();
         const web = await webSearchNode(ctx, { ...mergedSlots, search_query: query }, logger);
@@ -793,6 +799,10 @@ async function irropsNode(
       const futureDateTime = tomorrow.toISOString();
       const arrivalTime = new Date(tomorrow.getTime() + 3 * 60 * 60 * 1000).toISOString(); // +3 hours
       
+      // Extract flight number and carrier from slots
+      const flightNumber = mergedSlots.flightNumber || 'AA123';
+      const carrier = flightNumber.length >= 2 ? flightNumber.substring(0, 2) : 'AA';
+      
       // Mock PNR for testing - in production would require actual PNR data
       pnr = {
         recordLocator: mergedSlots.recordLocator || 'ABC123',
@@ -802,8 +812,8 @@ async function irropsNode(
           destination: mergedSlots.destinationCity || mergedSlots.city || 'LAX',
           departure: futureDateTime,
           arrival: arrivalTime,
-          carrier: 'AA',
-          flightNumber: 'AA123',
+          carrier: carrier,
+          flightNumber: flightNumber,
           cabin: 'Y',
           status: 'XX' // Cancelled
         }]

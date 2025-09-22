@@ -388,7 +388,8 @@ export class PolicyAgent {
       }
       
       // Try browser extraction on URLs - stop after first successful high-confidence result
-      for (const url of urlsToTry.slice(0, 3)) {
+      const maxLinksToCheck = parseInt(process.env.POLICY_DOMAIN_CHECK_LIMIT || '5', 10);
+      for (const url of urlsToTry.slice(0, maxLinksToCheck)) {
         // Skip PDF URLs as they can't be processed by Playwright
         if (url.toLowerCase().includes('.pdf')) {
           log?.debug({ url }, 'Skipping PDF URL - not supported by browser extraction');

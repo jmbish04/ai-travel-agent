@@ -70,7 +70,7 @@ Output schema (strict JSON only):
 {
   "intent": "destinations|packing|attractions|weather|flights|irrops|policy|web_search|system|unknown",
   "needExternal": true|false,
-  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "region": "...", "month": "...", "dates": "...", "travelerProfile": "..."},
+  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "region": "...", "month": "...", "dates": "...", "travelerProfile": "...", "flightNumber": "..."},
   "confidence": 0..1
 }
 
@@ -103,7 +103,7 @@ Input: "what to do there?"
 Output: {"intent":"attractions","needExternal":false,"slots":{},"confidence":0.40}
 
 Input: "My flight AA123 was cancelled, please help me rebook"
-Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"","destinationCity":""},"confidence":0.95}
+Output: {"intent":"irrops","needExternal":true,"slots":{"flightNumber":"AA123"},"confidence":0.95}
 
 Input: "Flight delayed 3 hours due to weather, need alternatives"
 Output: {"intent":"irrops","needExternal":true,"slots":{},"confidence":0.90}
@@ -174,4 +174,4 @@ Input: "What are the change fees for JetBlue flights? Get me the official policy
 Output: {"intent":"policy","needExternal":true,"slots":{"city":"JetBlue"},"confidence":0.92}
 
 Input: "My flight DL8718 from CDG to LHR was cancelled, please help me rebook"
-Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","dates":"today"},"confidence":0.93}
+Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","flightNumber":"DL8718","dates":"today"},"confidence":0.93}

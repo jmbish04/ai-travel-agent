@@ -30,8 +30,9 @@ export async function filterResultsByDomainAuthenticity(
   signal?: AbortSignal
 ): Promise<ScoredResult[]> {
   const scoredResults: ScoredResult[] = [];
+  const maxLinksToCheck = parseInt(process.env.POLICY_DOMAIN_CHECK_LIMIT || '5', 10);
   
-  for (const result of results) {
+  for (const result of results.slice(0, maxLinksToCheck)) {
     try {
       const domain = new URL(result.url).hostname;
       const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal);
