@@ -1,5 +1,5 @@
-import { createRedisStore, ping } from '../src/core/stores/redis.js';
-import type { SessionConfig } from '../src/config/session.js';
+import { createRedisStore, ping } from '../../src/core/stores/redis.js';
+import type { SessionConfig } from '../../src/config/session.js';
 
 // Skip Redis tests if no Redis URL provided
 const REDIS_URL = process.env.TEST_REDIS_URL || process.env.SESSION_REDIS_URL;

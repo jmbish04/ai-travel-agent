@@ -1,7 +1,7 @@
-import { loadSessionConfig } from '../src/config/session.js';
-import { createStore, initSessionStore, resetSessionStoreForTests } from '../src/core/session_store.js';
-import { getThreadSlots, updateThreadSlots } from '../src/core/slot_memory.js';
-import { pushMessage, getContext } from '../src/core/memory.js';
+import { loadSessionConfig } from '../../src/config/session.js';
+import { createStore, initSessionStore, resetSessionStoreForTests } from '../../src/core/session_store.js';
+import { getThreadSlots, updateThreadSlots } from '../../src/core/slot_memory.js';
+import { pushMessage, getContext } from '../../src/core/memory.js';
 
 // Skip Redis integration tests if no Redis URL provided
 const REDIS_URL = process.env.TEST_REDIS_URL || process.env.SESSION_REDIS_URL;
