@@ -366,8 +366,9 @@ export async function handleChat(
         // Apply routing on verdict
         if (lastAudit.verdict === 'fail') {
           // Don't rewrite IRROPS responses - they have structured format
-          if (input.route.intent === 'irrops') {
-            ctx.log.debug({ intent: input.route.intent }, 'preserving_irrops_structured_output');
+          const lastIntent = await getLastIntent(threadId);
+          if (lastIntent === 'irrops') {
+            ctx.log.debug({ intent: lastIntent }, 'preserving_irrops_structured_output');
           } else if (lastAudit.revisedAnswer) {
             verifiedReply = lastAudit.revisedAnswer;
           } else {
@@ -648,8 +649,8 @@ export async function blendWithFacts(
         
         return { reply, citations: [source] };
       } else {
-        ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
-        if (wx.reason === 'unknown_city') {
+        ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
+        if ('reason' in wx && wx.reason === 'unknown_city') {
           return { 
             reply: `I couldn't find weather data for "${cityHint}". Could you provide a valid city name?`, 
             citations: undefined 
@@ -667,9 +668,10 @@ export async function blendWithFacts(
         
         // Get packing items based on weather
         await loadPackingOnce();
-        const temps = parseTemps(wx.summary);
-        const band = chooseBandFromTemps(temps?.maxC, temps?.minC);
+        console.log(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
+        const band = chooseBandFromTemps(wx.maxC, wx.minC);
         const items = band ? PACKING[band] : [];
+        console.log(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
         
         // Use deterministic composer for packing
         const reply = composePackingReply(cityHint, whenHint, wx.summary, items, source);
@@ -695,7 +697,7 @@ export async function blendWithFacts(
         
         return { reply, citations: [source] };
       } else {
-        ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
+        ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
         // For packing, proceed with general guidance even if city lookup fails
       }
     } else if (input.route.intent === 'destinations') {
@@ -786,9 +788,9 @@ export async function blendWithFacts(
             0.8
           ));
         } else {
-          ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
+          ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
           // Handle unknown city specifically
-          if (wx.reason === 'unknown_city') {
+          if ('reason' in wx && wx.reason === 'unknown_city') {
             return { 
               reply: `I couldn't find weather data for "${originCity}". Could you provide a valid city name?`, 
               citations: undefined 
@@ -1008,26 +1010,31 @@ function extractMonthOrDates(text: string): string | undefined {
 function parseTemps(
   summary: string,
 ): { maxC: number; minC: number } | undefined {
-  // Try the new OpenMeteo format: "high of X°C and a low of Y°C"
+  console.log(`🌡️ PARSE_TEMPS: Input summary: "${summary}"`);
+  
+  // Try OpenMeteo format: "with a high of X°C and a low of Y°C"
   let m = summary.match(
     /high\s+of\s+(-?\d+(?:\.\d+)?)°C\s+and\s+a\s+low\s+of\s+(-?\d+(?:\.\d+)?)°C/i,
   );
   if (m) {
     const maxC = Number(m[1]);
     const minC = Number(m[2]);
+    console.log(`🌡️ PARSE_TEMPS: OpenMeteo format matched - maxC: ${maxC}, minC: ${minC}`);
     return { maxC, minC };
   }
   
-  // Fallback to old format: "High X°C / Low Y°C"
+  // Try legacy format: "High X°C / Low Y°C"
   m = summary.match(
     /High\s+(-?\d+(?:\.\d+)?)°C\s*\/\s*Low\s+(-?\d+(?:\.\d+)?)°C/i,
   );
   if (m) {
     const maxC = Number(m[1]);
     const minC = Number(m[2]);
+    console.log(`🌡️ PARSE_TEMPS: Legacy format matched - maxC: ${maxC}, minC: ${minC}`);
     return { maxC, minC };
   }
   
+  console.log(`🌡️ PARSE_TEMPS: No format matched, returning undefined`);
   return undefined;
 }
 

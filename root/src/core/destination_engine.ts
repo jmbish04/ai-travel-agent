@@ -26,11 +26,11 @@ const EXCLUDED_COUNTRIES = [
 
 export class DestinationEngine {
   static async getRecommendations(preferences: any) {
-    logger.info('DestinationEngine.getRecommendations called with:', preferences);
+    logger.info('DestinationEngine.getRecommendations called with: %o', preferences);
     
     // For now, we'll just fetch countries by region as a test.
     const region = preferences.region || preferences.city || 'Europe'; // Default to Europe
-    logger.info('DestinationEngine using region:', region);
+    logger.info('DestinationEngine using region: %s', region);
     
     try {
       const result: any = await fetchCountriesByRegion(region);

@@ -5,10 +5,59 @@ import { withBreaker, getBreaker, getBreakerStats } from '../util/circuit.js';
 import { scheduleWithLimit } from '../util/limiter.js';
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
-import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt } from '../schemas/policy.js';
+import { scoreDomainAuthenticity } from '../core/domain_authenticity.js';
+import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt, type DomainScore } from '../schemas/policy.js';
 import type { CheerioCrawlingContext } from 'crawlee';
 
 const SOURCE_CACHE = new Map<string, 'airline' | 'hotel' | 'visa' | 'generic'>();
+
+export interface SearchResult {
+  url: string;
+  title: string;
+  snippet: string;
+}
+
+export interface ScoredResult extends SearchResult {
+  domainScore: DomainScore;
+}
+
+/**
+ * Filter and rank search results by domain authenticity
+ */
+export async function filterResultsByDomainAuthenticity(
+  results: SearchResult[],
+  airlineName: string,
+  signal?: AbortSignal
+): Promise<ScoredResult[]> {
+  const scoredResults: ScoredResult[] = [];
+  
+  for (const result of results) {
+    try {
+      const domain = new URL(result.url).hostname;
+      const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal);
+      
+      scoredResults.push({
+        ...result,
+        domainScore
+      });
+    } catch (error) {
+      console.warn(`Failed to score domain for ${result.url}:`, error);
+      // Add with default low score
+      scoredResults.push({
+        ...result,
+        domainScore: {
+          domain: result.url,
+          confidence: 0.1,
+          reasoning: 'llm_classified',
+          isOfficial: false
+        }
+      });
+    }
+  }
+  
+  // Sort by domain authenticity score (highest first)
+  return scoredResults.sort((a, b) => b.domainScore.confidence - a.domainScore.confidence);
+}
 
 function escapeForPrompt(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -67,6 +116,7 @@ const PNG_MAX = 2_000_000;
 export async function extractPolicyClause(params: {
   url: string;
   clause: ClauseTypeT;
+  airlineName?: string;
   engine?: 'playwright' | 'cheerio';
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -80,12 +130,24 @@ export async function extractPolicyClause(params: {
     
     console.log(`🎯 Policy extraction: ${host} - Using Playwright ONLY (Crawlee disabled)`);
     
+    // Score domain authenticity if airline name provided
+    let domainScore: DomainScore | undefined;
+    if (params.airlineName) {
+      try {
+        const signal = AbortSignal.timeout(150);
+        domainScore = await scoreDomainAuthenticity(host, params.airlineName, signal);
+        console.log(`🏆 Domain authenticity: ${domainScore.confidence.toFixed(2)} (${domainScore.reasoning})`);
+      } catch (error) {
+        console.warn('Domain scoring failed:', error);
+      }
+    }
+    
     // Use only Playwright with advanced stealth - no Crawlee fallback
     return await scheduleWithLimit(host, async () => {
       try {
         return await withBreaker(host, async () => {
           try { incFallback('browser'); } catch {}
-          const result = await withPlaywright(url, params.clause, timeoutSecs);
+          const result = await withPlaywright(url, params.clause, timeoutSecs, domainScore);
           return PolicyReceiptSchema.parse(result);
         });
       } catch (error) {
@@ -101,7 +163,7 @@ export async function extractPolicyClause(params: {
         console.warn('policy_browser_breaker_bypass', { host, stats });
         try { (breaker as any).close?.(); } catch {}
         try { incFallback('browser'); } catch {}
-        const result = await withPlaywright(url, params.clause, timeoutSecs);
+        const result = await withPlaywright(url, params.clause, timeoutSecs, domainScore);
         return PolicyReceiptSchema.parse(result);
       }
     });
@@ -111,7 +173,7 @@ export async function extractPolicyClause(params: {
   }
 }
 
-async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: number) {
+async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: number, domainScore?: DomainScore) {
   const { chromium } = await import('playwright');
   
   const headless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
@@ -315,53 +377,85 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
     
     console.log(`🌐 Navigating to ${url} with full stealth`);
     
-    // Navigate with extended timeout
+    // Navigate with timeout
     await page.goto(url, { 
       timeout: timeoutSecs * 1000, 
-      waitUntil: 'domcontentloaded' 
+      waitUntil: 'domcontentloaded'
     });
     
-    // Wait for JavaScript SPA to load - comprehensive content detection
-    console.log('⏳ Waiting for content to fully load...');
-    await page.waitForTimeout(3000); // Initial wait
-    
-    // Smart content detection - wait for policy content specifically
-    try {
-      await page.waitForFunction(() => {
-        const text = document.body?.innerText ?? '';
-        return text.trim().length > 800;
-      }, { timeout: 15000 });
-      console.log('✅ Content loaded');
-    } catch {
-      console.log('⚠️ Timeout waiting for content, proceeding with current state');
+    // Wait longer for El Al's dynamic content
+    if (url.includes('elal.com')) {
+      console.log('🔒 El Al detected - using enhanced stealth');
+      await page.waitForTimeout(5000); // Longer wait for El Al
+      
+      // Try to bypass potential overlays/modals
+      try {
+        await page.evaluate(() => {
+          // Remove common overlay elements
+          const overlays = document.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], [id*="overlay"], [id*="modal"]');
+          overlays.forEach(el => el.remove());
+          
+          // Remove cookie banners
+          const cookies = document.querySelectorAll('[class*="cookie"], [class*="gdpr"], [class*="consent"]');
+          cookies.forEach(el => el.remove());
+        });
+      } catch {}
+      
+      // Multiple scroll attempts to trigger lazy loading
+      for (let i = 0; i < 3; i++) {
+        await page.mouse.wheel(0, 500);
+        await page.waitForTimeout(200);
+      }
+      
+      // Scroll back to top
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(500);
+    } else {
+      await page.waitForTimeout(1000);
+      
+      // Fast human behavior simulation
+      console.log('🤖 Fast human behavior simulation...');
+      await page.mouse.move(Math.random() * 1366, Math.random() * 768);
+      await page.waitForTimeout(50);
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(100);
     }
     
-    // Human-like behavior simulation (faster version)
-    console.log('🤖 Quick human behavior simulation...');
-    
-    // Quick mouse movements
-    for (let i = 0; i < 2; i++) {
-      const x = Math.random() * 1366;
-      const y = Math.random() * 768;
-      await page.mouse.move(x, y);
-      await page.waitForTimeout(100 + Math.random() * 200); // Faster
-    }
-    
-    // Quick scrolling
-    for (let i = 0; i < 2; i++) {
-      const scrollAmount = 200 + Math.random() * 300;
-      await page.mouse.wheel(0, scrollAmount);
-      await page.waitForTimeout(300 + Math.random() * 500); // Faster
-    }
-    
-    // Shorter final wait
-    await page.waitForTimeout(500 + Math.random() * 1000); // Much faster
-    
-    // Extract content
-    const fullText = await page.evaluate(() => document.body.innerText);
-    const title = await page.title();
-    
-    console.log(`📄 Extracted ${fullText.length} chars: "${title}"`);
+    // Extract content with multiple methods
+    const extractContent = async () => {
+      const fullText = await page.evaluate(() => {
+        const selectors = [
+          'main', 'article', '.content', '[class*="baggage"]', '[class*="policy"]', 
+          '[class*="carry"]', '[class*="cabin"]', '[class*="allowance"]',
+          'p', 'div', 'span', 'li', 'td', 'section'
+        ];
+        let text = '';
+        selectors.forEach(selector => {
+          try {
+            document.querySelectorAll(selector).forEach(el => {
+              if (el.textContent && el.textContent.trim().length > 10) {
+                text += ' ' + el.textContent.trim();
+              }
+            });
+          } catch (e) {}
+        });
+        
+        // Fallback to body text if selectors don't work
+        if (text.length < 100) {
+          text = document.body.innerText || document.body.textContent || '';
+        }
+        
+        return text.trim();
+      });
+      
+      const title = await page.title();
+      
+      console.log(`📄 Extracted ${fullText.length} chars: "${title}"`);
+      
+      return { fullText, title };
+    };
+
+    const { fullText, title } = await extractContent();
     
     const extractedClause = await extractClauseWithLLM(fullText, clause, url);
     
@@ -389,15 +483,20 @@ async function withPlaywright(url: string, clause: ClauseTypeT, timeoutSecs: num
       quote: extractedClause.quote,
       imgPath,
       confidence: extractedClause.confidence,
-      source: sourceCategory
+      source: sourceCategory,
+      domainAuthenticity: domainScore
     };
+    
+  } catch (error) {
+    console.error(`Policy extraction failed for ${url}:`, error);
+    throw error;
     
   } finally {
     await browser.close();
   }
 }
 
-async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) {
+async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number, domainScore?: DomainScore) {
   const { CheerioCrawler, createCheerioRouter } = await import('crawlee');
   let receipt: any | undefined;
   
@@ -421,7 +520,8 @@ async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) 
       capturedAt: new Date().toISOString(),
       quote: extractedClause.quote,
       confidence: extractedClause.confidence,
-      source: sourceCategory
+      source: sourceCategory,
+      domainAuthenticity: domainScore
     };
   });
   
@@ -451,7 +551,8 @@ async function withCheerio(url: string, clause: ClauseTypeT, timeoutMs: number) 
     capturedAt: new Date().toISOString(),
     quote: '',
     confidence: 0,
-    source: fallbackSource
+    source: fallbackSource,
+    domainAuthenticity: domainScore
   };
 }
 
@@ -464,8 +565,8 @@ async function extractClauseWithLLM(
   sourceUrl: string
 ): Promise<{ quote: string; confidence: number }> {
   try {
-    // Increase context window significantly - 32k tokens (~128k chars)
-    const truncatedText = fullText.slice(0, 8000);
+    // Increase context window significantly - use most of the 128k context
+    const truncatedText = fullText.slice(0, 80000);
     
     console.log(`🔍 LLM Extraction Debug:`);
     console.log(`- URL: ${sourceUrl}`);

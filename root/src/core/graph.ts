@@ -460,7 +460,7 @@ async function weatherNode(
       logger.log?.debug({ wroteFacts: facts.length, node: 'weather' }, 'receipts_written');
       return { done: true, reply: result.summary, citations: [normalizedSource] };
     } else {
-      return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${result.reason}` };
+      return { done: true, reply: `Sorry, I couldn't get weather information for ${city}. ${'reason' in result ? result.reason : 'Unknown error'}` };
     }
   } catch (error) {
     logger.log?.warn({ error: String(error), city }, 'weather_fetch_failed');
@@ -875,7 +875,7 @@ async function irropsNode(
       {
         source: 'IRROPS Engine',
         key: `irrops_option_${i}_route`,
-        value: `Route: ${opt.segments[0].flightNumber} ${opt.segments[0].origin}-${opt.segments[0].destination}`
+        value: `Route: ${opt.segments?.[0]?.flightNumber || 'N/A'} ${opt.segments?.[0]?.origin || 'N/A'}-${opt.segments?.[0]?.destination || 'N/A'}`
       }
     ]);
     const decisions = [createDecision(
@@ -906,7 +906,7 @@ async function policyNode(
     // Check if user wants receipts/citations
     const wantReceipts = /receipt|citation|proof|evidence|source/i.test(ctx.msg);
     
-    const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts);
+    const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts, slots);
     
     // Check if no results found or quality assessment suggests web search
     const noRelevantInfo = !citations.length || 

@@ -1,11 +1,7 @@
 import { VECTARA } from '../config/vectara.js';
 import { VectaraQueryResponse, VectaraQueryResponseT } from '../schemas/vectara.js';
 import { ExternalFetchError } from '../util/fetch.js';
-import { CircuitBreaker } from '../core/circuit-breaker.js';
-import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
-
-// Circuit breaker for Vectara API
-const vectaraCircuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_CONFIG, 'vectara');
+import { withResilience } from '../util/resilience.js';
 
 /**
  * TTL cache for Vectara query responses to reduce latency on repeated queries.
@@ -119,7 +115,7 @@ export class VectaraClient {
     const body = JSON.stringify(isV2 ? bodyV2 : bodyV1);
 
     try {
-      const response = await vectaraCircuitBreaker.execute(async () => {
+      const response = await withResilience('vectara', async () => {
         return await fetch(url, {
           method: 'POST',
           headers,
@@ -200,7 +196,7 @@ export class VectaraClient {
     };
 
     try {
-      const response = await vectaraCircuitBreaker.execute(async () => {
+      const response = await withResilience('vectara', async () => {
         return await fetch(url, {
           method: 'POST',
           headers: {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { getLastReceipts, setLastReceipts } from '../src/core/slot_memory.js';
+import { getLastReceipts, setLastReceipts } from '../../src/core/slot_memory.js';
 
 // Mock the slot memory functions
 jest.mock('../src/core/slot_memory.js', () => ({
@@ -30,7 +30,7 @@ describe('Receipt Persistence Fixes', () => {
       convertToAmadeusDate: jest.fn().mockResolvedValue('2025-09-22')
     }));
 
-    const { flightsNode } = await import('../src/core/graph.js');
+    const { flightsNode } = await import('../../src/core/graph.js');
     
     const ctx = {
       msg: 'Find flights from Berlin to Paris tomorrow',
@@ -77,7 +77,7 @@ describe('Receipt Persistence Fixes', () => {
   });
 
   it('should not reset context when only origin is added', async () => {
-    const { routeMessage } = await import('../src/core/router.js');
+    const { routeMessage } = await import('../../src/core/router.js');
     
     // Mock existing destination context
     const existingSlots = {

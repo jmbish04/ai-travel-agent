@@ -1,8 +1,8 @@
 import nock from 'nock';
-import { resolveCity, airportsForCity, searchLocations } from '../src/tools/amadeus_locations.js';
-import parisCity from './fixtures/amadeus/paris_cities.json';
-import parisAirports from './fixtures/amadeus/paris_airports.json';
-import tokenResponse from './fixtures/amadeus/token_response.json';
+import { resolveCity, airportsForCity, searchLocations } from '../../src/tools/amadeus_locations.js';
+import parisCity from '../fixtures/amadeus/paris_cities.json';
+import parisAirports from '../fixtures/amadeus/paris_airports.json';
+import tokenResponse from '../fixtures/amadeus/token_response.json';
 
 describe('Amadeus Locations', () => {
   const baseUrl = 'https://test.api.amadeus.com';

@@ -1,5 +1,5 @@
-import { createInMemoryStore } from '../src/core/stores/inmemory.js';
-import type { SessionConfig } from '../src/config/session.js';
+import { createInMemoryStore } from '../../src/core/stores/inmemory.js';
+import type { SessionConfig } from '../../src/config/session.js';
 
 describe('InMemoryStore', () => {
   const config: SessionConfig = {

@@ -76,6 +76,7 @@ function weatherCodeToText(code: number): string {
 
 async function getGeocode(city: string): Promise<{ lat: string; lon: string } | null> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}`;
+  console.log(`🌍 GEOCODE: Requesting ${url}`);
   try {
     const json = await retryPolicy.execute(async () => {
       return await limiter.schedule(() => fetchJSON<unknown>(url, {
@@ -83,20 +84,32 @@ async function getGeocode(city: string): Promise<{ lat: string; lon: string } | 
         headers: { 'Accept': 'application/json' },
       }));
     });
-    console.log(`🗺️ Raw geocode response:`, JSON.stringify(json).substring(0, 200));
+    console.log(`🌍 GEOCODE: Raw response:`, JSON.stringify(json, null, 2));
     const parsed = GeocodeSchema.safeParse(json);
-    console.log(`🗺️ Schema validation:`, parsed.success, parsed.success ? 'OK' : parsed.error);
-    if (!parsed.success || parsed.data.results.length === 0) return null;
-    const g = parsed.data.results[0];
-    return { lat: g.latitude.toString(), lon: g.longitude.toString() };
+    if (!parsed.success) {
+      console.log(`🌍 GEOCODE: Schema validation failed:`, parsed.error);
+      return null;
+    }
+    if (parsed.data.results.length === 0) {
+      console.log(`🌍 GEOCODE: No results found for ${city}`);
+      return null;
+    }
+    const result = parsed.data.results[0];
+    if (!result) {
+      console.log(`🌍 GEOCODE: No results found for ${city}`);
+      return null;
+    }
+    console.log(`🌍 GEOCODE: Success - lat: ${result.latitude}, lon: ${result.longitude}`);
+    return { lat: result.latitude.toString(), lon: result.longitude.toString() };
   } catch (error) {
-    console.log(`❌ Geocode error:`, error);
+    console.log(`🌍 GEOCODE: Error:`, error);
     return null;
   }
 }
 
-async function getMeteoWeather(lat: string, lon: string): Promise<string | null> {
+async function getMeteoWeather(lat: string, lon: string): Promise<{ summary: string; maxC: number; minC: number } | null> {
   const url = `${WEATHER_URL}?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&forecast_days=3`;
+  console.log(`🌤️ WEATHER: Requesting ${url}`);
   try {
     const json = await retryPolicy.execute(async () => {
       return await limiter.schedule(() => fetchJSON<unknown>(url, {
@@ -104,44 +117,54 @@ async function getMeteoWeather(lat: string, lon: string): Promise<string | null>
         headers: { 'Accept': 'application/json' },
       }));
     });
+    console.log(`🌤️ WEATHER: Raw response:`, JSON.stringify(json, null, 2));
     const parsed = WeatherSchema.safeParse(json);
-    if (!parsed.success) return null;
+    if (!parsed.success) {
+      console.log(`🌤️ WEATHER: Schema validation failed:`, parsed.error);
+      return null;
+    }
     const j: any = parsed.data;
     const code = j.daily.weathercode[0];
     const max = j.daily.temperature_2m_max[0];
     const min = j.daily.temperature_2m_min[0];
-    return `${weatherCodeToText(code)} with a high of ${max}°C and a low of ${min}°C`;
-  } catch {
+    const summary = `${weatherCodeToText(code)} with a high of ${max}°C and a low of ${min}°C`;
+    console.log(`🌤️ WEATHER: Success - ${summary}, maxC: ${max}, minC: ${min}`);
+    return { summary, maxC: max, minC: min };
+  } catch (error) {
+    console.log(`🌤️ WEATHER: Error:`, error);
     return null;
   }
 }
 
 export async function getWeather(input: { city: string; datesOrMonth?: string }): Promise<
-  | { ok: true; summary: string; source?: string }
+  | { ok: true; summary: string; source?: string; maxC?: number; minC?: number }
   | { ok: false; reason: string; source?: string }
 > {
-  console.log(`🌤️ Weather request for: ${input.city}`);
+  console.log(`🌍 WEATHER: Starting weather lookup for ${input.city}`);
   const geocode = await getGeocode(input.city);
   console.log(`🗺️ Geocode result:`, geocode);
   if (!geocode) {
-    console.log(`❌ Geocoding failed, falling back to search`);
+    console.log(`🌍 WEATHER: Geocoding failed, falling back to search`);
     // Fallback to Brave search if geocode fails
     const search = await searchTravelInfo(`weather in ${input.city}`, null as any);
     if (search.ok && search.results.length > 0) {
       const first = search.results[0];
       if (first) {
+        console.log(`🌍 WEATHER: Search fallback successful`);
         return { ok: true, summary: `${first.title} - ${first.description}`, source: getSearchSource() };
       }
     }
-    return { ok: false, reason: 'unknown_city', source: 'geocode.maps.co' };
+    console.log(`🌍 WEATHER: Both geocoding and search failed`);
+    return { ok: false, reason: 'unknown_city', source: 'geocoding-api.open-meteo.com' };
   }
   console.log(`🌡️ Getting weather for coordinates: ${geocode.lat}, ${geocode.lon}`);
   const weather = await getMeteoWeather(geocode.lat, geocode.lon);
   console.log(`🌤️ Weather result:`, weather);
   if (!weather) {
-    console.log(`❌ Weather API failed, no fallback implemented`);
+    console.log(`🌍 WEATHER: Weather API failed`);
     return { ok: false, reason: 'weather_unavailable', source: 'open-meteo.com' };
   }
-  return { ok: true, summary: weather, source: 'open-meteo.com' };
+  console.log(`🌍 WEATHER: Success with OpenMeteo`);
+  return { ok: true, summary: weather.summary, source: 'open-meteo.com', maxC: weather.maxC, minC: weather.minC };
 }
 

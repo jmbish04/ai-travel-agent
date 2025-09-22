@@ -89,7 +89,7 @@ export async function setLastIntent(threadId: string, intent: 'weather'|'destina
   await store.setJson('state', threadId, { ...prev, lastIntent: intent });
 }
 
-export async function getLastIntent(threadId: string): Promise<'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'|undefined> {
+export async function getLastIntent(threadId: string): Promise<'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'irrops'|'unknown'|'web_search'|'system'|undefined> {
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
   return state?.lastIntent;
