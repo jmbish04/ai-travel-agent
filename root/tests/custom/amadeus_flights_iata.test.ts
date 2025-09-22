@@ -1,7 +1,7 @@
 import nock from 'nock';
-import { searchFlights } from '../src/tools/amadeus_flights.js';
-import parisCity from './fixtures/amadeus/paris_cities.json';
-import tokenResponse from './fixtures/amadeus/token_response.json';
+import { searchFlights } from '../../src/tools/amadeus_flights.js';
+import parisCity from '../fixtures/amadeus/paris_cities.json';
+import tokenResponse from '../fixtures/amadeus/token_response.json';
 
 // Mock the LLM and prompts modules
 jest.mock('../src/core/llm.js', () => ({

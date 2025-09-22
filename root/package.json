@@ -59,6 +59,8 @@
     "test:e2e:transcripts": "RECORD_TRANSCRIPTS=true jest --runInBand --config jest.config.cjs --testPathPattern=tests/e2e/",
     "test:e2e:demo-flow": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/e2e/demo_flow.test.ts",
     "test:e2e:all": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/e2e/",
+    "test:e2e:real-scenarios": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/e2e/real_scenarios.test.ts",
+    "test:e2e:edge-cases": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/e2e/edge_cases.test.ts",
     "test:custom": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/custom/",
     "test:custom:api": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/custom/api_or_cli.test.ts",
     "test:custom:search": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/custom/ --testNamePattern=\"search|brave|tavily\"",

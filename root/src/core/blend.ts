@@ -649,8 +649,8 @@ export async function blendWithFacts(
         
         return { reply, citations: [source] };
       } else {
-        ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
-        if (wx.reason === 'unknown_city') {
+        ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
+        if ('reason' in wx && wx.reason === 'unknown_city') {
           return { 
             reply: `I couldn't find weather data for "${cityHint}". Could you provide a valid city name?`, 
             citations: undefined 
@@ -697,7 +697,7 @@ export async function blendWithFacts(
         
         return { reply, citations: [source] };
       } else {
-        ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
+        ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
         // For packing, proceed with general guidance even if city lookup fails
       }
     } else if (input.route.intent === 'destinations') {
@@ -788,9 +788,9 @@ export async function blendWithFacts(
             0.8
           ));
         } else {
-          ctx.log.debug({ reason: wx.reason }, 'weather_adapter_failed');
+          ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
           // Handle unknown city specifically
-          if (wx.reason === 'unknown_city') {
+          if ('reason' in wx && wx.reason === 'unknown_city') {
             return { 
               reply: `I couldn't find weather data for "${originCity}". Could you provide a valid city name?`, 
               citations: undefined 
