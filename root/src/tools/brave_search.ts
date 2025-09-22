@@ -2,8 +2,7 @@ import { BraveSearch } from 'brave-search';
 import { getPrompt } from '../core/prompts.js';
 import { callLLM } from '../core/llm.js';
 import { deepResearchPages } from './crawlee_research.js';
-import { CircuitBreaker } from '../core/circuit-breaker.js';
-import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
+import { withResilience } from '../util/resilience.js';
 
 export interface SearchResult {
   title: string;
@@ -14,9 +13,6 @@ export interface SearchResult {
 export type Out =
   | { ok: true; results: SearchResult[]; deepSummary?: string; reason?: string }
   | { ok: false; reason: string };
-
-// Circuit breaker for Brave Search API
-const braveSearchCircuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_CONFIG, 'brave-search');
 
 function withTimeout(ms: number, signal?: AbortSignal) {
   const ctrl = new AbortController();
@@ -49,8 +45,8 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
     
     const startTime = Date.now();
     
-    // Use circuit breaker to protect API call
-    const response = await braveSearchCircuitBreaker.execute(async () => {
+    // Use resilience wrapper to protect API call
+    const response = await withResilience('brave', async () => {
       return await braveSearch.webSearch(query, {
         count: 20,
         text_decorations: false, // Cleaner text without HTML markup

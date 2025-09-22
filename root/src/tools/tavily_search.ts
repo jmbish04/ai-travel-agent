@@ -1,13 +1,7 @@
 import { TavilyClient } from 'tavily';
 import { deepResearchPages } from './crawlee_research.js';
-import { CircuitBreaker } from '../core/circuit-breaker.js';
-import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
+import { withResilience } from '../util/resilience.js';
 import type { SearchResult, Out } from './brave_search.js';
-
-const tavilyCircuitBreaker = new CircuitBreaker(
-  CIRCUIT_BREAKER_CONFIG,
-  'tavily-search',
-);
 
 interface TavilyResult {
   title: string;
@@ -42,15 +36,17 @@ export async function searchTravelInfo(
   try {
     const client = new TavilyClient({ apiKey });
     const start = Date.now();
-    const res: TavilyResponse = await tavilyCircuitBreaker.execute(() =>
+    
+    const res: TavilyResponse = await withResilience('tavily', () =>
       client.search({
         query,
         search_depth: 'advanced',
         include_answer: true,
         include_images: false,
         max_results: 20,
-      }),
+      })
     );
+    
     const duration = Date.now() - start;
     log?.debug?.(`✅ Tavily success after ${duration}ms`);
   
@@ -75,10 +71,10 @@ export async function searchTravelInfo(
   } catch (e: unknown) {
     log?.debug?.('❌ Tavily error', e);
     
-    if (e instanceof Error && e.name === 'CircuitBreakerError') {
+    const msg = e instanceof Error ? e.message.toLowerCase() : '';
+    if (msg.includes('circuit') || msg.includes('breaker')) {
       return { ok: false, reason: 'circuit_breaker_open' };
     }
-    const msg = e instanceof Error ? e.message.toLowerCase() : '';
     if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized')) {
       return { ok: false, reason: 'auth_error' };
     }
