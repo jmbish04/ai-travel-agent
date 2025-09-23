@@ -185,10 +185,10 @@ export async function runGraphTurn(
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
       ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_detected');
       
-      // Track upgrade request for metrics (separate counter to avoid double-counting)
+      // Track upgrade request for metrics
       try {
-        const { observeSearchUpgradeRequest } = await import('../util/metrics.js');
-        observeSearchUpgradeRequest();
+        const { observeSearchQuality } = await import('../util/metrics.js');
+        observeSearchQuality({ isComplex: true, confidence: upgradeResult.confidence }, 0);
       } catch {}
       
       // Use the original query for upgrade, not the upgrade command
@@ -982,6 +982,10 @@ async function policyNode(
     const wantReceipts = /receipt|citation|proof|evidence|source/i.test(ctx.msg);
     
     const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts, slots);
+
+    // Persist the user's policy question as the last searchable query so
+    // a follow-up like "search better" upgrades the correct topic.
+    try { await updateThreadSlots(ctx.threadId, { last_search_query: ctx.msg }, []); } catch {}
     
     // Check if no results found or quality assessment suggests web search
     const noRelevantInfo = !citations.length || 
