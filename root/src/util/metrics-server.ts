@@ -31,6 +31,7 @@ app.post('/metrics/ingest', (req, res) => {
     const { name, labels, value } = req.body || {};
     if (!name) return res.status(400).json({ error: 'missing name' });
     ingestEvent(name, labels, value);
+    try { log.info({ name, labels, value }, 'metrics_ingest_ok'); } catch {}
     return res.json({ ok: true });
   } catch (err) {
     log.error({ err }, 'metrics_ingest_failed');

@@ -732,6 +732,40 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'incMessages':
       incMessages();
       break;
+    case 'stage_latency_ms': {
+      const stage = (labels?.stage as any) || 'route';
+      const intent = labels?.intent || 'unknown';
+      const v = typeof value === 'number' ? value : 1;
+      observeStage(stage, v, true, intent);
+      break;
+    }
+    case 'stage_verify_success': {
+      const intent = labels?.intent || 'unknown';
+      const success = !!value;
+      observeStage('verify', 1, success, intent);
+      observeStageVerification('verify', intent, success);
+      break;
+    }
+    case 'pipeline_stage_latency_ms': {
+      const stage = (labels?.stage as any) || 'route';
+      const intent = labels?.intent || 'unknown';
+      const v = typeof value === 'number' ? value : 1;
+      observeStage(stage, v, true, intent);
+      break;
+    }
+    case 'pipeline_stage_outcome_total': {
+      const stage = (labels?.stage as any) || 'route';
+      const intent = labels?.intent || 'unknown';
+      const outcome = (labels?.outcome as any) || 'success';
+      const v = typeof value === 'number' ? value : 1;
+      for (let i = 0; i < v; i++) {
+        if (outcome === 'success') observeStage(stage, 1, true, intent);
+        else if (outcome === 'fail') observeStage(stage, 1, false, intent);
+        else if (outcome === 'clarify') observeStageClarify(stage, intent, 1);
+        else if (outcome === 'escalated') observeStageEscalated(stage, intent, 1);
+      }
+      break;
+    }
     case 'chat_turn_total':
       incTurn(labels?.intent || 'unknown');
       break;

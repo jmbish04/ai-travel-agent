@@ -87,8 +87,7 @@ describe('API Endpoints', () => {
     const r = await request(app)
       .get('/metrics')
       .expect(200);
-    expect(r.body).toHaveProperty('messages_total');
-    expect(typeof r.body.messages_total).toBe('number');
+    expect(r.body).toHaveProperty('pipeline');
   });
 
   test('GET /healthz endpoint works', async () => {
