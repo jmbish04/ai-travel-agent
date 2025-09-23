@@ -42,7 +42,7 @@ function hasTravelContext(message: string): boolean {
   const lower = message.toLowerCase();
   return Array.from(contexts).some(term => lower.includes(term));
 }
-import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage, getLastVerification, setLastVerification, getLastIntent, getThreadSlots } from './slot_memory.js';
+import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage, getLastVerification, setLastVerification, getLastIntent, getThreadSlots, getLastSearchConfidence } from './slot_memory.js';
 import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
@@ -335,12 +335,26 @@ export async function handleChat(
         });
         // Metrics
         try {
-          const { incVerifyFail, incVerifyPass, observeVerifyScores } = await import('../util/metrics.js');
+          const { incVerifyFail, incVerifyPass, observeVerifyScores, observeConfidenceOutcome } = await import('../util/metrics.js');
           if (lastAudit.verdict === 'fail') {
             incVerifyFail((lastAudit.notes?.[0] || 'fail').toLowerCase());
           } else {
             incVerifyPass();
           }
+          
+          // Track verify confidence correlation
+          if (lastAudit.confidence !== undefined) {
+            const success = lastAudit.verdict === 'pass';
+            observeConfidenceOutcome('verify', lastAudit.confidence, success);
+          }
+          
+          // Track search confidence → verify outcome correlation
+          const searchConfidence = await getLastSearchConfidence(threadId);
+          if (searchConfidence !== undefined) {
+            const searchSuccess = lastAudit.verdict === 'pass';
+            observeConfidenceOutcome('search', searchConfidence, searchSuccess, intent);
+          }
+          
           if ((lastAudit as any).scores) {
             observeVerifyScores((lastAudit as any).scores);
           }

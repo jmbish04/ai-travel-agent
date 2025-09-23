@@ -75,6 +75,14 @@ type ExtAgg = {
 const externalAgg = new Map<string, ExtAgg>(); // key = target
 let toolCallsTotal = 0;
 
+// Quality correlation tracking - connects confidence with outcomes
+const confidenceOutcomes = new Map<string, {
+  high_conf_success: number,
+  high_conf_fail: number, 
+  low_conf_success: number,
+  low_conf_fail: number
+}>();
+
 type Labels = { target?: string; status?: string; query_type?: string; location?: string; domain?: string; confidence?: string };
 
 // Prometheus metrics (conditionally initialized)
@@ -522,6 +530,20 @@ export function snapshot() {
     };
   });
   
+  // Search quality metrics
+  const searchQualityData = searchQuality.get('search_quality');
+  if (searchQualityData) {
+    result.search_quality = {
+      total_searches: searchQualityData.total,
+      complexity_distribution: searchQualityData.byComplexity,
+      query_type_distribution: searchQualityData.byType,
+      upgrade_rate: searchQualityData.total > 0 ? 
+        (searchQualityData.upgradeRequests / searchQualityData.total).toFixed(3) : '0.000',
+      avg_results_per_search: searchQualityData.avgResultCount.count > 0 ?
+        (searchQualityData.avgResultCount.sum / searchQualityData.avgResultCount.count).toFixed(1) : '0.0'
+    };
+  }
+
   // Confidence correlation metrics
   const confidenceCorrelation = Array.from(confidenceOutcomes.entries()).map(([key, stats]) => {
     const totalHigh = stats.high_conf_success + stats.high_conf_fail;
@@ -736,6 +758,43 @@ export function observeRouterResult(
   if (missingSlots > 0) {
     bump(clarifyRequests, `${intent}:missing_slots`);
   }
+}
+
+// Search quality tracking
+const searchQuality = new Map<string, {
+  total: number;
+  byComplexity: Record<string, number>; // simple, medium, complex
+  byType: Record<string, number>; // explicit, implicit, fallback
+  upgradeRequests: number;
+  avgResultCount: { sum: number; count: number };
+}>();
+
+export function observeSearchQuality(
+  query: string,
+  results: any[],
+  queryType: 'explicit' | 'implicit' | 'fallback',
+  complexity: number, // 0-1 scale
+  upgradeRequested: boolean = false
+) {
+  const complexityBucket = complexity < 0.3 ? 'simple' : complexity < 0.7 ? 'medium' : 'complex';
+  const key = 'search_quality';
+  
+  const stats = searchQuality.get(key) || {
+    total: 0,
+    byComplexity: { simple: 0, medium: 0, complex: 0 },
+    byType: { explicit: 0, implicit: 0, fallback: 0 },
+    upgradeRequests: 0,
+    avgResultCount: { sum: 0, count: 0 }
+  };
+  
+  stats.total += 1;
+  stats.byComplexity[complexityBucket] += 1;
+  stats.byType[queryType] += 1;
+  if (upgradeRequested) stats.upgradeRequests += 1;
+  stats.avgResultCount.sum += results.length;
+  stats.avgResultCount.count += 1;
+  
+  searchQuality.set(key, stats);
 }
 
 export function observeConfidenceOutcome(

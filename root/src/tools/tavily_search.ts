@@ -1,7 +1,6 @@
 import { TavilyClient } from 'tavily';
 import { deepResearchPages } from './crawlee_research.js';
 import { withResilience } from '../util/resilience.js';
-import { observeExternal } from '../util/metrics.js';
 import type { SearchResult, Out } from './brave_search.js';
 
 interface TavilyResult {
@@ -28,22 +27,12 @@ export async function searchTravelInfo(
   
   if (!query.trim()) {
     log?.debug?.('❌ Tavily: empty query');
-    observeExternal({
-      target: 'search',
-      status: 'error',
-      query_type: 'empty'
-    }, Date.now() - start);
-    return { ok: false, reason: 'no_query' };
+    return { ok: false, reason: 'no_query', confidence: 0.0 };
   }
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
     log?.debug?.('❌ Tavily: no API key configured');
-    observeExternal({
-      target: 'search',
-      status: 'error',
-      query_type: 'no_api_key'
-    }, Date.now() - start);
-    return { ok: false, reason: 'no_api_key' };
+    return { ok: false, reason: 'no_api_key', confidence: 0.0 };
   }
   
   // Determine query complexity for metrics
@@ -86,70 +75,32 @@ export async function searchTravelInfo(
       }
     }
     
-    observeExternal({
-      target: 'search',
-      status: 'ok',
-      query_type: searchType,
-      domain: queryComplexity
-    }, Date.now() - start);
+    // Calculate confidence based on result quality
+    const confidence = results.length === 0 ? 0.1 : 
+                      results.length < 3 ? 0.5 :
+                      deepSummary ? 0.9 : 0.7;
     
-    return { ok: true, results, deepSummary };
+    return { ok: true, results, deepSummary, confidence };
   } catch (e: unknown) {
     log?.debug?.('❌ Tavily error', e);
     
     const msg = e instanceof Error ? e.message.toLowerCase() : '';
     if (msg.includes('circuit') || msg.includes('breaker')) {
-      observeExternal({
-        target: 'search',
-        status: 'breaker_open',
-        query_type: searchType,
-        domain: queryComplexity
-      }, Date.now() - start);
-      return { ok: false, reason: 'circuit_breaker_open' };
+      return { ok: false, reason: 'circuit_breaker_open', confidence: 0.0 };
     }
     if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized')) {
-      observeExternal({
-        target: 'search',
-        status: '4xx',
-        query_type: searchType,
-        domain: queryComplexity
-      }, Date.now() - start);
-      return { ok: false, reason: 'auth_error' };
+      return { ok: false, reason: 'auth_error', confidence: 0.0 };
     }
     if (msg.includes('429') || msg.includes('rate')) {
-      observeExternal({
-        target: 'search',
-        status: '4xx',
-        query_type: searchType,
-        domain: queryComplexity
-      }, Date.now() - start);
-      return { ok: false, reason: 'rate_limited' };
+      return { ok: false, reason: 'rate_limited', confidence: 0.0 };
     }
     if (msg.includes('timeout')) {
-      observeExternal({
-        target: 'search',
-        status: 'timeout',
-        query_type: searchType,
-        domain: queryComplexity
-      }, Date.now() - start);
-      return { ok: false, reason: 'timeout' };
+      return { ok: false, reason: 'timeout', confidence: 0.0 };
     }
     if (msg.includes('network') || msg.includes('fetch')) {
-      observeExternal({
-        target: 'search',
-        status: 'network',
-        query_type: searchType,
-        domain: queryComplexity
-      }, Date.now() - start);
-      return { ok: false, reason: 'network' };
+      return { ok: false, reason: 'network', confidence: 0.0 };
     }
     
-    observeExternal({
-      target: 'search',
-      status: 'error',
-      query_type: searchType,
-      domain: queryComplexity
-    }, Date.now() - start);
-    return { ok: false, reason: 'unknown_error' };
+    return { ok: false, reason: 'unknown_error', confidence: 0.0 };
   }
 }

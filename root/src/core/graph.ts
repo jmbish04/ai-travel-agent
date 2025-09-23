@@ -18,7 +18,7 @@ import { detectSearchUpgradeRequest } from './search_upgrade.js';
 declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
-import { incClarify, observeStage, observeRouterResult } from '../util/metrics.js';
+import { incClarify, observeStage, observeRouterResult, observeConfidenceOutcome } from '../util/metrics.js';
 import { 
   getThreadSlots, 
   updateThreadSlots, 
@@ -28,6 +28,7 @@ import {
   readConsentState,
   writeConsentState,
   getLastReceipts,
+  setLastSearchConfidence
   setLastReceipts,
   getLastUserMessage
 } from './slot_memory.js';
@@ -369,6 +370,11 @@ export async function runGraphTurn(
   
   const actSuccess = 'done' in result && result.done;
   observeStage('gather', Date.now() - actStart, actSuccess, intent);
+  
+  // Track router confidence correlation with actual success
+  if (C.route?.confidence !== undefined) {
+    observeConfidenceOutcome('router', C.route.confidence, actSuccess, C.route.intent);
+  }
   
   return result;
 }
@@ -1122,6 +1128,11 @@ async function performWebSearchNode(
   await updateThreadSlots(threadId, { last_search_query: query }, []);
   
   const searchResult = await searchTravelInfo(query, ctx.log);
+  
+  // Save search confidence for later correlation with verify outcomes
+  if (searchResult.confidence !== undefined) {
+    await setLastSearchConfidence(threadId, searchResult.confidence);
+  }
   
   if (!searchResult.ok) {
     ctx.log.debug({ reason: searchResult.reason }, 'web_search_failed');

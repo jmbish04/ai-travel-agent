@@ -252,7 +252,17 @@ export async function getLastUserMessage(threadId: string): Promise<string | und
   return state?.lastUserMessage;
 }
 
-export async function setLastUserMessage(threadId: string, message: string): Promise<void> {
+export async function setLastSearchConfidence(threadId: string, confidence: number): Promise<void> {
+  if (!threadId) return;
+  await updateThreadSlots(threadId, { last_search_confidence: confidence.toString() }, []);
+}
+
+export async function getLastSearchConfidence(threadId: string): Promise<number | undefined> {
+  if (!threadId) return undefined;
+  const slots = await getThreadSlots(threadId);
+  const conf = slots.last_search_confidence;
+  return conf ? parseFloat(conf) : undefined;
+}
   const store = getSessionStore();
   const prev = await store.getJson<SlotState>('state', threadId);
   
