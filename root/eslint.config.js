@@ -5,17 +5,22 @@ import globals from 'globals';
 
 export default [
   { ignores: ['dist/**', 'node_modules/**'] },
+
   js.configs.recommended,
   ...tseslint.configs.recommended,
+
+  // Base config for all JS/TS files
   {
-    files: ['src/**/*.ts', 'tests/**/*.ts'],
+    files: ['**/*.{js,mjs,cjs,ts}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: { ...globals.node, ...globals.jest },
+      globals: {
+        ...globals.node, // Add all Node.js globals
+      },
     },
     rules: {
-      'no-console': 'off',
+      'no-console': 'off', // Assuming 'off' is desired project-wide for now
       'max-len': [
         'error',
         { code: 88, ignoreStrings: true, ignoreTemplateLiterals: true, ignoreComments: true },
@@ -26,9 +31,17 @@ export default [
       ],
     },
   },
+
+  // Specific config for test files
   {
-    files: ['tests/**/*.ts'],
+    files: ['tests/**/*.{js,mjs,cjs,ts}'],
+    languageOptions: {
+      globals: {
+        ...globals.jest, // Add all Jest globals
+      },
+    },
     rules: {
+      // In tests, using 'any' can be more pragmatic
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },

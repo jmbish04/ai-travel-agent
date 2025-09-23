@@ -665,7 +665,36 @@
                 const response = await fetch('/metrics');
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-                const data = await response.json();
+                let data = await response.json();
+                // Back-compat: adapt legacy snapshot() shape to v2 if needed
+                if (!data.pipeline && Array.isArray(data.pipeline_stages)) {
+                    const stagesV2 = data.pipeline_stages.map((s) => {
+                        const key = s.stage || '';
+                        const idx = key.indexOf('_');
+                        const stage = idx > 0 ? key.slice(0, idx) : key;
+                        const intent = idx > 0 ? key.slice(idx + 1) : '';
+                        const totals = {
+                            success: s.success_count || 0,
+                            clarify: 0,
+                            fail: s.failure_count || 0,
+                            escalated: 0,
+                        };
+                        const latency = s.latency ? {
+                            p50: s.latency.avg_ms || 0,
+                            p95: s.latency.max_ms || (s.latency.avg_ms || 0),
+                            max: s.latency.max_ms || 0,
+                        } : { p50: 0, p95: 0, max: 0 };
+                        return { stage, intent, totals, latency };
+                    });
+                    data = { 
+                        pipeline: { stages: stagesV2, alerts: [] },
+                        quality: { confidence: [] },
+                        search: { total: 0 },
+                        external: { targets: data.external_requests?.targets || [] },
+                        performance: data.performance || {},
+                        system: { breaker: data.breaker?.byTarget || {}, rate_limit: data.rate_limit?.byTarget || {} }
+                    };
+                }
                 const statusEl = document.getElementById('status');
                 statusEl.className = 'status-indicator online';
                 statusEl.innerHTML = '<i class="fas fa-circle"></i><span>Connected</span>';
