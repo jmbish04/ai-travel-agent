@@ -180,11 +180,14 @@ async function maybeResetContextForMessage(params: {
   for (const key of ['destinationCity', 'city', 'originCity'] as const) {
     const value = freshSlots[key];
     if (typeof value === 'string') {
-      const fallback = key === 'destinationCity'
-        ? fallbackDestination || fallbackCity
-        : key === 'originCity'
-          ? fallbackOrigin || fallbackDestination || fallbackCity
-          : fallbackCity || fallbackDestination || fallbackOrigin;
+      let fallback: string | undefined;
+      if (key === 'destinationCity') {
+        fallback = fallbackDestination || fallbackCity;
+      } else if (key === 'originCity') {
+        fallback = fallbackOrigin || fallbackDestination || fallbackCity;
+      } else {
+        fallback = fallbackCity || fallbackDestination || fallbackOrigin;
+      }
       const resolved = resolveLocationPlaceholder(value, fallback || previousLocation);
       if (resolved) {
         freshSlots[key] = resolved;
@@ -300,200 +303,239 @@ export async function routeIntent({ message, threadId, logger }: {
   logger?.log?.debug({ message }, 'router_start');
   const m = message.trim();
 
-  // 0) Guards (no LLM) - clear consent state for unrelated queries
-  if (!m) return RouterResult.parse({ intent:'unknown', needExternal:false, slots:{}, confidence:0.1 });
-  
-  // Handle flight clarification responses (no recursion)
-  let ctxSlots = threadId ? await await getThreadSlots(threadId) : {};
-  
-  // Clear old context for completely new, unrelated queries
-  if (threadId && ctxSlots.awaiting_deep_research_consent === 'true') {
-    if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Found awaiting_deep_research_consent, checking if "${m}" is a consent response`);
-    // Check if this is a completely different query (not a consent response)
-    const consentVerdict = await classifyConsentResponse(m, logger?.log);
-    if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Verdict for "${m}": ${consentVerdict}`);
-    if (consentVerdict === 'unclear') {
-      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Clearing consent state due to unclear verdict`);
-      await clearConsentState(threadId);
-      // Reload slots after clearing
-      ctxSlots = await getThreadSlots(threadId);
-      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Slots after clearing:`, ctxSlots);
-    } else {
-      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Not clearing consent state, verdict was: ${consentVerdict}`);
-    }
-  }
-  
-  if (ctxSlots.awaiting_flight_clarification === 'true' && threadId) {
-    const userResponse = m.toLowerCase();
-    const pendingQuery = ctxSlots.pending_flight_query || '';
-    
-    // Clear the clarification state
-    await updateThreadSlots(threadId, {}, [], [
-      'awaiting_flight_clarification',
-      'pending_flight_query',
-      'clarification_reasoning'
-    ]);
-    
-    // Route based on user's choice (no recursion)
-    if (userResponse.includes('direct') || userResponse.includes('search') || userResponse.includes('booking')) {
-      const flightSlots = await extractFlightSlotsOnce(pendingQuery, ctxSlots, logger?.log);
-      logger?.log?.debug({ choice: 'direct_search', slots: flightSlots }, 'flight_clarification_resolved');
-      return RouterResult.parse({
-        intent: 'flights',
-        needExternal: true,
-        slots: { ...ctxSlots, ...flightSlots },
-        confidence: 0.9
-      });
-    } else if (userResponse.includes('research') || userResponse.includes('planning') || userResponse.includes('advice')) {
-      logger?.log?.debug({ choice: 'web_research' }, 'flight_clarification_resolved');
-      return RouterResult.parse({
-        intent: 'web_search',
-        needExternal: true,
-        slots: { ...ctxSlots, search_query: pendingQuery },
-        confidence: 0.9
-      });
-    } else {
-      // Process current message instead of recursion
-      logger?.log?.debug({ choice: 'process_current' }, 'flight_clarification_ambiguous');
-    }
+  // 0) Guard: empty input
+  if (!m) {
+    return RouterResult.parse({ intent: 'unknown', needExternal: false, slots: {}, confidence: 0.1 });
   }
 
-  // 1) Flight fast-path (no LLM)
-  if (RE.flights.test(m)) {
-    const { isDirect } = isDirectFlightHeuristic(m);
-    if (isDirect) {
-      await clearConsentState(threadId); // Clear any pending consent for unrelated queries
-      const slots = await extractFlightSlotsOnce(m, ctxSlots, logger?.log);
-      logger?.log?.debug({ isDirect:true, slots }, '✈️ FLIGHTS: direct (heuristic_llm_unified)');
-      const result = RouterResult.parse({ intent:'flights', needExternal:true, slots, confidence:0.9 });
-      // metrics
-      incTurn(result.intent);
-      try { observeRouterConfidence(result.confidence); } catch {}
-      if (threadId) noteTurn(threadId, result.intent);
-      return result;
-    }
+  // Load context
+  let ctxSlots = await loadCtxSlots(threadId);
+
+  // Clear stale consent for unrelated queries
+  ctxSlots = await maybeClearStaleConsent(m, threadId, ctxSlots, logger?.log);
+
+  // Flight clarification state
+  const clarification = await maybeHandleFlightClarification(m, threadId, ctxSlots, logger?.log);
+  if (clarification) return clarification;
+
+  // Flight fast-path
+  const flightFast = await maybeRouteFlightsFastPath(m, threadId, ctxSlots, logger?.log);
+  if (flightFast) return flightFast;
+
+  // Deep-research consent gate
+  const deepConsent = await maybeGateDeepResearch(m, threadId, logger?.log);
+  if (deepConsent) return deepConsent;
+
+  // Transformers-first
+  const viaTf = await maybeTransformersFirst(m, threadId, ctxSlots, logger);
+  if (viaTf) return viaTf;
+
+  // LLM router and post-processing
+  return await runLlmRouteAndPostProcess(m, threadId, ctxSlots, logger);
+}
+
+async function loadCtxSlots(threadId?: string): Promise<Record<string, string>> {
+  if (!threadId) return {};
+  return await getThreadSlots(threadId);
+}
+
+async function maybeClearStaleConsent(
+  message: string,
+  threadId: string | undefined,
+  ctxSlots: Record<string, string>,
+  log?: pino.Logger,
+): Promise<Record<string, string>> {
+  if (!threadId) return ctxSlots;
+  if (ctxSlots.awaiting_deep_research_consent !== 'true') return ctxSlots;
+
+  const isDebug = (process.env.LOG_LEVEL || '').toLowerCase() === 'debug';
+  if (isDebug) console.debug(`🔍 CONSENT: Found awaiting_deep_research_consent, checking if "${message}" is a consent response`);
+  const verdict = await classifyConsentResponse(message, log);
+  if (isDebug) console.debug(`🔍 CONSENT: Verdict for "${message}": ${verdict}`);
+  if (verdict === 'unclear') {
+    if (isDebug) console.debug('🔍 CONSENT: Clearing consent state due to unclear verdict');
+    await clearConsentState(threadId);
+    const reloaded = await getThreadSlots(threadId);
+    if (isDebug) console.debug('🔍 CONSENT: Slots after clearing:', reloaded);
+    return reloaded;
   }
+  if (isDebug) console.debug(`🔍 CONSENT: Not clearing consent state, verdict was: ${verdict}`);
+  return ctxSlots;
+}
 
-  // 2) Deep-research consent? (no LLM)
-  if (process.env.DEEP_RESEARCH_ENABLED === 'true') {
-    const assessment = await assessQueryComplexity(m, logger?.log);
-    if (assessment.isComplex && assessment.confidence >= 0.75) {
-      // Clear stale slots when processing a new complex query
-      await clearConsentState(threadId);
-      const complexityScore = assessment.confidence.toFixed(2);
-      threadId && await updateThreadSlots(threadId, {
-        awaiting_deep_research_consent:'true',
-        pending_deep_research_query:m,
-        complexity_reasoning:assessment.reasoning,
-        complexity_score:complexityScore
-      }, []);
-      logger?.log?.debug({ assessment }, 'complexity_consent_gate');
-      return RouterResult.parse({
-        intent:'system', needExternal:false,
-        slots:{
-          deep_research_consent_needed:'true',
-          complexity_score:complexityScore
-        },
-        confidence:0.9
-      });
-    }
+function includesAny(haystack: string, needles: string[]): boolean {
+  const lower = haystack.toLowerCase();
+  return needles.some((n) => lower.includes(n));
+}
+
+async function maybeHandleFlightClarification(
+  message: string,
+  threadId: string | undefined,
+  ctxSlots: Record<string, string>,
+  log?: pino.Logger,
+): Promise<RouterResultT | undefined> {
+  if (!(ctxSlots.awaiting_flight_clarification === 'true' && threadId)) return undefined;
+
+  const pendingQuery = ctxSlots.pending_flight_query || '';
+  await updateThreadSlots(threadId, {}, [], [
+    'awaiting_flight_clarification',
+    'pending_flight_query',
+    'clarification_reasoning',
+  ]);
+
+  if (includesAny(message, ['direct', 'search', 'booking'])) {
+    const flightSlots = await extractFlightSlotsOnce(pendingQuery, ctxSlots, log);
+    log?.debug({ choice: 'direct_search', slots: flightSlots }, 'flight_clarification_resolved');
+    return RouterResult.parse({
+      intent: 'flights',
+      needExternal: true,
+      slots: { ...ctxSlots, ...flightSlots },
+      confidence: 0.9,
+    });
   }
-
-  // 3) Transformers-first (no LLM inside)
-  let tfm: RouterResultT | undefined = undefined;
-  if (transformersEnabled()) tfm = await routeViaTransformersFirst(m, threadId, logger);
-  if (tfm) {
-    // Intent-gated slot refine (single pass)
-    if (tfm.intent === 'flights') {
-      const refined = await extractSlots(m, ctxSlots, logger?.log);
-      return RouterResult.parse({ ...tfm, slots: { ...tfm.slots, ...refined } });
-    }
-    const r = RouterResult.parse(tfm);
-    incTurn(r.intent);
-    try { observeRouterConfidence(r.confidence); } catch {}
-    if (r.confidence < 0.6) incRouterLowConf(r.intent);
-    if (threadId) noteTurn(threadId, r.intent);
-    return r;
+  if (includesAny(message, ['research', 'planning', 'advice'])) {
+    log?.debug({ choice: 'web_research' }, 'flight_clarification_resolved');
+    return RouterResult.parse({
+      intent: 'web_search',
+      needExternal: true,
+      slots: { ...ctxSlots, search_query: pendingQuery },
+      confidence: 0.9,
+    });
   }
+  log?.debug({ choice: 'process_current' }, 'flight_clarification_ambiguous');
+  return undefined;
+}
 
-  // 4) Single LLM call (router_llm) → intent + slots at once
-  const prompt = (await getPrompt('router_llm')).replace('{message}', m).replace('{instructions}','');
-  logger?.log?.debug({ message: m, promptLength: prompt.length }, 'router_llm_call_start');
-  const raw = await callLLM(prompt, { responseFormat:'json', log:logger?.log });
-  logger?.log?.debug({ rawResponse: raw, message: m }, 'router_llm_raw_response');
-  const json = JSON.parse(raw);
-  const llm = RouterResult.parse(json);
-  logger?.log?.debug({ parsedResult: llm, message: m }, 'router_llm_parsed_result');
+async function maybeRouteFlightsFastPath(
+  message: string,
+  threadId: string | undefined,
+  ctxSlots: Record<string, string>,
+  log?: pino.Logger,
+): Promise<RouterResultT | undefined> {
+  if (!RE.flights.test(message)) return undefined;
+  const { isDirect } = isDirectFlightHeuristic(message);
+  if (!isDirect) return undefined;
+  await clearConsentState(threadId);
+  const slots = await extractFlightSlotsOnce(message, ctxSlots, log);
+  log?.debug({ isDirect: true, slots }, '✈️ FLIGHTS: direct (heuristic_llm_unified)');
+  const result = RouterResult.parse({ intent: 'flights', needExternal: true, slots, confidence: 0.9 });
+  incTurn(result.intent);
+  try { observeRouterConfidence(result.confidence); } catch {}
+  if (threadId) noteTurn(threadId, result.intent);
+  return result;
+}
 
+async function maybeGateDeepResearch(
+  message: string,
+  threadId: string | undefined,
+  log?: pino.Logger,
+): Promise<RouterResultT | undefined> {
+  if (process.env.DEEP_RESEARCH_ENABLED !== 'true') return undefined;
+  const assessment = await assessQueryComplexity(message, log);
+  if (!(assessment.isComplex && assessment.confidence >= 0.75)) return undefined;
+  await clearConsentState(threadId);
+  const complexityScore = assessment.confidence.toFixed(2);
+  if (threadId) {
+    await updateThreadSlots(threadId, {
+      awaiting_deep_research_consent: 'true',
+      pending_deep_research_query: message,
+      complexity_reasoning: assessment.reasoning,
+      complexity_score: complexityScore,
+    }, []);
+  }
+  log?.debug({ assessment }, 'complexity_consent_gate');
+  return RouterResult.parse({
+    intent: 'system', needExternal: false,
+    slots: { deep_research_consent_needed: 'true', complexity_score: complexityScore },
+    confidence: 0.9,
+  });
+}
+
+async function maybeTransformersFirst(
+  message: string,
+  threadId: string | undefined,
+  ctxSlots: Record<string, string>,
+  logger?: { log: pino.Logger },
+): Promise<RouterResultT | undefined> {
+  if (!transformersEnabled()) return undefined;
+  const tfm = await routeViaTransformersFirst(message, threadId, logger);
+  if (!tfm) return undefined;
+  if (tfm.intent === 'flights') {
+    const refined = await extractSlots(message, ctxSlots, logger?.log);
+    return RouterResult.parse({ ...tfm, slots: { ...tfm.slots, ...refined } });
+  }
+  const r = RouterResult.parse(tfm);
+  incTurn(r.intent);
+  try { observeRouterConfidence(r.confidence); } catch {}
+  if (r.confidence < 0.6) incRouterLowConf(r.intent);
+  if (threadId) noteTurn(threadId, r.intent);
+  return r;
+}
+
+async function runLlmRouteAndPostProcess(
+  message: string,
+  threadId: string | undefined,
+  ctxSlots: Record<string, string>,
+  logger?: { log: pino.Logger },
+): Promise<RouterResultT> {
+  const prompt = (await getPrompt('router_llm')).replace('{message}', message).replace('{instructions}', '');
+  logger?.log?.debug({ message, promptLength: prompt.length }, 'router_llm_call_start');
+  const raw = await callLLM(prompt, { responseFormat: 'json', log: logger?.log });
+  logger?.log?.debug({ rawResponse: raw, message }, 'router_llm_raw_response');
+  const llm = RouterResult.parse(JSON.parse(raw));
+  logger?.log?.debug({ parsedResult: llm, message }, 'router_llm_parsed_result');
+
+  let currentSlots = ctxSlots;
   if (threadId) {
     const resetResult = await maybeResetContextForMessage({
       threadId,
-      message: m,
-      slots: ctxSlots,
+      message,
+      slots: currentSlots,
       newSlots: llm.slots,
       logger: logger?.log,
     });
-    ctxSlots = resetResult.slots;
+    currentSlots = resetResult.slots;
   }
 
-  // Normalize slots to handle null values from LLM
-  const normalizedSlots = normalizeSlots(ctxSlots, llm.slots, llm.intent);
-  const llmNormalized = { ...llm, slots: normalizedSlots };
+  const normalizedSlots = normalizeSlots(currentSlots, llm.slots, llm.intent);
+  let llmNormalized: RouterResultT = { ...llm, slots: normalizedSlots } as RouterResultT;
 
-  // 5) Post-LLM slot enhancement for flights
+  // Flights post-processing
   if (llmNormalized.intent === 'flights') {
     try {
-      const enhancedSlots = await extractFlightSlotsOnce(m, ctxSlots, logger?.log);
-      
-      // Preserve relative dates from LLM (today, tomorrow, etc.) over enhanced parsing
-      const preservedSlots = { ...enhancedSlots };
-      // Use semantic temporal reference detection from slot_memory
+      const enhancedSlots = await extractFlightSlotsOnce(message, currentSlots, logger?.log);
+      const preservedSlots = { ...enhancedSlots } as Record<string, string>;
       if (llmNormalized.slots?.dates && isTemporalReference(llmNormalized.slots.dates)) {
         preservedSlots.dates = llmNormalized.slots.dates;
         preservedSlots.departureDate = llmNormalized.slots.dates;
-        // Don't override month for relative dates
-        delete preservedSlots.month;
+        delete (preservedSlots as any).month;
       }
-      
-      // Merge LLM slots with enhanced slots, prioritizing preserved relative dates
       const mergedSlots = { ...enhancedSlots, ...llmNormalized.slots, ...preservedSlots };
-      // Final normalization pass to resolve any placeholders via context
-      const normalizedMerged = normalizeSlots(ctxSlots, mergedSlots, 'flights');
-      
-      logger?.log?.debug({ 
-        llmSlots: llmNormalized.slots, 
-        enhancedSlots, 
-        preservedSlots,
-        mergedSlots 
-      }, 'flights_slot_enhancement');
-      
-      const enhanced = RouterResult.parse({
-        ...llmNormalized,
-        slots: normalizedMerged
-      });
-      
-      logger?.log?.debug({ intent: enhanced.intent, confidence: enhanced.confidence }, 'router_final_result');
-      return enhanced;
+      const normalizedMerged = normalizeSlots(currentSlots, mergedSlots, 'flights');
+      logger?.log?.debug({ llmSlots: llmNormalized.slots, enhancedSlots, preservedSlots, mergedSlots }, 'flights_slot_enhancement');
+      llmNormalized = RouterResult.parse({ ...llmNormalized, slots: normalizedMerged });
+      logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
+      return llmNormalized;
     } catch (error) {
       logger?.log?.debug({ error: String(error) }, 'flights_slot_enhancement_failed');
     }
   }
-  
-  // 6) Post-LLM heuristics (cheap)
-  if (llmNormalized.intent === 'flights' && !RE.dateish.test(m)) {
-    logger?.log?.debug({ reason:'missing_date' }, 'flights_missing_date');
+
+  // Heuristic log
+  if (llmNormalized.intent === 'flights' && !RE.dateish.test(message)) {
+    logger?.log?.debug({ reason: 'missing_date' }, 'flights_missing_date');
   }
 
-  // 7) AI-first correction pass using nlp_intent_detection prompt when low confidence/unknown
+  // Correction pass
   if (llmNormalized.confidence < 0.6 || llmNormalized.intent === 'unknown') {
     try {
       const { classifyIntent } = await import('./llm.js');
-      const det = await classifyIntent(m, ctxSlots, logger?.log);
+      const det = await classifyIntent(message, currentSlots, logger?.log);
       if (det && det.confidence >= 0.75 && det.intent !== 'unknown') {
         const corrected = RouterResult.parse({
           intent: det.intent,
           needExternal: det.needExternal,
-          slots: normalizeSlots(ctxSlots, (det.slots as Record<string, string>) || {}, det.intent),
+          slots: normalizeSlots(currentSlots, (det.slots as Record<string, string>) || {}, det.intent),
           confidence: det.confidence,
         });
         incTurn(corrected.intent);
@@ -509,22 +551,20 @@ export async function routeIntent({ message, threadId, logger }: {
   }
 
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
-  if (['system','policy'].includes(llmNormalized.intent)) {
+  if (['system', 'policy'].includes(llmNormalized.intent)) {
     clearConsentState(threadId);
   }
   if (llmNormalized.intent === 'web_search' && !llmNormalized.slots?.search_query) {
     try {
-      const q = await optimizeSearchQuery(m, ctxSlots, 'web_search', logger?.log);
+      const q = await optimizeSearchQuery(message, currentSlots, 'web_search', logger?.log);
       if (q && q.trim()) {
-        llmNormalized.slots = { ...llmNormalized.slots, search_query: q };
+        llmNormalized.slots = { ...llmNormalized.slots, search_query: q } as any;
       }
     } catch (error) {
       logger?.log?.debug({ error: String(error) }, 'search_query_optimization_failed');
-      // Use original message as fallback
-      llmNormalized.slots = { ...llmNormalized.slots, search_query: m };
+      llmNormalized.slots = { ...llmNormalized.slots, search_query: message } as any;
     }
   }
-  // metrics
   incTurn(llmNormalized.intent);
   try { observeRouterConfidence(llmNormalized.confidence); } catch {}
   if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);

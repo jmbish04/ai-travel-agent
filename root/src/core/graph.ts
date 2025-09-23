@@ -110,7 +110,7 @@ export async function runGraphTurn(
   const C = await buildTurnCache(message, ctx.log);
   
   // Check for YES/NO shortcuts if any consent flags are set
-  const earlySlots = await await getThreadSlots(threadId);
+  const earlySlots = await getThreadSlots(threadId);
   const consentState = readConsentState(earlySlots);
   
   if (consentState.awaiting) {

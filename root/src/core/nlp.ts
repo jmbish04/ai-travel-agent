@@ -48,58 +48,110 @@ export type ContentClassificationT = z.infer<typeof ContentClassification>;
 // Redirect to unified implementation
 export const classifyContentLLM = classifyContent;
 
+/**
+ * Detect intent and slots for a user message using an LLM-first cascade.
+ * Falls back to deterministic parsers when the LLM path is unavailable.
+ */
 export async function detectIntentAndSlots(
   message: string,
   context: Slots,
   log: pino.Logger,
   _opts: { timeoutMs?: number; minConfidence?: number } = {}
 ): Promise<RouteResult> {
-  // Use LLM-based intent classification
-  try {
-    const prompt = await getPrompt('router_llm');
-    const finalPrompt = prompt.replace('{message}', message);
-    const response = await callLLM(finalPrompt, { responseFormat: 'json', log });
-    const parsed = JSON.parse(response);
-    
-    return {
-      intent: parsed.intent as Intent,
-      needExternal: parsed.needExternal || false,
-      slots: parsed.slots as Slots || {},
-      confidence: parsed.confidence || 0.5,
-      missingSlots: parsed.missingSlots || []
-    };
-  } catch (error) {
-    log.debug({ error: String(error) }, 'LLM routing failed');
-  }
-  // Fallback to the intent parser + individual parsers
-  const intentRes = await parseIntent(message, context, log).catch(() => ({ success: false, confidence: 0 }));
-  const slots: Slots = { ...context };
-  if (intentRes?.success && 'data' in intentRes && intentRes.data) {
-    Object.assign(slots, intentRes.data.slots);
-  } else {
-    // best-effort slot extraction
-    const city = await parseCity(message, context, log).catch(() => ({ success: false } as const));
-    if (city?.success && city.data?.normalized) slots.city = city.data.normalized;
-    const date = await parseDate(message, context, log).catch(() => ({ success: false } as const));
-    if (date?.success && date.data?.dates) {
-      slots.dates = date.data.dates;
-      if (date.data.month) slots.month = date.data.month;
-    }
-  }
-  const missing: string[] = [];
-  const inferred = intentRes?.success && 'data' in intentRes && intentRes.data ? intentRes.data.intent : 'unknown';
-  if ((inferred === 'destinations' || inferred === 'packing' || inferred === 'weather' || inferred === 'attractions')) {
-    if (!slots.city) missing.push('city');
-    if (inferred === 'destinations' && !slots.dates && !slots.month) missing.push('dates');
-    if (inferred === 'packing' && !slots.dates && !slots.month) missing.push('dates');
-  }
+  // LLM-first routing
+  const llmResult = await tryLlmRoute(message, log);
+  if (llmResult) return llmResult;
+
+  // Fallback: classical intent + best-effort slot extraction
+  const intentRes = await parseIntent(message, context, log).catch(() => ({
+    success: false,
+    confidence: 0,
+  }));
+
+  const slots = await buildFallbackSlots(message, context, log, intentRes);
+  const inferred: Intent =
+    intentRes?.success && 'data' in intentRes && intentRes.data
+      ? (intentRes.data.intent as Intent)
+      : 'unknown';
+
+  const missing = computeMissingSlots(inferred, slots);
   return {
-    intent: inferred as Intent,
+    intent: inferred,
     needExternal: inferred !== 'unknown' && missing.length === 0,
     slots,
     confidence: intentRes?.confidence ?? 0.4,
     missingSlots: missing,
   };
+}
+
+async function tryLlmRoute(
+  message: string,
+  log: pino.Logger,
+): Promise<RouteResult | undefined> {
+  try {
+    const prompt = await getPrompt('router_llm');
+    const finalPrompt = prompt.replace('{message}', message);
+    const response = await callLLM(finalPrompt, { responseFormat: 'json', log });
+    const parsed = JSON.parse(response);
+    return {
+      intent: parsed.intent as Intent,
+      needExternal: parsed.needExternal || false,
+      slots: (parsed.slots as Slots) || {},
+      confidence: parsed.confidence || 0.5,
+      missingSlots: parsed.missingSlots || [],
+    };
+  } catch (error) {
+    log.debug({ error: String(error) }, 'LLM routing failed');
+    return undefined;
+  }
+}
+
+async function buildFallbackSlots(
+  message: string,
+  context: Slots,
+  log: pino.Logger,
+  intentRes: unknown,
+): Promise<Slots> {
+  const base: Slots = { ...context };
+  const hasIntentData = Boolean(
+    intentRes && (intentRes as any).success && (intentRes as any).data,
+  );
+  if (hasIntentData) {
+    const data = (intentRes as any).data;
+    return { ...base, ...(data.slots as Slots) };
+  }
+  // best-effort slot extraction
+  const city = await parseCity(message, context, log).catch(() => ({
+    success: false as const,
+  }));
+  if (city?.success && city.data?.normalized) base.city = city.data.normalized;
+
+  const date = await parseDate(message, context, log).catch(() => ({
+    success: false as const,
+  }));
+  if (date?.success && date.data?.dates) {
+    base.dates = date.data.dates;
+    if (date.data.month) base.month = date.data.month;
+  }
+  return base;
+}
+
+function computeMissingSlots(intent: Intent, slots: Slots): string[] {
+  if (
+    intent !== 'destinations' &&
+    intent !== 'packing' &&
+    intent !== 'weather' &&
+    intent !== 'attractions'
+  )
+    return [];
+
+  const missing: string[] = [];
+  if (!slots.city) missing.push('city');
+
+  const needsDates = intent === 'destinations' || intent === 'packing';
+  if (needsDates && !slots.dates && !slots.month) missing.push('dates');
+
+  return missing;
 }
 
 export async function extractCityLLM(message: string, context: Slots, log: pino.Logger): Promise<string | undefined> {

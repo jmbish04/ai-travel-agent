@@ -361,7 +361,8 @@ export class PolicyAgent {
                 title: r.title || '',
                 snippet: r.description || ''
               })),
-              companyName
+              companyName,
+              clauseType
             );
             
             // Take top results, prioritizing official domains

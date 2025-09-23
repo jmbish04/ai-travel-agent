@@ -1,5 +1,6 @@
-import { callLLM } from './llm.js';
+import { callLLM, safeExtractJson } from './llm.js';
 import { getPrompt } from './prompts.js';
+import { z } from 'zod';
 
 export interface DomainScore {
   domain: string;
@@ -10,6 +11,12 @@ export interface DomainScore {
 
 // Cache to avoid duplicate LLM calls
 const domainCache = new Map<string, number>();
+
+const LlmOut = z.object({
+  is_official: z.boolean(),
+  score: z.number().min(0).max(1),
+  subject_type: z.enum(['brand','country','other']).optional().default('other'),
+});
 
 async function classifyWithLLM(domain: string, airlineName: string, signal?: AbortSignal): Promise<number> {
   // Bump cache version when prompt guidance changes to avoid stale scores
@@ -26,32 +33,20 @@ async function classifyWithLLM(domain: string, airlineName: string, signal?: Abo
       .replace('{{domain}}', domain)
       .replace('{{airlineName}}', airlineName);
     
-    const response = await callLLM(filled, { responseFormat: 'text' });
-    console.log(`🏆 Domain LLM response for ${domain}: "${response.trim()}"`);
-    
-    // Look for the last number in response (most likely the score)
-    const numbers = response.match(/(\d+(?:\.\d+)?)/g);
-    if (!numbers) {
-      console.log(`❌ No number found in LLM response: "${response}"`);
+    const response = await callLLM(filled, { responseFormat: 'json', log: undefined, timeoutMs: 1800 });
+    const parsedUnknown = (() => {
+      try { return JSON.parse(response); } catch { return safeExtractJson(response); }
+    })();
+    const parsed = LlmOut.safeParse(parsedUnknown);
+    if (!parsed.success) {
+      console.log(`❌ LLM JSON validation failed for ${domain}:`, parsed.error.issues.map(i => i.message).join('; '));
       domainCache.set(cacheKey, 0.5);
       return 0.5;
     }
-    
-    // Take the last number found (usually the final score)
-    const lastNumber = numbers[numbers.length - 1];
-    if (!lastNumber) {
-      console.log(`❌ No valid number found in response: "${response}"`);
-      domainCache.set(cacheKey, 0.5);
-      return 0.5;
-    }
-    
-    let score = parseFloat(lastNumber);
-    if (score > 1) score /= 100;
-    const finalScore = Math.max(0.05, Math.min(0.95, score));
-    
-    console.log(`🏆 Parsed score for ${domain}: ${finalScore}`);
-    domainCache.set(cacheKey, finalScore);
-    return finalScore;
+    const score = Math.max(0.05, Math.min(0.95, parsed.data.score));
+    console.log(`🏆 Parsed JSON score for ${domain}: ${score} (official=${parsed.data.is_official})`);
+    domainCache.set(cacheKey, score);
+    return score;
   } catch (error) {
     console.log(`❌ LLM classification failed for ${domain}:`, error);
     domainCache.set(cacheKey, 0.5);
@@ -88,8 +83,8 @@ export async function scoreDomainAuthenticity(
   airlineName: string,
   signal?: AbortSignal
 ): Promise<DomainScore> {
-  // AI-first: rely on the LLM-driven classifier prompt to decide
-  const confidence = await classifyWithLLM(domain, airlineName);
+  // AI-first with strict JSON, with a minimal regex fallback inside classifyWithLLM
+  const confidence = await classifyWithLLM(domain, airlineName, signal);
   return {
     domain,
     confidence,

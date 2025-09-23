@@ -30,6 +30,7 @@ type PromptName =
   | 'policy_extractor'
   | 'policy_confidence'
   | 'policy_quality_assessor'
+  | 'policy_page_relevance'
   | 'search_result_extractor'
   | 'preference_extractor'
   | 'attractions_kid_friendly'
@@ -145,6 +146,9 @@ export async function preloadPrompts(): Promise<void> {
   );
   PROMPTS.policy_quality_assessor = await loadFileSafe(
     path.join(base, 'policy_quality_assessor.md'),
+  );
+  PROMPTS.policy_page_relevance = await loadFileSafe(
+    path.join(base, 'policy_page_relevance.md'),
   );
   PROMPTS.search_result_extractor = await loadFileSafe(
     path.join(base, 'search_result_extractor.md'),
