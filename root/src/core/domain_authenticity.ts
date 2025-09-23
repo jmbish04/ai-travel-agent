@@ -12,7 +12,8 @@ export interface DomainScore {
 const domainCache = new Map<string, number>();
 
 async function classifyWithLLM(domain: string, airlineName: string, signal?: AbortSignal): Promise<number> {
-  const cacheKey = `${domain}:${airlineName}`;
+  // Bump cache version when prompt guidance changes to avoid stale scores
+  const cacheKey = `v2:${domain}:${airlineName}`;
   if (domainCache.has(cacheKey)) {
     const cached = domainCache.get(cacheKey)!;
     console.log(`🏆 Using cached score for ${domain}: ${cached}`);
@@ -58,13 +59,37 @@ async function classifyWithLLM(domain: string, airlineName: string, signal?: Abo
   }
 }
 
+function hostFrom(input: string): string {
+  try { return new URL(input).hostname; } catch { return input.toLowerCase(); }
+}
+
+function looksLikeCountry(subject: string): boolean {
+  const s = subject.trim().toLowerCase();
+  return /\b(usa|u\.s\.a|united states|us|uk|united kingdom|england|scotland|wales|ireland|canada|mexico|france|germany|spain|italy|eu|europe|china|japan|india|australia|new zealand)\b/.test(s);
+}
+
+function preScoreOverride(domain: string, subject: string): number | null {
+  const host = hostFrom(domain);
+  const isGov = /(^|\.)gov(\.|$)/.test(host) || host.endsWith('.gov.uk') || host.endsWith('.europa.eu') || host.endsWith('usembassy.gov');
+  const isEmbassy = host.includes('embassy') || host.includes('consulate') || host.endsWith('usembassy.gov');
+  const isBooking = /(booking|expedia|kayak|skyscanner|tripadvisor|seatguru|schengenvisainfo)\./.test(host);
+  const isAirlineOrHotel = /(delta|united|american|jetblue|alaska|spirit|frontier|emirates|qatar|lufthansa|airfrance|britishairways|marriott|hilton|hyatt|ihg)\./.test(host);
+
+  if (looksLikeCountry(subject)) {
+    if (isGov || isEmbassy) return 0.95; // official
+    if (isBooking) return 0.2;          // not official
+    if (isAirlineOrHotel) return 0.1;   // brand is not official for country policy
+  }
+  return null;
+}
+
 export async function scoreDomainAuthenticity(
   domain: string, 
   airlineName: string,
   signal?: AbortSignal
 ): Promise<DomainScore> {
+  // AI-first: rely on the LLM-driven classifier prompt to decide
   const confidence = await classifyWithLLM(domain, airlineName);
-  
   return {
     domain,
     confidence,

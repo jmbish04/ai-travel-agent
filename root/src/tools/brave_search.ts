@@ -78,10 +78,10 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
     // Perform deep research if requested
     let deepSummary: string | undefined;
     if (deepResearch && results.length > 0) {
-      if (log) log.debug(`🔍 Starting deep research on ${Math.min(results.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '8'))} pages`);
+      if (log) log.debug(`🔍 Starting deep research on ${Math.min(results.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '4'))} pages`);
       
       try {
-        const maxPages = parseInt(process.env.CRAWLEE_MAX_PAGES || '8');
+        const maxPages = parseInt(process.env.CRAWLEE_MAX_PAGES || '4');
         const urls = results.slice(0, maxPages).map(r => r.url);
         const crawlResult = await deepResearchPages(urls, query);
         

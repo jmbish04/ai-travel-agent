@@ -22,7 +22,7 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
   
   try {
     const results: CrawlResult[] = [];
-    const maxPages = Math.min(urls.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '8'));
+    const maxPages = Math.min(urls.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '4'));
     
     if (DEBUG) console.debug(`🔍 Crawlee config: CRAWLEE_ENGINE=${engine}, CRAWLEE_MAX_PAGES=${process.env.CRAWLEE_MAX_PAGES}, maxPages=${maxPages}, urls.length=${urls.length}`);
     
