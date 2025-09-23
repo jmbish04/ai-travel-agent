@@ -1,6 +1,7 @@
 import { searchTravelInfo as braveSearch } from './brave_search.js';
 import { searchTravelInfo as tavilySearch } from './tavily_search.js';
-import { observeExternal } from '../util/metrics.js';
+import { observeExternal, observeSearchQuality } from '../util/metrics.js';
+import { assessQueryComplexity } from '../core/complexity.js';
 import type { Out } from './brave_search.js';
 
 export {
@@ -32,9 +33,12 @@ export async function searchTravelInfo(
 ): Promise<Out> {
   const start = Date.now();
   
-  // Determine query complexity for metrics
-  const queryComplexity = query.length > 100 ? 'complex' : 
-                         query.split(' ').length > 10 ? 'medium' : 'simple';
+  // Start complexity assessment async (don't block search)
+  const complexityPromise = assessQueryComplexity(query, log).catch(() => 
+    ({ isComplex: false, confidence: 0, reasoning: 'assessment_failed' })
+  );
+  
+  const queryComplexity = query.length > 50 ? 'complex' : 'simple'; // fallback for immediate use
   const searchType = deepResearch ? 'deep' : 'basic';
   
   try {
@@ -48,6 +52,13 @@ export async function searchTravelInfo(
       query_type: searchType,
       domain: queryComplexity
     }, Date.now() - start);
+    
+    // Track search quality metrics async (don't block response)
+    if (result.ok) {
+      complexityPromise.then(complexity => {
+        observeSearchQuality(complexity, result.results.length, false);
+      }).catch(() => {}); // ignore metrics failures
+    }
     
     return result;
   } catch (error) {

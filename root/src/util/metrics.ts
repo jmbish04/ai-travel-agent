@@ -544,6 +544,22 @@ export function snapshot() {
     };
   }
 
+  // Search quality metrics
+  const searchQualityData = searchQuality.get('search_quality');
+  if (searchQualityData) {
+    result.search_quality = {
+      total_searches: searchQualityData.total,
+      complex_query_rate: searchQualityData.total > 0 ? 
+        (searchQualityData.complexQueries / searchQualityData.total).toFixed(3) : '0.000',
+      avg_complexity_confidence: searchQualityData.avgComplexityConfidence.count > 0 ?
+        (searchQualityData.avgComplexityConfidence.sum / searchQualityData.avgComplexityConfidence.count).toFixed(3) : '0.000',
+      upgrade_rate: searchQualityData.total > 0 ? 
+        (searchQualityData.upgradeRequests / searchQualityData.total).toFixed(3) : '0.000',
+      avg_results_per_search: searchQualityData.resultCounts.count > 0 ?
+        (searchQualityData.resultCounts.sum / searchQualityData.resultCounts.count).toFixed(1) : '0.0'
+    };
+  }
+
   // Confidence correlation metrics
   const confidenceCorrelation = Array.from(confidenceOutcomes.entries()).map(([key, stats]) => {
     const totalHigh = stats.high_conf_success + stats.high_conf_fail;
@@ -793,6 +809,41 @@ export function observeSearchQuality(
   if (upgradeRequested) stats.upgradeRequests += 1;
   stats.avgResultCount.sum += results.length;
   stats.avgResultCount.count += 1;
+  
+  searchQuality.set(key, stats);
+}
+
+// Search quality tracking
+const searchQuality = new Map<string, {
+  total: number;
+  complexQueries: number;
+  avgComplexityConfidence: { sum: number; count: number };
+  upgradeRequests: number;
+  resultCounts: { sum: number; count: number };
+}>();
+
+export function observeSearchQuality(
+  complexity: { isComplex: boolean; confidence: number },
+  resultCount: number,
+  upgradeRequested: boolean = false
+) {
+  const key = 'search_quality';
+  
+  const stats = searchQuality.get(key) || {
+    total: 0,
+    complexQueries: 0,
+    avgComplexityConfidence: { sum: 0, count: 0 },
+    upgradeRequests: 0,
+    resultCounts: { sum: 0, count: 0 }
+  };
+  
+  stats.total += 1;
+  if (complexity.isComplex) stats.complexQueries += 1;
+  stats.avgComplexityConfidence.sum += complexity.confidence;
+  stats.avgComplexityConfidence.count += 1;
+  if (upgradeRequested) stats.upgradeRequests += 1;
+  stats.resultCounts.sum += resultCount;
+  stats.resultCounts.count += 1;
   
   searchQuality.set(key, stats);
 }
