@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals';
-import { scoreDomainAuthenticity } from './domain_authenticity.js';
+import { scoreDomainAuthenticity } from '../../src/core/domain_authenticity.js';
 
 describe('Domain Authenticity Classification (LLM Only)', () => {
   test('official airline sites get high confidence', async () => {
