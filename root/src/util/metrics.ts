@@ -785,34 +785,6 @@ const searchQuality = new Map<string, {
   avgResultCount: { sum: number; count: number };
 }>();
 
-export function observeSearchQuality(
-  query: string,
-  results: any[],
-  queryType: 'explicit' | 'implicit' | 'fallback',
-  complexity: number, // 0-1 scale
-  upgradeRequested: boolean = false
-) {
-  const complexityBucket = complexity < 0.3 ? 'simple' : complexity < 0.7 ? 'medium' : 'complex';
-  const key = 'search_quality';
-  
-  const stats = searchQuality.get(key) || {
-    total: 0,
-    byComplexity: { simple: 0, medium: 0, complex: 0 },
-    byType: { explicit: 0, implicit: 0, fallback: 0 },
-    upgradeRequests: 0,
-    avgResultCount: { sum: 0, count: 0 }
-  };
-  
-  stats.total += 1;
-  stats.byComplexity[complexityBucket] += 1;
-  stats.byType[queryType] += 1;
-  if (upgradeRequested) stats.upgradeRequests += 1;
-  stats.avgResultCount.sum += results.length;
-  stats.avgResultCount.count += 1;
-  
-  searchQuality.set(key, stats);
-}
-
 // Search quality tracking
 const searchQuality = new Map<string, {
   total: number;

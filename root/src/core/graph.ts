@@ -181,6 +181,14 @@ export async function runGraphTurn(
     
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
       ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_detected');
+      
+      // Track upgrade request for metrics
+      try {
+        const { observeSearchQuality } = await import('../util/metrics.js');
+        // Record upgrade request with placeholder complexity
+        observeSearchQuality({ isComplex: false, confidence: 0 }, 0, true);
+      } catch {}
+      
       // Use the original query for upgrade, not the upgrade command
       const slotCtx = await getThreadSlots(threadId);
       const optimizedOriginal = await optimizeSearchQuery(queryForUpgrade, slotCtx, 'web_search', ctx.log);
