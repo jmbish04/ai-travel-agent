@@ -66,7 +66,7 @@ export async function searchTravelInfo(
     let deepSummary = res.answer?.trim();
     if (deepResearch && results.length > 0) {
       try {
-        const maxPages = parseInt(process.env.CRAWLEE_MAX_PAGES || '8', 10);
+        const maxPages = parseInt(process.env.CRAWLEE_MAX_PAGES || '4', 10);
         const urls = results.slice(0, maxPages).map(r => r.url);
         const crawl = await deepResearchPages(urls, query);
         if (crawl.ok && crawl.summary) deepSummary = crawl.summary;

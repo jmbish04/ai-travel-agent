@@ -141,9 +141,10 @@ const searchQuality = new Map<string, {
   total: number;
   complexQueries: number;
   avgComplexityConfidence: { sum: number; count: number };
-  upgradeRequests: number;
   resultCounts: { sum: number; count: number };
 }>();
+// Track upgrade requests separately to avoid double-counting in search totals
+let searchUpgradeRequests = 0;
 
 type Labels = { target?: string; status?: string; query_type?: string; location?: string; domain?: string; confidence?: string };
 
@@ -624,7 +625,7 @@ export function snapshot() {
       avg_complexity_confidence: searchQualityData.avgComplexityConfidence.count > 0 ?
         (searchQualityData.avgComplexityConfidence.sum / searchQualityData.avgComplexityConfidence.count).toFixed(3) : '0.000',
       upgrade_rate: searchQualityData.total > 0 ? 
-        (searchQualityData.upgradeRequests / searchQualityData.total).toFixed(3) : '0.000',
+        (searchUpgradeRequests / searchQualityData.total).toFixed(3) : '0.000',
       avg_results_per_search: searchQualityData.resultCounts.count > 0 ?
         (searchQualityData.resultCounts.sum / searchQualityData.resultCounts.count).toFixed(1) : '0.0'
     };
@@ -796,6 +797,10 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'generated_answers_total':
       incGeneratedAnswer();
       break;
+    case 'search_upgrade_request_total':
+      // allow external processes to record upgrade requests
+      searchUpgradeRequests += typeof value === 'number' ? Math.max(1, Math.floor(value)) : 1;
+      break;
     case 'verify_pass_total':
       incVerifyPass();
       break;
@@ -907,7 +912,6 @@ export function observeSearchQuality(
     total: 0,
     complexQueries: 0,
     avgComplexityConfidence: { sum: 0, count: 0 },
-    upgradeRequests: 0,
     resultCounts: { sum: 0, count: 0 }
   };
   
@@ -915,7 +919,7 @@ export function observeSearchQuality(
   if (complexity.isComplex) stats.complexQueries += 1;
   stats.avgComplexityConfidence.sum += complexity.confidence;
   stats.avgComplexityConfidence.count += 1;
-  if (upgradeRequested) stats.upgradeRequests += 1;
+  if (upgradeRequested) searchUpgradeRequests += 1;
   stats.resultCounts.sum += resultCount;
   stats.resultCounts.count += 1;
   
@@ -1032,7 +1036,7 @@ export function snapshotV2() {
     total: sq.total,
     complex_query_rate: sq.total > 0 ? Number((sq.complexQueries / sq.total).toFixed(3)) : 0,
     avg_complexity_confidence: sq.avgComplexityConfidence.count > 0 ? Number((sq.avgComplexityConfidence.sum / sq.avgComplexityConfidence.count).toFixed(3)) : 0,
-    upgrade_rate: sq.total > 0 ? Number((sq.upgradeRequests / sq.total).toFixed(3)) : 0,
+    upgrade_rate: sq.total > 0 ? Number((searchUpgradeRequests / sq.total).toFixed(3)) : 0,
     avg_results_per_search: sq.resultCounts.count > 0 ? Number((sq.resultCounts.sum / sq.resultCounts.count).toFixed(1)) : 0,
   } : { total: 0, complex_query_rate: 0, avg_complexity_confidence: 0, upgrade_rate: 0, avg_results_per_search: 0 };
 

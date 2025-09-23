@@ -185,11 +185,10 @@ export async function runGraphTurn(
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
       ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_detected');
       
-      // Track upgrade request for metrics
+      // Track upgrade request for metrics (separate counter to avoid double-counting)
       try {
-        const { observeSearchQuality } = await import('../util/metrics.js');
-        // Record upgrade request with placeholder complexity
-        observeSearchQuality({ isComplex: false, confidence: 0 }, 0, true);
+        const { observeSearchUpgradeRequest } = await import('../util/metrics.js');
+        observeSearchUpgradeRequest();
       } catch {}
       
       // Use the original query for upgrade, not the upgrade command
