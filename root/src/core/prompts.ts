@@ -8,8 +8,6 @@ type PromptName =
   | 'blend_planner'
   | 'cot'
   | 'verify'
-  | 'web_search_decider'
-  | 'query_type_detector'
   | 'consent_detector'
   | 'search_upgrade_detector'
   | 'context_switch_detector'
@@ -27,17 +25,15 @@ type PromptName =
   | 'search_extract_attractions'
   | 'complexity_assessor'
   | 'iata_code_generator'
-  | 'flight_complexity_detector'
   | 'policy_summarizer'
   | 'policy_classifier'
   | 'policy_extractor'
   | 'policy_confidence'
   | 'policy_quality_assessor'
+  | 'policy_page_relevance'
   | 'search_result_extractor'
-  | 'search_query_optimizer_llm'
   | 'preference_extractor'
   | 'attractions_kid_friendly'
-  | 'city_name_extractor'
   | 'origin_destination_extractor'
   | 'attractions_summarizer'
   | 'country_disambiguator'
@@ -79,18 +75,12 @@ export async function preloadPrompts(): Promise<void> {
   const here = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
   candidates.push(path.join(here, '..', 'prompts'));
   
-  let base = candidates.find((c) => fs.existsSync(c)) || path.join(process.cwd(), 'src', 'prompts');
+  const base = candidates.find((c) => fs.existsSync(c)) || path.join(process.cwd(), 'src', 'prompts');
   PROMPTS.system = await loadFileSafe(path.join(base, 'system.md'));
   PROMPTS.blend = await loadFileSafe(path.join(base, 'blend.md'));
   PROMPTS.blend_planner = await loadFileSafe(path.join(base, 'blend_planner.md'));
   PROMPTS.cot = await loadFileSafe(path.join(base, 'cot.md'));
   PROMPTS.verify = await loadFileSafe(path.join(base, 'verify.md'));
-  PROMPTS.web_search_decider = await loadFileSafe(
-    path.join(base, 'web_search_decider.md'),
-  );
-  PROMPTS.query_type_detector = await loadFileSafe(
-    path.join(base, 'query_type_detector.md'),
-  );
   PROMPTS.consent_detector = await loadFileSafe(
     path.join(base, 'consent_detector.md'),
   );
@@ -112,7 +102,9 @@ export async function preloadPrompts(): Promise<void> {
   PROMPTS.nlp_clarifier = await loadFileSafe(
     path.join(base, 'nlp_clarifier.md'),
   );
-  PROMPTS.nlp_intent_detection = await loadFileSafe(
+  // Unify intent detection with the primary router prompt to avoid drift
+  // Use router_llm template for both initial route and fallback classification
+  PROMPTS.nlp_intent_detection = PROMPTS.router_llm || await loadFileSafe(
     path.join(base, 'nlp_intent_detection.md'),
   );
   PROMPTS.nlp_content_classification = await loadFileSafe(
@@ -139,9 +131,6 @@ export async function preloadPrompts(): Promise<void> {
   PROMPTS.complexity_assessor = await loadFileSafe(
     path.join(base, 'complexity_assessor.md'),
   );
-  PROMPTS.flight_complexity_detector = await loadFileSafe(
-    path.join(base, 'flight_complexity_detector.md'),
-  );
   PROMPTS.policy_summarizer = await loadFileSafe(
     path.join(base, 'policy_summarizer.md'),
   );
@@ -158,20 +147,17 @@ export async function preloadPrompts(): Promise<void> {
   PROMPTS.policy_quality_assessor = await loadFileSafe(
     path.join(base, 'policy_quality_assessor.md'),
   );
+  PROMPTS.policy_page_relevance = await loadFileSafe(
+    path.join(base, 'policy_page_relevance.md'),
+  );
   PROMPTS.search_result_extractor = await loadFileSafe(
     path.join(base, 'search_result_extractor.md'),
-  );
-  PROMPTS.search_query_optimizer_llm = await loadFileSafe(
-    path.join(base, 'search_query_optimizer_llm.md'),
   );
   PROMPTS.preference_extractor = await loadFileSafe(
     path.join(base, 'preference_extractor.md'),
   );
   PROMPTS.attractions_kid_friendly = await loadFileSafe(
     path.join(base, 'attractions_kid_friendly.md'),
-  );
-  PROMPTS.city_name_extractor = await loadFileSafe(
-    path.join(base, 'city_name_extractor.md'),
   );
   PROMPTS.origin_destination_extractor = await loadFileSafe(
     path.join(base, 'origin_destination_extractor.md'),

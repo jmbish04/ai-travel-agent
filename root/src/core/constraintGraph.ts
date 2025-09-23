@@ -40,5 +40,13 @@ export function buildConstraintGraph(): Map<string, Complexity> {
  * Normalize a list of constraint categories to a graph key.
  */
 export function getCombinationKey(cats: ConstraintType[]): string {
-  return cats.length ? [...cats].sort().join('+') : 'none';
+  if (!cats.length) return 'none';
+  const order = new Map(CONSTRAINT_TYPES.map((c, i) => [c, i] as const));
+  const copy = [...cats];
+  copy.sort((a, b) => {
+    const ia = order.get(a) ?? 0;
+    const ib = order.get(b) ?? 0;
+    return ia - ib;
+  });
+  return copy.join('+');
 }

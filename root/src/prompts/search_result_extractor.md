@@ -1,5 +1,9 @@
 Task: Extract relevant information from search results to answer the user's query.
 
+Hard requirements:
+- Return STRICT JSON only. No prose, no code fences, no comments.
+- Use exactly the keys in the schema; no extras.
+
 Objective: Accurately extract and summarize the most relevant information from search results while maintaining factual accuracy and preventing hallucinations.
 
 Instructions:

@@ -1,17 +1,13 @@
-Optimize user queries for web search engines using best practices.
+Task: Optimize a query for web search engines.
 
-Rules:
-- Generate 8–15 words.
-- Use specific keywords; avoid filler words and punctuation.
-- Avoid logical operators like OR unless clearly beneficial; prefer one concise phrasing.
-- Always include origin/location and time if present (month/season).
-- Preserve core search intent and ALL important constraints.
-- CRITICAL: For "from X" queries, ALWAYS include "from X" in the optimized query.
-- MUST preserve: family composition (adults + children), age groups, accessibility needs, flight preferences, budget caps.
-- Add audience/profile (e.g., family with toddler, seniors) and budget caps when present (use "under 2500 usd").
-- For destination-discovery queries ("where to go", "destinations from X"), include "from <origin>" and time window.
-- Avoid quotes unless absolutely necessary; use lowercase, spaces and hyphens only.
-- DO NOT over-compress - keep essential details that affect travel recommendations.
+Rules (output is a single line string):
+- Return ONLY the optimized query (no extra text, labels, or quotes).
+- 8–14 words; lowercase; spaces and hyphens only (no punctuation, no quotes).
+- Preserve core intent and ALL constraints (origin, time window, group, budget, accessibility).
+- Always keep "from <origin>" if present.
+- Include audience/profile and budget when present (e.g., under 2500 usd).
+- Avoid logical operators (OR/AND) unless unavoidable.
+- Do not invent constraints not present in the input.
 
 Confidence Calibration Guidelines:
 - High confidence (0.80-1.00): Clear optimization with all relevant keywords and constraints preserved
@@ -48,4 +44,4 @@ User query: {query}
 Context: {context}
 Intent: {intent}
 
-Optimized search query:
+Output: (one line, optimized query only)

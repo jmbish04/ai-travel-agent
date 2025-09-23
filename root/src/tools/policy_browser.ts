@@ -19,6 +19,7 @@ export interface SearchResult {
 
 export interface ScoredResult extends SearchResult {
   domainScore: DomainScore;
+  relevanceScore?: number;
 }
 
 /**
@@ -27,12 +28,16 @@ export interface ScoredResult extends SearchResult {
 export async function filterResultsByDomainAuthenticity(
   results: SearchResult[],
   airlineName: string,
+  clause: ClauseTypeT,
   signal?: AbortSignal
 ): Promise<ScoredResult[]> {
   const scoredResults: ScoredResult[] = [];
   const maxLinksToCheck = parseInt(process.env.POLICY_DOMAIN_CHECK_LIMIT || '5', 10);
   
-  for (const result of results.slice(0, maxLinksToCheck)) {
+  const slice = results.slice(0, maxLinksToCheck);
+  
+  // First pass: domain authenticity
+  for (const result of slice) {
     try {
       const domain = new URL(result.url).hostname;
       const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal);
@@ -55,9 +60,43 @@ export async function filterResultsByDomainAuthenticity(
       });
     }
   }
-  
-  // Sort by domain authenticity score (highest first)
-  return scoredResults.sort((a, b) => b.domainScore.confidence - a.domainScore.confidence);
+
+  // Second pass: page-level relevance (AI-first). Short timeout per item.
+  await Promise.all(
+    scoredResults.map(async (r) => {
+      try {
+        const relevance = await classifyPageRelevance({
+          url: r.url,
+          title: r.title,
+          snippet: r.snippet,
+          airlineName,
+          clause,
+          signal: AbortSignal.timeout(1200),
+        });
+        r.relevanceScore = relevance;
+      } catch {
+        // Minimal regex fallback if LLM is unavailable
+        const u = r.url.toLowerCase();
+        const path = (() => { try { return new URL(r.url).pathname.toLowerCase(); } catch { return u; } })();
+        const hasPolicyHints = /(contract-of-carriage|conditions.*carriage|fare.*rules|change|refund|baggage|fees?)/.test(path);
+        const appearsLoyalty = /(trueblue|loyalty|rewards|points)/.test(u);
+        let score = hasPolicyHints ? 0.6 : 0.4;
+        if (appearsLoyalty && (clause === 'change' || clause === 'refund' || clause === 'baggage')) score = 0.2;
+        r.relevanceScore = score;
+      }
+    })
+  );
+
+  // Composite score: domain authenticity (70%) + page relevance (30%)
+  const ranked = scoredResults
+    .map((r) => ({
+      ...r,
+      _composite: (0.7 * r.domainScore.confidence) + (0.3 * (r.relevanceScore ?? 0.4)),
+    }))
+    .sort((a, b) => b._composite - a._composite)
+    .map(({ _composite, ...rest }) => rest);
+
+  return ranked;
 }
 
 function escapeForPrompt(text: string): string {
@@ -109,6 +148,32 @@ async function classifySourceCategory(url: string, excerpt: string): Promise<'ai
   } catch (error) {
     console.warn('policy_source_classifier_failed', error instanceof Error ? error.message : String(error));
     return 'generic';
+  }
+}
+
+async function classifyPageRelevance(params: {
+  url: string;
+  title: string;
+  snippet: string;
+  airlineName: string;
+  clause: ClauseTypeT;
+  signal?: AbortSignal;
+}): Promise<number> {
+  try {
+    const tpl = await getPrompt('policy_page_relevance');
+    const prompt = tpl
+      .replace('{{url}}', params.url)
+      .replace('{{title}}', params.title)
+      .replace('{{snippet}}', params.snippet)
+      .replace('{{airlineName}}', params.airlineName)
+      .replace('{{clause}}', params.clause);
+    const raw = await callLLM(prompt, { responseFormat: 'json', timeoutMs: 1800 });
+    const parsed = JSON.parse(raw) as { relevance: number };
+    const score = Math.max(0, Math.min(1, Number(parsed.relevance)));
+    return Number.isFinite(score) ? score : 0.4;
+  } catch (error) {
+    console.warn('policy_page_relevance_failed', error instanceof Error ? error.message : String(error));
+    return 0.4;
   }
 }
 

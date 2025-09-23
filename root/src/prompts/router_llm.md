@@ -18,13 +18,14 @@ Guidelines:
   - `month`: full month name (e.g., "June"); if a date range implies a month, infer the month name
   - `dates`: concise human-readable span if present (e.g., "2025-06-12 to 2025-06-18" or "June 2025" or "today")
   - `travelerProfile`: short phrase like "family with kids", "solo traveler", "couple", "business"
+  - `company`: airline or travel provider; prefer full name (e.g., "United Airlines", "Delta Air Lines")
 - `needExternal` is true when the user asks for current facts (weather now/forecast, prices, live events, visa rules, flight searches); false for evergreen advice (packing lists, generic attractions without live data)
 - Set `confidence` in [0,1]; use ≤0.5 if intent is ambiguous
 
 Intent Classification Rules:
 - `flights`: ANY flight-related query including "flights", "fly", "book flight", "airline", flight prices, flight schedules, flight booking, travel from X to Y with dates
 - `irrops`: Flight disruptions, cancellations, delays, rebooking requests, equipment changes, missed connections, "my flight was cancelled", "flight delayed", "need to rebook"
-- `policy`: Visa requirements, immigration rules, passport info, entry requirements, travel policies, travel restrictions, border controls
+- `policy`: Visa requirements, immigration rules, passport info, entry/exit requirements, **airline policies (baggage allowance, carry-on size, checked bag fees, fare rules, change/refund rules, seating fees, pet policies)**, travel restrictions, border controls. When the user names an airline, capture it in `company`.
 - `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests, ANY hotel/accommodation/lodging query (e.g., "best hotels in Bangkok", "hotel near LAX", "accommodation in Tokyo"), AND general information about specific places (e.g., "tell me about Paris", "what's Paris like?")
 - `system`: Questions about the AI assistant, consent responses, clarifications, app functionality
 - `destinations`: Travel destination recommendations, "where should I go" questions, asking for destination suggestions (NOT asking about specific places)
@@ -147,6 +148,9 @@ Output: {"intent":"policy","needExternal":true,"slots":{"city":"Thailand"},"conf
 Input: "Latest travel restrictions for Germany"
 Output: {"intent":"policy","needExternal":true,"slots":{"city":"Germany"},"confidence":0.92}
 
+Input: "United baggage allowance"
+Output: {"intent":"policy","needExternal":true,"slots":{"company":"United Airlines"},"confidence":0.90}
+
 Input: "recommend some destinations in Asia"
 Output: {"intent":"destinations","needExternal":true,"slots":{"region":"Asia"},"confidence":0.90}
 
@@ -180,7 +184,7 @@ Input: "Best hotels in Bangkok right now"
 Output: {"intent":"web_search","needExternal":true,"slots":{"city":"Bangkok","dates":"today"},"confidence":0.90}
 
 Input: "What are the change fees for JetBlue flights? Get me the official policy with receipts."
-Output: {"intent":"policy","needExternal":true,"slots":{"city":"JetBlue"},"confidence":0.92}
+Output: {"intent":"policy","needExternal":true,"slots":{"company":"JetBlue"},"confidence":0.92}
 
 Input: "My flight DL8718 from CDG to LHR was cancelled, please help me rebook"
 Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","flightNumber":"DL8718","dates":"today"},"confidence":0.93}

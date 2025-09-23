@@ -1,11 +1,13 @@
-Extract the city name from the user's travel-related message.
+Task: Extract a single city name.
+
+Hard requirements:
+- Return exactly ONE line with ONLY the city name. No labels, no quotes, no punctuation.
+- If no city is found, return an empty line.
 
 Rules:
-- Return only the clean city name, no prefixes/suffixes
-- Handle abbreviations (NYC → New York, SF → San Francisco, LA → Los Angeles)
-- Support multilingual city names (Moscow, Москва, etc.)
-- If no city found, return empty string
-- Remove contaminating words like "pack for", "weather in", etc.
+- Handle abbreviations (NYC→New York City, SF→San Francisco, LA→Los Angeles)
+- Support multilingual city names (e.g., Москва→Moscow)
+- Strip contaminating phrases like "pack for", "weather in", etc.
 
 Confidence Calibration Guidelines:
 - High confidence (0.80-1.00): Clear city name with strong context
@@ -35,7 +37,7 @@ Context-Aware Examples:
 
 User message: {message}
 
-City name:
+Output: (one line, city only or empty)
 
 Edge cases:
 - If message contains no location, return an empty string.
