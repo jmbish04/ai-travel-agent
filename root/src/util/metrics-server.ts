@@ -1,7 +1,7 @@
 import * as express from 'express';
 import * as path from 'node:path';
 import { createLogger } from './logging.js';
-import { getPrometheusText, metricsMode, snapshot, ingestEvent } from './metrics.js';
+import { getPrometheusText, metricsMode, snapshot, snapshotV2, ingestEvent } from './metrics.js';
 
 const log = createLogger();
 const app = express.default();
@@ -15,14 +15,15 @@ app.get('/', (_req, res) => {
 });
 
 // Metrics endpoint
-app.get('/metrics', async (_req, res) => {
+app.get('/metrics', async (req, res) => {
   const mode = metricsMode();
   if (mode === 'prom') {
     const text = await getPrometheusText();
     res.setHeader('Content-Type', 'text/plain; version=0.0.4');
     return res.status(200).send(text);
   }
-  return res.json(snapshot());
+  const legacy = String(req.query.mode || '').toLowerCase() === 'legacy';
+  return res.json(legacy ? snapshot() : snapshotV2());
 });
 
 // Ingest endpoint for CLI metrics

@@ -163,13 +163,16 @@ export async function runGraphTurn(
   const previousQuery = prevSlots.last_search_query;
   const { reply: previousAnswer } = await getLastReceipts(threadId);
   
-  // If no search query, use the previous user message for upgrade detection
-  const previousUserMessage = await getLastUserMessage(threadId);
-  const queryForUpgrade = previousQuery || previousUserMessage;
+  // Only consider search upgrade when we actually have a prior web search query.
+  // Using previous user message as a fallback caused unrelated turns (e.g., policy) to be misclassified.
+  const queryForUpgrade = previousQuery; // do NOT fallback to previous user message
+
+  // Quick guard: if the current message looks like a policy question, skip upgrade detection entirely.
+  const looksLikePolicy = /\b(policy|fare\s*rules?|baggage|allowance|refund|risk[- ]?free|24\s*hour)\b/i.test(message);
+
+  ctx.log.debug({ message, previousQuery, hasQuery: !!queryForUpgrade, looksLikePolicy }, 'search_upgrade_check');
   
-  ctx.log.debug({ message, previousQuery, previousUserMessage, hasQuery: !!queryForUpgrade }, 'search_upgrade_check');
-  
-  if (queryForUpgrade) {
+  if (queryForUpgrade && !looksLikePolicy) {
     const upgradeResult = await detectSearchUpgradeRequest({
       message,
       previousQuery: queryForUpgrade,

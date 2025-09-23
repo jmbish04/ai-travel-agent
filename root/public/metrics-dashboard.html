@@ -675,55 +675,55 @@
                     document.getElementById(id).innerHTML = '';
                 });
 
-                // Pipeline Health (Phase 1 metrics)
+                // Pipeline Health (v2 metrics)
                 const pipelineDiv = document.getElementById('pipeline');
-                if (data.pipeline_stages && data.pipeline_stages.length > 0) {
-                    data.pipeline_stages.forEach(stage => {
-                        const successRate = (stage.success_rate * 100).toFixed(1);
-                        const className = stage.success_rate < 0.9 ? 'alert' : stage.success_rate < 0.95 ? 'warn' : 'ok';
-                        pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Success Rate</span><span class="metric-value ${className}">${successRate}%</span></div>`;
+                if (data.pipeline && Array.isArray(data.pipeline.stages) && data.pipeline.stages.length > 0) {
+                    data.pipeline.stages.slice().sort((a,b)=>{const ta=a.totals;const tb=b.totals;const ra=(ta.success)/Math.max(1,(ta.success+ta.clarify+ta.fail+ta.escalated));const rb=(tb.success)/Math.max(1,(tb.success+tb.clarify+tb.fail+tb.escalated));return ra-rb;}).forEach(s => {
+                        const t=s.totals; const total=Math.max(1,(t.success+t.clarify+t.fail+t.escalated)); const successRate=(t.success/total*100).toFixed(1);
+                        const className = parseFloat(successRate) < 90 ? 'alert' : parseFloat(successRate) < 95 ? 'warn' : 'ok';
+                        pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${s.stage}/${s.intent} Success</span><span class="metric-value ${className}">${successRate}%</span></div>`;
                         
                         // Add verification success rate
-                        if (stage.verify_success_rate !== undefined) {
+                        if (false) {
                             const verifyRate = (stage.verify_success_rate * 100).toFixed(1);
                             const verifyClass = stage.verify_success_rate < 0.8 ? 'alert' : stage.verify_success_rate < 0.9 ? 'warn' : 'ok';
-                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Verify Rate</span><span class="metric-value ${verifyClass}">${verifyRate}%</span></div>`;
+                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Rate</span><span class="metric-value ${verifyClass}">${verifyRate}%</span></div>`;
                         }
                         
-                        if (stage.latency) {
-                            const latencyClass = stage.latency.avg_ms > 2000 ? 'alert' : stage.latency.avg_ms > 1000 ? 'warn' : '';
-                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Avg Latency</span><span class="metric-value ${latencyClass}">${stage.latency.avg_ms}ms</span></div>`;
+                        if (s.latency && s.latency.p95 !== undefined) {
+                            const latencyClass = s.latency.p95 > 5000 ? 'alert' : s.latency.p95 > 2000 ? 'warn' : '';
+                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${s.stage}/${s.intent} p95</span><span class="metric-value ${latencyClass}">${s.latency.p95.toFixed(0)}ms</span></div>`;
                         }
                     });
                 } else {
                     pipelineDiv.innerHTML = '<div class="metric"><span class="metric-name">No pipeline activity yet</span><span class="metric-value">Send some requests to see metrics</span></div>';
                 }
 
-                // Confidence Correlation (Phase 3 metrics)
+                // Confidence Correlation (v2)
                 const confidenceDiv = document.getElementById('confidence');
-                if (data.confidence_correlation && data.confidence_correlation.length > 0) {
-                    data.confidence_correlation.forEach(corr => {
-                        if (corr.high_confidence.total > 0) {
-                            const highSuccessRate = (corr.high_confidence.success_rate * 100).toFixed(1);
-                            const className = corr.high_confidence.success_rate < 0.8 ? 'alert' : '';
-                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${corr.stage} High-Conf Success</span><span class="metric-value ${className}">${highSuccessRate}%</span></div>`;
+                if (data.quality && Array.isArray(data.quality.confidence) && data.quality.confidence.length > 0) {
+                    data.quality.confidence.forEach(c => {
+                        if (c.high.total > 0) {
+                            const highSuccessRate = (c.high.success_rate * 100).toFixed(1);
+                            const className = c.high.success_rate < 0.8 ? 'alert' : '';
+                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${c.stage}/${c.intent} High-Conf</span><span class="metric-value ${className}">${highSuccessRate}%</span></div>`;
                         }
-                        if (corr.low_confidence.total > 0) {
-                            const lowSuccessRate = (corr.low_confidence.success_rate * 100).toFixed(1);
-                            const className = corr.low_confidence.success_rate > 0.6 ? 'ok' : '';
-                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${corr.stage} Low-Conf Success</span><span class="metric-value ${className}">${lowSuccessRate}%</span></div>`;
+                        if (c.low.total > 0) {
+                            const lowSuccessRate = (c.low.success_rate * 100).toFixed(1);
+                            const className = c.low.success_rate > 0.6 ? 'ok' : '';
+                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${c.stage}/${c.intent} Low-Conf</span><span class="metric-value ${className}">${lowSuccessRate}%</span></div>`;
                         }
                     });
                 } else {
                     confidenceDiv.innerHTML = '<div class="metric"><span class="metric-name">No confidence data yet</span><span class="metric-value">Need requests to analyze</span></div>';
                 }
 
-                // Search Quality (Phase 4 metrics)
+                // Search Quality (v2)
                 const searchDiv = document.getElementById('searchQuality');
-                if (data.search_quality && data.search_quality.total_searches > 0) {
-                    const sq = data.search_quality;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Searches</span><span class="metric-value">${sq.total_searches}</span></div>`;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Complex Query Rate</span><span class="metric-value">${(parseFloat(sq.complex_query_rate) * 100).toFixed(1)}%</span></div>`;
+                if (data.search && typeof data.search.total === "number" && data.search.total > 0) {
+                    const sq = data.search;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Searches</span><span class="metric-value">${sq.total}</span></div>`;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Complex Query Rate</span><span class="metric-value">${(sq.complex_query_rate * 100).toFixed(1)}%</span></div>`;
                     searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Complexity Confidence</span><span class="metric-value">${sq.avg_complexity_confidence}</span></div>`;
                     searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Results per Search</span><span class="metric-value">${sq.avg_results_per_search}</span></div>`;
                     if (sq.upgrade_rate) {
@@ -733,10 +733,10 @@
                     searchDiv.innerHTML = '<div class="metric"><span class="metric-name">No search activity yet</span><span class="metric-value">Try some queries</span></div>';
                 }
 
-                // External API Context (Phase 2 metrics)
+                // External (v2)
                 const extDiv = document.getElementById('external');
-                if (data.external_requests && data.external_requests.targets.length > 0) {
-                    data.external_requests.targets.forEach(target => {
+                if (data.external && data.external.targets && data.external.targets.length > 0) {
+                    data.external.targets.forEach(target => {
                         const latencyClass = target.latency.avg_ms > 5000 ? 'alert' : target.latency.avg_ms > 2000 ? 'warn' : '';
                         extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Avg Latency</span><span class="metric-value ${latencyClass}">${target.latency.avg_ms.toFixed(0)}ms</span></div>`;
                         
@@ -772,9 +772,9 @@
                 let hasHealthData = false;
                 
                 // Circuit breaker status
-                if (data.breaker && data.breaker.byTarget && Object.keys(data.breaker.byTarget).length > 0) {
+                if (data.system && data.system.breaker && Object.keys(data.system.breaker).length > 0) {
                     hasHealthData = true;
-                    for (const [target, status] of Object.entries(data.breaker.byTarget)) {
+                    for (const [target, status] of Object.entries(data.system.breaker)) {
                         const state = status.state === 'closed' ? '✓ Healthy' : `⚠ ${status.state}`;
                         const className = status.state === 'closed' ? 'ok' : 'warn';
                         toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Circuit</span><span class="metric-value ${className}">${state}</span></div>`;
@@ -782,9 +782,9 @@
                 }
                 
                 // Rate limiting
-                if (data.rate_limit && data.rate_limit.byTarget && Object.keys(data.rate_limit.byTarget).length > 0) {
+                if (data.system && data.system.rate_limit && Object.keys(data.system.rate_limit).length > 0) {
                     hasHealthData = true;
-                    for (const [target, limits] of Object.entries(data.rate_limit.byTarget)) {
+                    for (const [target, limits] of Object.entries(data.system.rate_limit)) {
                         if (limits.queued_current > 0) {
                             toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Queued</span><span class="metric-value warn">${limits.queued_current}</span></div>`;
                         }
@@ -797,51 +797,15 @@
 
                 // Production Alerts
                 const alertsDiv = document.getElementById('alerts');
-                const alerts = [];
-                
-                // Check pipeline health
-                if (data.pipeline_stages) {
-                    data.pipeline_stages.forEach(stage => {
-                        if (stage.success_rate < 0.9) {
-                            alerts.push([`${stage.stage} success rate ${(stage.success_rate * 100).toFixed(1)}%`, 'alert']);
-                        }
-                        if (stage.verify_success_rate !== undefined && stage.verify_success_rate < 0.8) {
-                            alerts.push([`${stage.stage} verify rate ${(stage.verify_success_rate * 100).toFixed(1)}%`, 'alert']);
-                        }
-                        if (stage.latency && stage.latency.avg_ms > 2000) {
-                            alerts.push([`${stage.stage} latency ${stage.latency.avg_ms.toFixed(0)}ms`, 'warn']);
-                        }
+                alertsDiv.innerHTML = '';
+                if (data.pipeline && Array.isArray(data.pipeline.alerts) && data.pipeline.alerts.length > 0) {
+                    data.pipeline.alerts.forEach((alert) => {
+                        const levelClass = alert.level === 'alert' ? 'alert' : alert.level === 'warn' ? 'warn' : '';
+                        alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${levelClass}">${alert.message}</span><span class="metric-value"></span></div>`;
                     });
+                } else {
+                    alertsDiv.innerHTML = '<div class="metric"><span class="metric-name ok">All systems ready</span><span class="metric-value"></span></div>';
                 }
-                
-                // Check confidence correlation issues
-                if (data.confidence_correlation) {
-                    data.confidence_correlation.forEach(corr => {
-                        if (corr.high_confidence.total > 0 && corr.high_confidence.success_rate < 0.8) {
-                            alerts.push([`${corr.stage} high-conf failures ${(corr.high_confidence.success_rate * 100).toFixed(1)}%`, 'alert']);
-                        }
-                    });
-                }
-                
-                // Check external API issues
-                if (data.external_requests && data.external_requests.targets) {
-                    data.external_requests.targets.forEach(target => {
-                        if (target.latency.avg_ms > 5000) {
-                            alerts.push([`${target.target} slow ${target.latency.avg_ms.toFixed(0)}ms`, 'alert']);
-                        }
-                        if (target.timeout_rate > 0.05) {
-                            alerts.push([`${target.target} timeouts ${(target.timeout_rate * 100).toFixed(1)}%`, 'alert']);
-                        }
-                    });
-                }
-                
-                if (alerts.length === 0) {
-                    alerts.push(['All systems ready - no activity yet', 'ok']);
-                }
-                
-                alerts.forEach(([msg, level]) => {
-                    alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${level}">${msg}</span><span class="metric-value"></span></div>`;
-                });
 
             } catch (error) {
                 const statusEl = document.getElementById('status');

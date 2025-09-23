@@ -460,15 +460,19 @@ export class PolicyAgent {
   }
 
   private isOfficialPolicyUrl(url: string): boolean {
-    // Check if URL looks like an official policy page (not hardcoded domains)
+    // Lightweight heuristic for official-looking policy URLs (fallback path only)
     const u = url.toLowerCase();
-    return (
-      (u.includes('baggage') || u.includes('policy') || u.includes('terms')) &&
-      !u.includes('blog') &&
-      !u.includes('forum') &&
-      !u.includes('reddit') &&
-      !u.includes('wikipedia')
-    );
+    const host = (() => { try { return new URL(u).hostname; } catch { return u; } })();
+    const isGovTld = /\.gov(\.|$)/.test(host) || /(^|\.)gov\.[a-z]{2,6}$/.test(host) || /(^|\.)gouv\.[a-z]{2,6}$/.test(host) || host.endsWith('.gov.uk') || host.endsWith('.europa.eu');
+    const embassyLike = host.includes('embassy') || host.includes('consulate') || host.endsWith('usembassy.gov');
+    const brandPolicyLike = u.includes('/policy') || u.includes('/policies') || u.includes('/terms') || u.includes('/contract-of-carriage') || u.includes('/conditions');
+    const visaLike = u.includes('visa') || u.includes('entry') || u.includes('immigration');
+    const isJunk = u.includes('blog') || u.includes('forum') || u.includes('reddit') || u.includes('wikipedia');
+
+    if (isJunk) return false;
+    if (isGovTld || embassyLike) return true;
+    // Otherwise, accept brand official policy-ish pages
+    return brandPolicyLike || visaLike;
   }
 
   private inferClauseType(question: string): 'baggage' | 'refund' | 'change' | 'visa' {
