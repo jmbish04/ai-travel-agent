@@ -308,18 +308,18 @@ export async function routeIntent({ message, threadId, logger }: {
   
   // Clear old context for completely new, unrelated queries
   if (threadId && ctxSlots.awaiting_deep_research_consent === 'true') {
-    console.log(`🔍 CONSENT: Found awaiting_deep_research_consent, checking if "${m}" is a consent response`);
+    if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Found awaiting_deep_research_consent, checking if "${m}" is a consent response`);
     // Check if this is a completely different query (not a consent response)
     const consentVerdict = await classifyConsentResponse(m, logger?.log);
-    console.log(`🔍 CONSENT: Verdict for "${m}": ${consentVerdict}`);
+    if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Verdict for "${m}": ${consentVerdict}`);
     if (consentVerdict === 'unclear') {
-      console.log(`🔍 CONSENT: Clearing consent state due to unclear verdict`);
+      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Clearing consent state due to unclear verdict`);
       await clearConsentState(threadId);
       // Reload slots after clearing
       ctxSlots = await getThreadSlots(threadId);
-      console.log(`🔍 CONSENT: Slots after clearing:`, ctxSlots);
+      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Slots after clearing:`, ctxSlots);
     } else {
-      console.log(`🔍 CONSENT: Not clearing consent state, verdict was: ${consentVerdict}`);
+      if ((process.env.LOG_LEVEL || '').toLowerCase() === 'debug') console.debug(`🔍 CONSENT: Not clearing consent state, verdict was: ${consentVerdict}`);
     }
   }
   

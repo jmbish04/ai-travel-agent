@@ -133,7 +133,7 @@ function percentile(arr: number[], p: number): number {
   if (!arr || arr.length === 0) return 0;
   const a = [...arr].sort((x, y) => x - y);
   const idx = Math.min(a.length - 1, Math.max(0, Math.floor((p / 100) * (a.length - 1))));
-  return a[idx];
+  return a[idx] ?? 0;
 }
 
 // Search quality tracking

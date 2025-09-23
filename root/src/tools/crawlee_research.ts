@@ -1,6 +1,8 @@
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
 
+const DEBUG = process.env.LOG_LEVEL === 'debug';
+
 type CrawlResult = {
   url: string;
   title: string;
@@ -16,7 +18,6 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
   if (urls.length === 0) return { ok: false, results: [] };
   
   const engine = process.env.CRAWLEE_ENGINE || 'cheerio';
-  const DEBUG = process.env.LOG_LEVEL === 'debug';
   if (DEBUG) console.debug(`🔍 Crawlee engine: ${engine}`);
   
   try {
