@@ -3,6 +3,7 @@ import { getPrompt } from '../core/prompts.js';
 import { callLLM } from '../core/llm.js';
 import { deepResearchPages } from './crawlee_research.js';
 import { withResilience } from '../util/resilience.js';
+import { observeExternal } from '../util/metrics.js';
 
 export interface SearchResult {
   title: string;
@@ -21,9 +22,6 @@ function withTimeout(ms: number, signal?: AbortSignal) {
   return { signal: linked, cancel: () => clearTimeout(t) };
 }
 
-/**
- * Search for travel information using Brave Search API
- */
 export async function searchTravelInfo(query: string, log?: any, deepResearch = false): Promise<Out> {
   if (!query.trim()) {
     if (log) log.debug(`❌ Brave Search: empty query`);

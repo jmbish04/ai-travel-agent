@@ -18,7 +18,7 @@ import { detectSearchUpgradeRequest } from './search_upgrade.js';
 declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
-import { incClarify } from '../util/metrics.js';
+import { incClarify, observeStage, observeRouterResult } from '../util/metrics.js';
 import { 
   getThreadSlots, 
   updateThreadSlots, 
@@ -96,8 +96,10 @@ export async function runGraphTurn(
   ctx: { log: Logger; onStatus?: (status: string) => void },
 ): Promise<NodeOut> {
   let llmCallsThisTurn = 0;
+  const turnStart = Date.now();
   
   // === GUARD STAGE: Fast micro-rules first ===
+  const guardStart = Date.now();
   const { 
     checkYesNoShortcut,
     buildTurnCache 
@@ -118,11 +120,13 @@ export async function runGraphTurn(
       await writeConsentState(threadId, { type: '', pending: '' });
 
       if (verdict === 'yes' && consentState.pending) {
+        observeStage('guard', Date.now() - guardStart, true);
         if (consentState.type === 'deep') {
           return await performDeepResearchNode(consentState.pending, ctx, threadId);
         }
         return await performWebSearchNode(consentState.pending, ctx, threadId);
       }
+      observeStage('guard', Date.now() - guardStart, true);
       return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
     }
   }
@@ -152,6 +156,7 @@ export async function runGraphTurn(
   }
   
   // === EXTRACT STAGE: Router-once with intent-gated extractors ===
+  const extractStart = Date.now();
   // Check for search upgrade request BEFORE routing
   const prevSlots = await getThreadSlots(threadId);
   const previousQuery = prevSlots.last_search_query;
@@ -180,6 +185,7 @@ export async function runGraphTurn(
       const optimizedOriginal = await optimizeSearchQuery(queryForUpgrade, slotCtx, 'web_search', ctx.log);
       // Persist the optimized query for continuity across turns
       await updateThreadSlots(threadId, { last_search_query: optimizedOriginal }, []);
+      observeStage('extract', Date.now() - extractStart, true);
       return await performDeepResearchNode(optimizedOriginal, ctx, threadId);
     }
   }
@@ -212,9 +218,14 @@ export async function runGraphTurn(
         };
         llmCallsThisTurn++;
         ctx.log.debug({ route: C.route }, 'router_once');
+        
+        // Track router result
+        observeRouterResult(routed.intent, routed.confidence, 0);
       }
     }
   }
+  
+  observeStage('extract', Date.now() - extractStart, true, C.route?.intent);
   
   // Intent-gated extractors
   const routedIntent = C.forced ?? C.route?.intent;
@@ -302,8 +313,10 @@ export async function runGraphTurn(
   }
   
   // === ROUTE STAGE: Use cached router result ===
+  const routeStart = Date.now();
   // Check for unrelated content
   if (C.clsContent?.content_type === 'unrelated') {
+    observeStage('route', Date.now() - routeStart, false);
     return {
       done: true,
       reply: 'I focus on travel planning. Is there something about weather, destinations, packing, or attractions I can help with?',
@@ -324,6 +337,7 @@ export async function runGraphTurn(
     await updateThreadSlots(threadId, slots, missing, [], intent);
     try { if (intent && missing[0]) incClarify(intent, missing[0]); } catch {}
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
+    observeStage('route', Date.now() - routeStart, false, intent);
     return { done: true, reply: q };
   }
   // Clarification resolved: if we previously had awaiting_* flags and now no missing slots
@@ -339,6 +353,8 @@ export async function runGraphTurn(
   await updateThreadSlots(threadId, slots, [], [], intent);
   await setLastIntent(threadId, intent as any);
   
+  observeStage('route', Date.now() - routeStart, true, intent);
+  
   // Log metrics
   ctx.log.debug({ 
     intent, 
@@ -347,8 +363,14 @@ export async function runGraphTurn(
   }, 'graph_turn_complete');
   
   // === ACT STAGE: Route to domain nodes ===
+  const actStart = Date.now();
   const routeCtx: NodeCtx = { msg: message, threadId, onStatus: ctx.onStatus };
-  return intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
+  const result = intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
+  
+  const actSuccess = 'done' in result && result.done;
+  observeStage('gather', Date.now() - actStart, actSuccess, intent);
+  
+  return result;
 }
 
 // === HELPER FUNCTIONS ===

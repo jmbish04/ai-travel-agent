@@ -125,6 +125,11 @@ export async function extractPolicyClause(params: {
   const t0 = Date.now();
   const url = params.url;
   const host = new URL(url).hostname;
+  
+  // Determine domain category for metrics
+  const domain = host.includes('airline') || host.includes('air') ? 'airline' : 
+                host.includes('hotel') || host.includes('booking') ? 'hotel' :
+                host.includes('visa') || host.includes('embassy') ? 'visa' : 'generic';
 
   try {
     const timeoutSecs = Math.ceil((params.timeoutMs ?? 30000) / 1000); // 30 second default
@@ -133,10 +138,13 @@ export async function extractPolicyClause(params: {
     
     // Score domain authenticity if airline name provided
     let domainScore: DomainScore | undefined;
+    let confidence = 'unknown';
     if (params.airlineName) {
       try {
         const signal = AbortSignal.timeout(150);
         domainScore = await scoreDomainAuthenticity(host, params.airlineName, signal);
+        confidence = domainScore.confidence > 0.7 ? 'high' : 
+                    domainScore.confidence > 0.4 ? 'medium' : 'low';
         console.log(`🏆 Domain authenticity: ${domainScore.confidence.toFixed(2)} (${domainScore.reasoning})`);
       } catch (error) {
         console.warn('Domain scoring failed:', error);
@@ -144,7 +152,7 @@ export async function extractPolicyClause(params: {
     }
     
     // Use only Playwright with advanced stealth - no Crawlee fallback
-    return await scheduleWithLimit(host, async () => {
+    const result = await scheduleWithLimit(host, async () => {
       try {
         return await withBreaker(host, async () => {
           try { incFallback('browser'); } catch {}
@@ -169,8 +177,25 @@ export async function extractPolicyClause(params: {
       }
     });
     
-  } finally {
-    observeExternal({ target: 'policy_browser', status: 'ok' }, Date.now() - t0);
+    observeExternal({
+      target: 'policy_browser',
+      status: 'ok',
+      query_type: params.clause,
+      domain: domain,
+      confidence: confidence
+    }, Date.now() - t0);
+    
+    return result;
+    
+  } catch (error) {
+    observeExternal({
+      target: 'policy_browser',
+      status: 'error',
+      query_type: params.clause,
+      domain: domain,
+      confidence: confidence || 'unknown'
+    }, Date.now() - t0);
+    throw error;
   }
 }
 

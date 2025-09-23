@@ -69,12 +69,13 @@ const e2eHist = { buckets: Object.fromEntries(e2eBuckets.map(b => [String(b), 0]
 type ExtAgg = {
   total: number;
   byStatus: Record<string, number>; // ok, 4xx, 5xx, timeout, network, unknown
+  byContext: Record<string, number>; // query_type, location, domain context
   latency: { count: number; sum: number; min: number; max: number };
 };
 const externalAgg = new Map<string, ExtAgg>(); // key = target
 let toolCallsTotal = 0;
 
-type Labels = { target?: string; status?: string };
+type Labels = { target?: string; status?: string; query_type?: string; location?: string; domain?: string; confidence?: string };
 
 // Prometheus metrics (conditionally initialized)
 type CounterT = { inc: (labels?: Record<string, string>) => void };
@@ -373,10 +374,32 @@ export function observeExternal(labels: Labels, durationMs: number) {
   const prev = externalAgg.get(target) ?? {
     total: 0,
     byStatus: {},
+    byContext: {},
     latency: { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 },
   };
   prev.total += 1;
   prev.byStatus[status] = (prev.byStatus[status] ?? 0) + 1;
+  
+  // Track bounded context labels to avoid high cardinality
+  if (labels.query_type) {
+    const key = `query_type:${labels.query_type}`;
+    prev.byContext[key] = (prev.byContext[key] ?? 0) + 1;
+  }
+  if (labels.location) {
+    // Bound location to first 20 chars to avoid high cardinality
+    const boundedLocation = labels.location.toLowerCase().slice(0, 20);
+    const key = `location:${boundedLocation}`;
+    prev.byContext[key] = (prev.byContext[key] ?? 0) + 1;
+  }
+  if (labels.domain) {
+    const key = `domain:${labels.domain}`;
+    prev.byContext[key] = (prev.byContext[key] ?? 0) + 1;
+  }
+  if (labels.confidence) {
+    const key = `confidence:${labels.confidence}`;
+    prev.byContext[key] = (prev.byContext[key] ?? 0) + 1;
+  }
+  
   prev.latency.count += 1;
   prev.latency.sum += durationMs;
   prev.latency.min = Math.min(prev.latency.min, durationMs);
@@ -465,6 +488,7 @@ export function snapshot() {
     target,
     total: agg.total,
     byStatus: agg.byStatus,
+    byContext: agg.byContext,
     latency: {
       count: agg.latency.count,
       avg_ms: agg.latency.count > 0 ? Number((agg.latency.sum / agg.latency.count).toFixed(1)) : 0,
@@ -473,6 +497,48 @@ export function snapshot() {
     },
     timeout_rate: agg.total > 0 ? Number(((agg.byStatus['timeout'] ?? 0) / agg.total).toFixed(3)) : 0,
   }));
+  
+  // Pipeline stage metrics
+  const stages = Array.from(new Set([
+    ...Array.from(stageMetrics.success.keys()),
+    ...Array.from(stageMetrics.failure.keys())
+  ])).map(key => {
+    const success = stageMetrics.success.get(key) || 0;
+    const failure = stageMetrics.failure.get(key) || 0;
+    const total = success + failure;
+    const latency = stageMetrics.latency.get(key);
+    
+    return {
+      stage: key,
+      success_count: success,
+      failure_count: failure,
+      success_rate: total > 0 ? Number((success / total).toFixed(3)) : 0,
+      latency: latency ? {
+        count: latency.count,
+        avg_ms: latency.count > 0 ? Number((latency.sum / latency.count).toFixed(1)) : 0,
+        min_ms: latency.count > 0 ? latency.min : 0,
+        max_ms: latency.max,
+      } : null
+    };
+  });
+  
+  // Confidence correlation metrics
+  const confidenceCorrelation = Array.from(confidenceOutcomes.entries()).map(([key, stats]) => {
+    const totalHigh = stats.high_conf_success + stats.high_conf_fail;
+    const totalLow = stats.low_conf_success + stats.low_conf_fail;
+    
+    return {
+      stage: key,
+      high_confidence: {
+        total: totalHigh,
+        success_rate: totalHigh > 0 ? Number((stats.high_conf_success / totalHigh).toFixed(3)) : 0
+      },
+      low_confidence: {
+        total: totalLow,
+        success_rate: totalLow > 0 ? Number((stats.low_conf_success / totalLow).toFixed(3)) : 0
+      }
+    };
+  });
   
   // Include session store config
   const sessionStoreKind = process.env.SESSION_STORE || 'memory';
@@ -491,6 +557,8 @@ export function snapshot() {
     verify_pass_total: verifyPass,
     generated_answers_total: generatedAnswers,
     answers_using_external_data_total: answersUsingExternal,
+    pipeline_stages: stages,
+    confidence_correlation: confidenceCorrelation,
     quality: {
       verify_pass_rate: generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0,
       verify_fail_rate: generatedAnswers > 0 ? Number((verifyFail / generatedAnswers).toFixed(3)) : 0,
@@ -608,4 +676,89 @@ export function observeRouterConfidence(confidence: number) {
   else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] = (routerConfidenceBuckets['0.6-0.75'] ?? 0) + 1;
   else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] = (routerConfidenceBuckets['0.75-0.9'] ?? 0) + 1;
   else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
+}
+
+// === PHASE 1: PIPELINE STAGE INSTRUMENTATION ===
+
+// Stage-level metrics
+const stageMetrics = {
+  success: new Map<string, number>(),
+  failure: new Map<string, number>(),
+  latency: new Map<string, { count: number; sum: number; min: number; max: number }>()
+};
+
+// Confidence correlation tracking
+const confidenceOutcomes = new Map<string, {
+  high_conf_success: number;
+  high_conf_fail: number;
+  low_conf_success: number;
+  low_conf_fail: number;
+}>();
+
+export function observeStage(
+  stage: 'guard'|'extract'|'route'|'gather'|'blend'|'verify',
+  durationMs: number,
+  success: boolean = true,
+  intent?: string
+) {
+  const key = intent ? `${stage}_${intent}` : stage;
+  
+  // Track success/failure
+  if (success) {
+    stageMetrics.success.set(key, (stageMetrics.success.get(key) || 0) + 1);
+  } else {
+    stageMetrics.failure.set(key, (stageMetrics.failure.get(key) || 0) + 1);
+  }
+  
+  // Track latency
+  const latency = stageMetrics.latency.get(key) || { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+  latency.count += 1;
+  latency.sum += durationMs;
+  latency.min = Math.min(latency.min, durationMs);
+  latency.max = Math.max(latency.max, durationMs);
+  stageMetrics.latency.set(key, latency);
+}
+
+export function observeRouterResult(
+  intent: string,
+  confidence: number,
+  missingSlots: number,
+  success?: boolean
+) {
+  observeRouterConfidence(confidence);
+  
+  // Track confidence correlation if success is known
+  if (success !== undefined) {
+    observeConfidenceOutcome('router', confidence, success, intent);
+  }
+  
+  // Track missing slots as a quality indicator
+  if (missingSlots > 0) {
+    bump(clarifyRequests, `${intent}:missing_slots`);
+  }
+}
+
+export function observeConfidenceOutcome(
+  stage: 'router'|'verify'|'search',
+  confidence: number,
+  success: boolean,
+  intent?: string
+) {
+  const key = intent ? `${stage}_${intent}` : stage;
+  const isHighConf = confidence > 0.7;
+  
+  const stats = confidenceOutcomes.get(key) || {
+    high_conf_success: 0, high_conf_fail: 0,
+    low_conf_success: 0, low_conf_fail: 0
+  };
+  
+  if (isHighConf) {
+    if (success) stats.high_conf_success += 1;
+    else stats.high_conf_fail += 1;
+  } else {
+    if (success) stats.low_conf_success += 1;
+    else stats.low_conf_fail += 1;
+  }
+  
+  confidenceOutcomes.set(key, stats);
 }

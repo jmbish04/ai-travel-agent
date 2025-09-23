@@ -8,6 +8,7 @@ import { searchPOIs, getPOIDetail } from './opentripmap.js';
 import { classifyAttractions, type AttractionItem } from '../core/transformers-attractions-classifier.js';
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
+import { observeExternal } from '../util/metrics.js';
 
 // Semantic attraction filtering
 function isValidAttraction(name: string): boolean {
@@ -26,28 +27,80 @@ export async function getAttractions(input: {
   limit?: number;
   profile?: 'default' | 'kid_friendly';
 }): Promise<Out> {
-  if (!input.city) return { ok: false, reason: 'no_city' };
+  const start = Date.now();
+  
+  if (!input.city) {
+    observeExternal({
+      target: 'attractions',
+      status: 'error',
+      query_type: 'no_city'
+    }, Date.now() - start);
+    return { ok: false, reason: 'no_city' };
+  }
   
   // Check for obviously fake city names in the original input
   const city = input.city.toLowerCase();
   if (city.includes('fake') || city.includes('test') || city.includes('cityville') || 
       city.includes('ville') && city.length < 15 || city.length <= 2) {
+    observeExternal({
+      target: 'attractions',
+      status: 'error',
+      query_type: 'invalid_city',
+      location: input.city
+    }, Date.now() - start);
     return { ok: false, reason: 'unknown_city' };
   }
   
-  // Try OpenTripMap first for richer POI data
-  const primaryResult = await tryOpenTripMap(input.city, input.limit, input.profile);
-  if (primaryResult.ok) {
-    return primaryResult;
-  }
+  const category = input.profile || 'default';
+  
+  try {
+    // Try OpenTripMap first for richer POI data
+    const primaryResult = await tryOpenTripMap(input.city, input.limit, input.profile);
+    if (primaryResult.ok) {
+      observeExternal({
+        target: 'attractions',
+        status: 'ok',
+        query_type: 'opentripmap',
+        location: input.city,
+        domain: category
+      }, Date.now() - start);
+      return primaryResult;
+    }
 
-  // For unknown cities, avoid web fallback to prevent fabrications
-  if (!primaryResult.ok && 'reason' in primaryResult && primaryResult.reason === 'unknown_city') {
-    return primaryResult;
-  }
+    // For unknown cities, avoid web fallback to prevent fabrications
+    if (!primaryResult.ok && 'reason' in primaryResult && primaryResult.reason === 'unknown_city') {
+      observeExternal({
+        target: 'attractions',
+        status: 'error',
+        query_type: 'unknown_city',
+        location: input.city,
+        domain: category
+      }, Date.now() - start);
+      return primaryResult;
+    }
 
-  // Fallback to web search
-  const fallbackResult = await tryAttractionsFallback(input.city);
+    // Fallback to web search
+    const fallbackResult = await tryAttractionsFallback(input.city);
+    
+    observeExternal({
+      target: 'attractions',
+      status: fallbackResult.ok ? 'ok' : 'error',
+      query_type: 'search_fallback',
+      location: input.city,
+      domain: category
+    }, Date.now() - start);
+    
+    return fallbackResult;
+  } catch (error) {
+    observeExternal({
+      target: 'attractions',
+      status: 'error',
+      query_type: 'exception',
+      location: input.city,
+      domain: category
+    }, Date.now() - start);
+    throw error;
+  }
   if (fallbackResult.ok) {
     return { ...fallbackResult, source: getSearchSource() };
   }

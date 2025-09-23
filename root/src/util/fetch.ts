@@ -1,5 +1,4 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { observeExternal } from './metrics.js';
 import { createLogger } from './logging.js';
 import { scheduleWithLimit } from './limiter.js';
 import { withBreaker } from './circuit.js';
@@ -191,7 +190,6 @@ export async function fetchJSON<T = unknown>(
       
       const duration = Date.now() - start;
       log.debug({ target, responseSize: responseText.length, duration }, '✅ API request successful');
-      observeExternal({ target, status: 'ok' }, duration);
       return result;
       
     } catch (err: unknown) {
@@ -201,21 +199,18 @@ export async function fetchJSON<T = unknown>(
       // Handle circuit breaker open error
       if (err instanceof Error && (err.name === 'CircuitBreakerOpenError' || err.message.includes('Circuit breaker is open'))) {
         log.debug({ target }, '🔌 Circuit breaker is open');
-        observeExternal({ target, status: 'breaker_open' }, duration);
         throw new ExternalFetchError('network', 'circuit_open');
       }
       
       if (err instanceof ExternalFetchError) {
         const statusLabel = err.kind === 'timeout' ? 'timeout' : 
                            err.kind === 'http' ? (err.status && err.status >= 500 ? '5xx' : '4xx') : 'network';
-        observeExternal({ target, status: statusLabel }, duration);
         
         // HTTP errors: retry 429 and 5xx, but not 4xx
         if (err.kind === 'http' && err.status && err.status >= 400 && err.status < 500 && err.status !== 429) {
           throw err;
         }
       } else {
-        observeExternal({ target, status: 'network' }, duration);
         lastErr = new ExternalFetchError('network', 'network_error');
       }
       
