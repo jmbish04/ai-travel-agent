@@ -418,33 +418,29 @@
             <div class="card guide-card">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-book"></i>
+                        <i class="fas fa-bug"></i>
                     </div>
-                    <h2>Dashboard Guide</h2>
+                    <h2>Production Debugging Guide</h2>
                 </div>
                 <p class="hint">
-                    Key metrics and their business significance:
+                    How to debug production issues in 30 seconds:
                 </p>
                 <div class="guide-content" id="guide">
                     <div class="metric">
-                        <span class="metric-name">First Call Resolution (FCR)</span>
-                        <span class="metric-value">Measures the percentage of customer issues resolved in the first interaction. Target: >60%</span>
+                        <span class="metric-name">Pipeline Health</span>
+                        <span class="metric-value">Check which stage is failing: guard→extract→route→gather→blend→verify. Low success rates indicate bottlenecks.</span>
                     </div>
                     <div class="metric">
-                        <span class="metric-name">Citation Coverage & Verification</span>
-                        <span class="metric-value">Ensures answers are grounded in reliable sources. High coverage and low failure rates indicate trustworthy responses.</span>
+                        <span class="metric-name">Confidence Correlation</span>
+                        <span class="metric-value">High-confidence failures = model drift. Low-confidence successes = undertrained intents.</span>
                     </div>
                     <div class="metric">
-                        <span class="metric-name">Router Confidence</span>
-                        <span class="metric-value">Low confidence scores indicate ambiguous user intents that may require clarification or retraining.</span>
+                        <span class="metric-name">External API Context</span>
+                        <span class="metric-value">Slow APIs by location/domain help identify regional issues or specific content problems.</span>
                     </div>
                     <div class="metric">
-                        <span class="metric-name">External Request Latency</span>
-                        <span class="metric-value">Measures the performance of external APIs. High latency impacts user experience and should be monitored closely.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">End-to-End Latency</span>
-                        <span class="metric-value">Overall response time. Critical for user satisfaction. Target: <3s for 95th percentile.</span>
+                        <span class="metric-name">Search Quality</span>
+                        <span class="metric-value">Complex query rate vs result quality shows if search is handling difficult queries properly.</span>
                     </div>
                 </div>
             </div>
@@ -452,67 +448,34 @@
             <div class="card business">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-briefcase"></i>
+                        <i class="fas fa-cogs"></i>
                     </div>
-                    <h2>Business KPIs (Quantitative)</h2>
+                    <h2>Pipeline Health</h2>
                 </div>
-                <p class="hint">Key business metrics including session resolution and time to resolution.</p>
-                <div id="business"></div>
+                <p class="hint">Success rates and latency for each pipeline stage. Identifies bottlenecks quickly.</p>
+                <div id="pipeline"></div>
             </div>
 
             <div class="card chat">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-comments"></i>
+                        <i class="fas fa-brain"></i>
                     </div>
-                    <h2>Usage Metrics (Quantitative)</h2>
+                    <h2>Confidence Correlation</h2>
                 </div>
-                <p class="hint">Conversation volume and engagement patterns.</p>
-                <div id="chatActivity"></div>
+                <p class="hint">High/low confidence success rates by stage. Identifies model drift and training gaps.</p>
+                <div id="confidence"></div>
             </div>
 
             <div class="card router">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-route"></i>
+                        <i class="fas fa-search"></i>
                     </div>
-                    <h2>Router Performance</h2>
+                    <h2>Search Quality</h2>
                 </div>
-                <p class="hint">Intent classification confidence and accuracy metrics.</p>
-                <div id="routerPerf"></div>
-            </div>
-
-            <div class="card clarify">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-question-circle"></i>
-                    </div>
-                    <h2>Clarifications</h2>
-                </div>
-                <p class="hint">Effectiveness of clarification prompts in resolving user intents.</p>
-                <div id="clarifications"></div>
-            </div>
-
-            <div class="card fallback">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-undo"></i>
-                    </div>
-                    <h2>Fallbacks</h2>
-                </div>
-                <p class="hint">Fallback mechanism usage indicating gaps in primary capabilities.</p>
-                <div id="fallbacks"></div>
-            </div>
-
-            <div class="card citations">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-bookmark"></i>
-                    </div>
-                    <h2>Quality Metrics (Qualitative)</h2>
-                </div>
-                <p class="hint">Source grounding and factual accuracy of assistant responses.</p>
-                <div id="citations"></div>
+                <p class="hint">Query complexity distribution and search performance metrics.</p>
+                <div id="searchQuality"></div>
             </div>
 
             <div class="card external">
@@ -520,9 +483,9 @@
                     <div class="card-icon">
                         <i class="fas fa-globe"></i>
                     </div>
-                    <h2>External API Performance</h2>
+                    <h2>External API Context</h2>
                 </div>
-                <p class="hint">Performance and reliability of external API integrations.</p>
+                <p class="hint">API performance by query type, location, and domain. Helps identify regional issues.</p>
                 <div id="external"></div>
             </div>
 
@@ -531,43 +494,32 @@
                     <div class="card-icon">
                         <i class="fas fa-tachometer-alt"></i>
                     </div>
-                    <h2>System Performance (Quantitative)</h2>
+                    <h2>System Performance</h2>
                 </div>
-                <p class="hint">System response times and operational efficiency metrics.</p>
+                <p class="hint">End-to-end latency and throughput metrics.</p>
                 <div id="perf"></div>
             </div>
 
             <div class="card tools">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-wrench"></i>
+                        <i class="fas fa-shield-alt"></i>
                     </div>
-                    <h2>System Health & Reliability</h2>
+                    <h2>System Health</h2>
                 </div>
-                <p class="hint">Circuit breakers, rate limiting, and tool reliability metrics.</p>
+                <p class="hint">Circuit breakers and rate limiting status.</p>
                 <div id="tools"></div>
             </div>
 
             <div class="card alerts">
                 <div class="card-header">
                     <div class="card-icon">
-                        <i class="fas fa-bell"></i>
+                        <i class="fas fa-exclamation-triangle"></i>
                     </div>
-                    <h2>Alerts</h2>
+                    <h2>Production Alerts</h2>
                 </div>
-                <p class="hint">Active service level objective violations requiring attention.</p>
+                <p class="hint">Active issues requiring immediate attention.</p>
                 <div id="alerts"></div>
-            </div>
-
-            <div class="card trends">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-chart-bar"></i>
-                    </div>
-                    <h2>Trends & System Info</h2>
-                </div>
-                <p class="hint">Historical trends and system configuration.</p>
-                <div id="trends"></div>
             </div>
         </div>
 
@@ -624,209 +576,166 @@
                 statusEl.innerHTML = '<i class="fas fa-circle"></i><span>Connected</span>';
 
                 // Clear containers
-                ['business','chatActivity', 'routerPerf', 'clarifications', 'fallbacks', 'citations', 'external', 'perf', 'tools', 'alerts', 'trends'].forEach(id => {
+                ['pipeline', 'confidence', 'searchQuality', 'external', 'perf', 'tools', 'alerts'].forEach(id => {
                     document.getElementById(id).innerHTML = '';
                 });
 
-                // Business Overview (Quantitative)
-                const bizDiv = document.getElementById('business');
-                if (data.business) {
-                    renderMetrics('Total Sessions (count)', data.business.total_sessions || 0, bizDiv);
-                    renderMetrics('Resolved Sessions (count)', data.business.resolved_sessions || 0, bizDiv);
-                    renderMetrics('FCR Rate (%)', ((data.business.fcr_rate || 0) * 100).toFixed(1), bizDiv);
-                    if (typeof data.business.deflection_rate === 'number') {
-                        renderMetrics('Deflection Rate (%)', (data.business.deflection_rate * 100).toFixed(1), bizDiv);
-                    }
-                    if (data.business.session_outcomes) {
-                        renderMetrics('Auto-resolved (count)', data.business.session_outcomes.auto || 0, bizDiv);
-                        renderMetrics('Escalated (count)', data.business.session_outcomes.escalated || 0, bizDiv);
-                        renderMetrics('Abandoned (count)', data.business.session_outcomes.abandoned || 0, bizDiv);
-                    }
-                    if (data.business.ttr_ms_by_intent) {
-                        for (const [intent, stats] of Object.entries(data.business.ttr_ms_by_intent)) {
-                            renderMetrics(`${intent} Avg TTR (ms)`, stats.avg_ms || 0, bizDiv);
+                // Pipeline Health (Phase 1 metrics)
+                const pipelineDiv = document.getElementById('pipeline');
+                if (data.pipeline_stages && data.pipeline_stages.length > 0) {
+                    data.pipeline_stages.forEach(stage => {
+                        const successRate = (stage.success_rate * 100).toFixed(1);
+                        const className = stage.success_rate < 0.9 ? 'alert' : stage.success_rate < 0.95 ? 'warn' : 'ok';
+                        pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Success Rate</span><span class="metric-value ${className}">${successRate}%</span></div>`;
+                        if (stage.latency) {
+                            const latencyClass = stage.latency.avg_ms > 2000 ? 'alert' : stage.latency.avg_ms > 1000 ? 'warn' : '';
+                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Avg Latency</span><span class="metric-value ${latencyClass}">${stage.latency.avg_ms}ms</span></div>`;
                         }
+                    });
+                } else {
+                    pipelineDiv.innerHTML = '<div class="metric"><span class="metric-name">No pipeline data yet</span><span class="metric-value">-</span></div>';
+                }
+
+                // Confidence Correlation (Phase 3 metrics)
+                const confidenceDiv = document.getElementById('confidence');
+                if (data.confidence_correlation && data.confidence_correlation.length > 0) {
+                    data.confidence_correlation.forEach(corr => {
+                        if (corr.high_confidence.total > 0) {
+                            const highSuccessRate = (corr.high_confidence.success_rate * 100).toFixed(1);
+                            const className = corr.high_confidence.success_rate < 0.8 ? 'alert' : '';
+                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${corr.stage} High-Conf Success</span><span class="metric-value ${className}">${highSuccessRate}%</span></div>`;
+                        }
+                        if (corr.low_confidence.total > 0) {
+                            const lowSuccessRate = (corr.low_confidence.success_rate * 100).toFixed(1);
+                            const className = corr.low_confidence.success_rate > 0.6 ? 'ok' : '';
+                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${corr.stage} Low-Conf Success</span><span class="metric-value ${className}">${lowSuccessRate}%</span></div>`;
+                        }
+                    });
+                } else {
+                    confidenceDiv.innerHTML = '<div class="metric"><span class="metric-name">No confidence data yet</span><span class="metric-value">-</span></div>';
+                }
+
+                // Search Quality (Phase 4 metrics)
+                const searchDiv = document.getElementById('searchQuality');
+                if (data.search_quality) {
+                    const sq = data.search_quality;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Searches</span><span class="metric-value">${sq.total_searches}</span></div>`;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Complex Query Rate</span><span class="metric-value">${(parseFloat(sq.complex_query_rate) * 100).toFixed(1)}%</span></div>`;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Complexity Confidence</span><span class="metric-value">${sq.avg_complexity_confidence}</span></div>`;
+                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Results per Search</span><span class="metric-value">${sq.avg_results_per_search}</span></div>`;
+                    if (sq.upgrade_rate) {
+                        searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Upgrade Rate</span><span class="metric-value">${(parseFloat(sq.upgrade_rate) * 100).toFixed(1)}%</span></div>`;
                     }
                 } else {
-                    bizDiv.innerHTML = '<div class="metric"><span class="metric-name">Sessions</span><span class="metric-value">No data</span></div>';
+                    searchDiv.innerHTML = '<div class="metric"><span class="metric-name">No search data yet</span><span class="metric-value">-</span></div>';
                 }
 
-                // Chat Activity (Quantitative)
-                const chatDiv = document.getElementById('chatActivity');
-                renderMetrics('Total Messages (count)', data.messages_total, chatDiv);
-                if (data.chat_turns && Object.keys(data.chat_turns).length > 0) {
-                    for (const [intent, count] of Object.entries(data.chat_turns)) {
-                        renderMetrics(`${intent} Conversations (count)`, count, chatDiv);
-                    }
-                }
-
-                // Router Performance (Quality Metrics)
-                const routerDiv = document.getElementById('routerPerf');
-                if (data.router_confidence_buckets) {
-                    for (const [bucket, count] of Object.entries(data.router_confidence_buckets)) {
-                        routerDiv.innerHTML += `<div class="metric"><span class="metric-name">Confidence ${bucket} (count)</span><span class="metric-value">${count}</span></div>`;
-                    }
-                }
-                if (data.router_low_conf && Object.keys(data.router_low_conf).length > 0) {
-                    for (const [intent, count] of Object.entries(data.router_low_conf)) {
-                        routerDiv.innerHTML += `<div class="metric"><span class="metric-name">Low Conf ${intent} (count)</span><span class="metric-value">${count}</span></div>`;
-                    }
-                }
-                if (routerDiv.innerHTML === '') {
-                    routerDiv.innerHTML = '<div class="metric"><span class="metric-name">All routing confidence > 0.9</span><span class="metric-value ok">✓</span></div>';
-                }
-
-                // Clarifications
-                const clarifyDiv = document.getElementById('clarifications');
-                if (data.clarify_requests && Object.keys(data.clarify_requests).length > 0) {
-                    renderMetrics('Requests', data.clarify_requests, clarifyDiv);
-                }
-                if (data.clarify_resolved && Object.keys(data.clarify_resolved).length > 0) {
-                    renderMetrics('Resolved', data.clarify_resolved, clarifyDiv);
-                }
-                if (clarifyDiv.innerHTML === '') {
-                    clarifyDiv.innerHTML = '<div class="metric"><span class="metric-name">No clarifications yet</span><span class="metric-value">-</span></div>';
-                }
-
-                // Fallbacks
-                const fallbackDiv = document.getElementById('fallbacks');
-                if (data.fallbacks && Object.keys(data.fallbacks).length > 0) {
-                    renderMetrics('Fallbacks', data.fallbacks, fallbackDiv);
-                } else {
-                    fallbackDiv.innerHTML = '<div class="metric"><span class="metric-name">No fallbacks yet</span><span class="metric-value">-</span></div>';
-                }
-
-                // Citations & Verification (Quality Metrics)
-                const citDiv = document.getElementById('citations');
-                renderMetrics('Answers with Citations (count)', data.answers_with_citations_total || 0, citDiv);
-                renderMetrics('Generated Answers (count)', data.generated_answers_total || 0, citDiv);
-                if (typeof data.answers_using_external_data_total === 'number') {
-                    renderMetrics('Using External Data (count)', data.answers_using_external_data_total, citDiv);
-                }
-                if (data.quality) {
-                    renderMetrics('Verification Pass Rate (%)', ((data.quality.verify_pass_rate || 0) * 100).toFixed(1), citDiv);
-                    if (typeof data.quality.verify_fail_rate === 'number') {
-                        renderMetrics('Verification Fail Rate (%)', (data.quality.verify_fail_rate * 100).toFixed(1), citDiv);
-                    }
-                    renderMetrics('Citation Coverage (%)', ((data.quality.citation_coverage || 0) * 100).toFixed(1), citDiv);
-                    if (typeof data.quality.clarification_efficacy === 'number') {
-                        renderMetrics('Clarification Success (%)', (data.quality.clarification_efficacy * 100).toFixed(1), citDiv);
-                    }
-                    
-                    // Add verify scores
-                    if (data.quality.verify_scores) {
-                        const scores = data.quality.verify_scores;
-                        if (scores.relevance) renderMetrics('Avg Relevance Score', scores.relevance.avg.toFixed(2), citDiv);
-                        if (scores.grounding) renderMetrics('Avg Grounding Score', scores.grounding.avg.toFixed(2), citDiv);
-                        if (scores.coherence) renderMetrics('Avg Coherence Score', scores.coherence.avg.toFixed(2), citDiv);
-                        if (scores.context_consistency) renderMetrics('Avg Context Score', scores.context_consistency.avg.toFixed(2), citDiv);
-                    }
-                }
-                if (data.verify_fails && Object.keys(data.verify_fails).length > 0) {
-                    for (const [reason, count] of Object.entries(data.verify_fails)) {
-                        if (!reason.includes('/metrics') && !reason.includes('/why')) {
-                            citDiv.innerHTML += `<div class="metric"><span class="metric-name">Fail: ${reason.substring(0, 30)}... (count)</span><span class="metric-value">${count}</span></div>`;
-                        }
-                    }
-                }
-
-                // External Requests (Performance Metrics)
+                // External API Context (Phase 2 metrics)
                 const extDiv = document.getElementById('external');
                 if (data.external_requests && data.external_requests.targets.length > 0) {
                     data.external_requests.targets.forEach(target => {
-                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Requests (count)</span><span class="metric-value">${target.total}</span></div>`;
-                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Avg Latency (ms)</span><span class="metric-value">${target.latency.avg_ms.toFixed(1)}</span></div>`;
-                        if (typeof target.timeout_rate === 'number') {
-                            extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Timeout Rate (%)</span><span class="metric-value">${(target.timeout_rate * 100).toFixed(1)}</span></div>`;
+                        const latencyClass = target.latency.avg_ms > 5000 ? 'alert' : target.latency.avg_ms > 2000 ? 'warn' : '';
+                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Avg Latency</span><span class="metric-value ${latencyClass}">${target.latency.avg_ms.toFixed(0)}ms</span></div>`;
+                        
+                        // Show context breakdown if available
+                        if (target.byContext && Object.keys(target.byContext).length > 0) {
+                            const topContexts = Object.entries(target.byContext)
+                                .sort(([,a], [,b]) => b - a)
+                                .slice(0, 3);
+                            topContexts.forEach(([context, count]) => {
+                                extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} ${context}</span><span class="metric-value">${count}</span></div>`;
+                            });
                         }
                     });
                 } else {
                     extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external requests yet</span><span class="metric-value">-</span></div>';
                 }
 
-                // Performance (Quantitative)
+                // Performance (System Metrics)
                 const perfDiv = document.getElementById('perf');
                 if (data.performance && data.performance.e2e_latency_ms) {
-                    renderMetrics('Avg Response Time (ms)', data.performance.e2e_latency_ms.avg_ms || 0, perfDiv);
-                    renderMetrics('Min Response Time (ms)', data.performance.e2e_latency_ms.min_ms || 0, perfDiv);
-                    renderMetrics('Max Response Time (ms)', data.performance.e2e_latency_ms.max_ms || 0, perfDiv);
-                    renderMetrics('Total Requests (count)', data.performance.e2e_latency_ms.count || 0, perfDiv);
-                    if (data.performance.avg_tool_calls_per_conversation !== undefined) {
-                        renderMetrics('Avg Tools per Conversation', data.performance.avg_tool_calls_per_conversation.toFixed(2), perfDiv);
-                    }
-                    if (data.performance.total_tool_calls !== undefined) {
-                        renderMetrics('Total Tool Calls (count)', data.performance.total_tool_calls, perfDiv);
-                    }
+                    const avgLatency = data.performance.e2e_latency_ms.avg_ms || 0;
+                    const latencyClass = avgLatency > 5000 ? 'alert' : avgLatency > 3000 ? 'warn' : 'ok';
+                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Response Time</span><span class="metric-value ${latencyClass}">${avgLatency.toFixed(0)}ms</span></div>`;
+                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Min Response Time</span><span class="metric-value">${data.performance.e2e_latency_ms.min_ms || 0}ms</span></div>`;
+                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Max Response Time</span><span class="metric-value">${data.performance.e2e_latency_ms.max_ms || 0}ms</span></div>`;
+                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Requests</span><span class="metric-value">${data.performance.e2e_latency_ms.count || 0}</span></div>`;
                 } else {
-                    perfDiv.innerHTML = '<div class="metric"><span class="metric-name">E2E Latency</span><span class="metric-value">No data</span></div>';
+                    perfDiv.innerHTML = '<div class="metric"><span class="metric-name">No performance data yet</span><span class="metric-value">-</span></div>';
                 }
 
-                // Tools (System Health)
+                // System Health
                 const toolsDiv = document.getElementById('tools');
-                if (data.external_requests && data.external_requests.targets.length > 0) {
-                    const totals = data.external_requests.targets.reduce((acc, t) => acc + (t.total || 0), 0);
-                    renderMetrics('Total Tool Calls (count)', totals, toolsDiv);
-                }
+                let hasHealthData = false;
                 
                 // Circuit breaker status
-                if (data.breaker && data.breaker.byTarget) {
+                if (data.breaker && data.breaker.byTarget && Object.keys(data.breaker.byTarget).length > 0) {
+                    hasHealthData = true;
                     for (const [target, status] of Object.entries(data.breaker.byTarget)) {
-                        const state = status.state === 'closed' ? '✓ Closed' : `⚠ ${status.state}`;
-                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Circuit</span><span class="metric-value ${status.state === 'closed' ? 'ok' : 'warn'}">${state}</span></div>`;
-                        if (status.failures > 0) {
-                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Failures (count)</span><span class="metric-value">${status.failures}</span></div>`;
-                        }
+                        const state = status.state === 'closed' ? '✓ Healthy' : `⚠ ${status.state}`;
+                        const className = status.state === 'closed' ? 'ok' : 'warn';
+                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Circuit</span><span class="metric-value ${className}">${state}</span></div>`;
                     }
                 }
                 
                 // Rate limiting
-                if (data.rate_limit && data.rate_limit.byTarget) {
+                if (data.rate_limit && data.rate_limit.byTarget && Object.keys(data.rate_limit.byTarget).length > 0) {
+                    hasHealthData = true;
                     for (const [target, limits] of Object.entries(data.rate_limit.byTarget)) {
                         if (limits.queued_current > 0) {
-                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Queued (count)</span><span class="metric-value">${limits.queued_current}</span></div>`;
+                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Queued</span><span class="metric-value warn">${limits.queued_current}</span></div>`;
                         }
                     }
                 }
                 
-                if (toolsDiv.innerHTML === '') {
-                    toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">No tool data</span><span class="metric-value">-</span></div>';
+                if (!hasHealthData) {
+                    toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">All systems healthy</span><span class="metric-value ok">✓</span></div>';
                 }
 
-                // Alerts (simple SLOs)
+                // Production Alerts
                 const alertsDiv = document.getElementById('alerts');
                 const alerts = [];
-                const e2eAvg = data?.performance?.e2e_latency_ms?.avg_ms || 0;
-                const vfr = data?.quality?.verify_fail_rate || 0;
-                const fcr = data?.business?.fcr_rate || 0;
-                const timeoutBreaches = (data?.external_requests?.targets || []).filter(t => (t.timeout_rate || 0) > 0.02);
-                if (e2eAvg > 6000) alerts.push(['E2E latency > 6s', 'alert']);
-                else if (e2eAvg > 3000) alerts.push(['E2E latency > 3s', 'warn']);
-                if (vfr > 0.05) alerts.push(['Verify fail rate > 5%', 'alert']);
-                if (fcr < 0.6 && (data.business?.total_sessions || 0) >= 5) alerts.push(['FCR < 60%', 'warn']);
-                timeoutBreaches.forEach(t => alerts.push([`${t.target} timeout > 2%`, 'alert']));
-                if (alerts.length === 0) alerts.push(['All SLOs within targets', 'ok']);
+                
+                // Check pipeline health
+                if (data.pipeline_stages) {
+                    data.pipeline_stages.forEach(stage => {
+                        if (stage.success_rate < 0.9) {
+                            alerts.push([`${stage.stage} success rate ${(stage.success_rate * 100).toFixed(1)}%`, 'alert']);
+                        }
+                        if (stage.latency && stage.latency.avg_ms > 2000) {
+                            alerts.push([`${stage.stage} latency ${stage.latency.avg_ms.toFixed(0)}ms`, 'warn']);
+                        }
+                    });
+                }
+                
+                // Check confidence correlation issues
+                if (data.confidence_correlation) {
+                    data.confidence_correlation.forEach(corr => {
+                        if (corr.high_confidence.total > 0 && corr.high_confidence.success_rate < 0.8) {
+                            alerts.push([`${corr.stage} high-conf failures ${(corr.high_confidence.success_rate * 100).toFixed(1)}%`, 'alert']);
+                        }
+                    });
+                }
+                
+                // Check external API issues
+                if (data.external_requests && data.external_requests.targets) {
+                    data.external_requests.targets.forEach(target => {
+                        if (target.latency.avg_ms > 5000) {
+                            alerts.push([`${target.target} slow ${target.latency.avg_ms.toFixed(0)}ms`, 'alert']);
+                        }
+                        if (target.timeout_rate > 0.05) {
+                            alerts.push([`${target.target} timeouts ${(target.timeout_rate * 100).toFixed(1)}%`, 'alert']);
+                        }
+                    });
+                }
+                
+                if (alerts.length === 0) {
+                    alerts.push(['All systems operating normally', 'ok']);
+                }
+                
                 alerts.forEach(([msg, level]) => {
                     alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${level}">${msg}</span><span class="metric-value"></span></div>`;
                 });
-
-                // Trends & System Info
-                const trendsDiv = document.getElementById('trends');
-                
-                // System info
-                if (data.session_store_kind) {
-                    trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Session Store</span><span class="metric-value">${data.session_store_kind}</span></div>`;
-                }
-                if (data.session_ttl_sec) {
-                    trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Session TTL (sec)</span><span class="metric-value">${data.session_ttl_sec}</span></div>`;
-                }
-                
-                // Trends
-                pushHistory('e2e_avg_ms', e2eAvg);
-                pushHistory('fcr_rate', fcr);
-                pushHistory('verify_fail_rate', vfr);
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">E2E Latency Trend</span><span class="metric-value spark">${sparkline(history.e2e_avg_ms)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">FCR Rate Trend</span><span class="metric-value spark">${sparkline(history.fcr_rate)}</span></div>`;
-                trendsDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Fail Rate Trend</span><span class="metric-value spark">${sparkline(history.verify_fail_rate)}</span></div>`;
 
             } catch (error) {
                 const statusEl = document.getElementById('status');

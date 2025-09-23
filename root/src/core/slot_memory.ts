@@ -201,7 +201,11 @@ export async function setLastReceipts(
   reply?: string,
 ): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { 
+    slots: {}, 
+    expectedMissing: [],
+    sessionMetadata: createSessionMetadata(generateSessionId())
+  };
   
   // Preserve or create sessionMetadata to prevent session invalidation
   let sessionMetadata: SessionMetadata;
@@ -263,6 +267,8 @@ export async function getLastSearchConfidence(threadId: string): Promise<number 
   const conf = slots.last_search_confidence;
   return conf ? parseFloat(conf) : undefined;
 }
+
+export async function setLastUserMessage(threadId: string, message: string): Promise<void> {
   const store = getSessionStore();
   const prev = await store.getJson<SlotState>('state', threadId);
   
@@ -298,7 +304,11 @@ export async function getPrevUserMessage(threadId: string): Promise<string | und
 
 export async function setLastVerification(threadId: string, artifact: Required<Pick<SlotState,'lastVerification'>>['lastVerification']): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { 
+    slots: {}, 
+    expectedMissing: [],
+    sessionMetadata: createSessionMetadata(generateSessionId())
+  };
   
   console.log('🔧 VERIFICATION: setLastVerification BEFORE', { 
     threadId, 

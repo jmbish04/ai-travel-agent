@@ -81,10 +81,6 @@ export class HistoricalWeatherProvider implements WeatherProvider {
       return null;
     }
   }
-      console.log(`🌡️ HISTORICAL: Error:`, error);
-      return null;
-    }
-  }
   
   private aggregateByMonth(data: z.infer<typeof HistoricalWeatherSchema>, targetMonth: number): ClimateData | null {
     const monthData: { highs: number[]; lows: number[]; precip: number[] } = {

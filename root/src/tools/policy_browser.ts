@@ -131,6 +131,8 @@ export async function extractPolicyClause(params: {
                 host.includes('hotel') || host.includes('booking') ? 'hotel' :
                 host.includes('visa') || host.includes('embassy') ? 'visa' : 'generic';
 
+  let confidence = 'unknown';
+
   try {
     const timeoutSecs = Math.ceil((params.timeoutMs ?? 30000) / 1000); // 30 second default
     
@@ -138,7 +140,6 @@ export async function extractPolicyClause(params: {
     
     // Score domain authenticity if airline name provided
     let domainScore: DomainScore | undefined;
-    let confidence = 'unknown';
     if (params.airlineName) {
       try {
         const signal = AbortSignal.timeout(150);

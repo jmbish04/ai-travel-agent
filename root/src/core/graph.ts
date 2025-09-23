@@ -28,7 +28,7 @@ import {
   readConsentState,
   writeConsentState,
   getLastReceipts,
-  setLastSearchConfidence
+  setLastSearchConfidence,
   setLastReceipts,
   getLastUserMessage
 } from './slot_memory.js';
@@ -374,7 +374,7 @@ export async function runGraphTurn(
   // === ACT STAGE: Route to domain nodes ===
   const actStart = Date.now();
   const routeCtx: NodeCtx = { msg: message, threadId, onStatus: ctx.onStatus };
-  const result = intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
+  const result: NodeOut = intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
   
   const actSuccess = 'done' in result && result.done;
   observeStage('gather', Date.now() - actStart, actSuccess, intent);

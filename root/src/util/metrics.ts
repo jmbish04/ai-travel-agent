@@ -83,6 +83,22 @@ const confidenceOutcomes = new Map<string, {
   low_conf_fail: number
 }>();
 
+// Stage-level metrics
+const stageMetrics = {
+  success: new Map<string, number>(),
+  failure: new Map<string, number>(),
+  latency: new Map<string, { count: number; sum: number; min: number; max: number }>()
+};
+
+// Search quality tracking
+const searchQuality = new Map<string, {
+  total: number;
+  complexQueries: number;
+  avgComplexityConfidence: { sum: number; count: number };
+  upgradeRequests: number;
+  resultCounts: { sum: number; count: number };
+}>();
+
 type Labels = { target?: string; status?: string; query_type?: string; location?: string; domain?: string; confidence?: string };
 
 // Prometheus metrics (conditionally initialized)
@@ -532,22 +548,9 @@ export function snapshot() {
   
   // Search quality metrics
   const searchQualityData = searchQuality.get('search_quality');
+  let searchQualityResult = {};
   if (searchQualityData) {
-    result.search_quality = {
-      total_searches: searchQualityData.total,
-      complexity_distribution: searchQualityData.byComplexity,
-      query_type_distribution: searchQualityData.byType,
-      upgrade_rate: searchQualityData.total > 0 ? 
-        (searchQualityData.upgradeRequests / searchQualityData.total).toFixed(3) : '0.000',
-      avg_results_per_search: searchQualityData.avgResultCount.count > 0 ?
-        (searchQualityData.avgResultCount.sum / searchQualityData.avgResultCount.count).toFixed(1) : '0.0'
-    };
-  }
-
-  // Search quality metrics
-  const searchQualityData = searchQuality.get('search_quality');
-  if (searchQualityData) {
-    result.search_quality = {
+    searchQualityResult = {
       total_searches: searchQualityData.total,
       complex_query_rate: searchQualityData.total > 0 ? 
         (searchQualityData.complexQueries / searchQualityData.total).toFixed(3) : '0.000',
@@ -597,6 +600,7 @@ export function snapshot() {
     answers_using_external_data_total: answersUsingExternal,
     pipeline_stages: stages,
     confidence_correlation: confidenceCorrelation,
+    search_quality: searchQualityResult,
     quality: {
       verify_pass_rate: generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0,
       verify_fail_rate: generatedAnswers > 0 ? Number((verifyFail / generatedAnswers).toFixed(3)) : 0,
@@ -716,23 +720,6 @@ export function observeRouterConfidence(confidence: number) {
   else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
 }
 
-// === PHASE 1: PIPELINE STAGE INSTRUMENTATION ===
-
-// Stage-level metrics
-const stageMetrics = {
-  success: new Map<string, number>(),
-  failure: new Map<string, number>(),
-  latency: new Map<string, { count: number; sum: number; min: number; max: number }>()
-};
-
-// Confidence correlation tracking
-const confidenceOutcomes = new Map<string, {
-  high_conf_success: number;
-  high_conf_fail: number;
-  low_conf_success: number;
-  low_conf_fail: number;
-}>();
-
 export function observeStage(
   stage: 'guard'|'extract'|'route'|'gather'|'blend'|'verify',
   durationMs: number,
@@ -775,24 +762,6 @@ export function observeRouterResult(
     bump(clarifyRequests, `${intent}:missing_slots`);
   }
 }
-
-// Search quality tracking
-const searchQuality = new Map<string, {
-  total: number;
-  byComplexity: Record<string, number>; // simple, medium, complex
-  byType: Record<string, number>; // explicit, implicit, fallback
-  upgradeRequests: number;
-  avgResultCount: { sum: number; count: number };
-}>();
-
-// Search quality tracking
-const searchQuality = new Map<string, {
-  total: number;
-  complexQueries: number;
-  avgComplexityConfidence: { sum: number; count: number };
-  upgradeRequests: number;
-  resultCounts: { sum: number; count: number };
-}>();
 
 export function observeSearchQuality(
   complexity: { isComplex: boolean; confidence: number },

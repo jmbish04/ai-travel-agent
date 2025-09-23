@@ -90,7 +90,11 @@ export async function getAttractions(input: {
       domain: category
     }, Date.now() - start);
     
-    return fallbackResult;
+    if (fallbackResult.ok) {
+      return { ...fallbackResult, source: getSearchSource() };
+    }
+
+    return primaryResult; // Return original error
   } catch (error) {
     observeExternal({
       target: 'attractions',
@@ -101,11 +105,6 @@ export async function getAttractions(input: {
     }, Date.now() - start);
     throw error;
   }
-  if (fallbackResult.ok) {
-    return { ...fallbackResult, source: getSearchSource() };
-  }
-
-  return primaryResult; // Return original error
 }
 
 async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid_friendly' = 'default'): Promise<Out> {

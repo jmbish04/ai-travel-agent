@@ -235,13 +235,13 @@ export async function handleChat(
           revisedAnswer: undefined,
         } as any;
       }
-      if (audit.verdict === 'fail' && audit.revisedAnswer) {
+      if (audit && audit.verdict === 'fail' && audit.revisedAnswer) {
         reply = audit.revisedAnswer;
       }
-      const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores } };
+      const merged = { ...receipts, selfCheck: { verdict: audit?.verdict || 'pass', notes: audit?.notes || [], scores: (audit as any)?.scores } };
       const safe = ReceiptsSchema.parse(merged);
       
-      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit.verdict}${audit.notes.length > 0 ? ` (${audit.notes.join(', ')})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
+      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit?.verdict || 'pass'}${(audit?.notes?.length || 0) > 0 ? ` (${audit?.notes?.join(', ') || ''})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -336,32 +336,32 @@ export async function handleChat(
         // Metrics
         try {
           const { incVerifyFail, incVerifyPass, observeVerifyScores, observeConfidenceOutcome } = await import('../util/metrics.js');
-          if (lastAudit.verdict === 'fail') {
+          if (lastAudit && lastAudit.verdict === 'fail') {
             incVerifyFail((lastAudit.notes?.[0] || 'fail').toLowerCase());
-          } else {
+          } else if (lastAudit) {
             incVerifyPass();
           }
           
           // Track verify confidence correlation
-          if (lastAudit.confidence !== undefined) {
+          if (lastAudit && lastAudit.confidence !== undefined) {
             const success = lastAudit.verdict === 'pass';
             observeConfidenceOutcome('verify', lastAudit.confidence, success);
           }
           
           // Track search confidence → verify outcome correlation
           const searchConfidence = await getLastSearchConfidence(threadId);
-          if (searchConfidence !== undefined) {
+          if (searchConfidence !== undefined && lastAudit) {
             const searchSuccess = lastAudit.verdict === 'pass';
             observeConfidenceOutcome('search', searchConfidence, searchSuccess, intent);
           }
           
-          if ((lastAudit as any).scores) {
+          if (lastAudit && (lastAudit as any).scores) {
             observeVerifyScores((lastAudit as any).scores);
           }
         } catch {}
 
         // Apply routing on verdict
-        if (lastAudit.verdict === 'fail') {
+        if (lastAudit && lastAudit.verdict === 'fail') {
           // Don't rewrite IRROPS responses - they have structured format
           const lastIntent = await getLastIntent(threadId);
           if (lastIntent === 'irrops') {
@@ -371,20 +371,22 @@ export async function handleChat(
           } else {
             verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
           }
-        } else if (lastAudit.verdict === 'warn') {
+        } else if (lastAudit && lastAudit.verdict === 'warn') {
           const warnInline = (process.env.VERIFY_WARN_INLINE ?? 'true') === 'true';
           if (warnInline) {
             verifiedReply = `${result.reply}\n\nNote: Automated self-check flagged minor uncertainties.`;
           }
         }
         // Persist verification artifact for /why
-        await setLastVerification(threadId, {
-          verdict: lastAudit.verdict,
-          notes: lastAudit.notes || [],
-          scores: (lastAudit as any).scores,
-          revisedAnswer: lastAudit.revisedAnswer,
-          reply: verifiedReply,
-        });
+        if (lastAudit) {
+          await setLastVerification(threadId, {
+            verdict: lastAudit.verdict,
+            notes: lastAudit.notes || [],
+            scores: (lastAudit as any).scores,
+            revisedAnswer: lastAudit.revisedAnswer,
+            reply: verifiedReply,
+          });
+        }
       } catch {
         // Swallow verify errors; keep original reply
       }
