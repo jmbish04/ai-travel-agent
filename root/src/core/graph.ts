@@ -318,7 +318,7 @@ export async function runGraphTurn(
   // Check for missing required slots
   const missing = intent ? checkMissingSlots(intent, slots, message) : [];
   if (missing.length > 0) {
-    await updateThreadSlots(threadId, slots, missing);
+    await updateThreadSlots(threadId, slots, missing, [], intent);
     try { if (intent && missing[0]) incClarify(intent, missing[0]); } catch {}
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
     return { done: true, reply: q };
@@ -333,7 +333,7 @@ export async function runGraphTurn(
   }
 
   // Update slots and set intent
-  await updateThreadSlots(threadId, slots, []);
+  await updateThreadSlots(threadId, slots, [], [], intent);
   await setLastIntent(threadId, intent as any);
   
   // Log metrics
