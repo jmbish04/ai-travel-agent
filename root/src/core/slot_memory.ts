@@ -223,7 +223,7 @@ export async function setLastReceipts(
     sessionMetadata 
   };
   
-  console.log('🔧 RECEIPTS: setLastReceipts', { 
+  debugLog('🔧 RECEIPTS: setLastReceipts', { 
     threadId, 
     factsCount: facts.length, 
     decisionsCount: decisions.length, 
@@ -238,7 +238,7 @@ export async function getLastReceipts(threadId: string): Promise<{ facts?: Fact[
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
   
-  console.log('🔧 RECEIPTS: getLastReceipts', { 
+  debugLog('🔧 RECEIPTS: getLastReceipts', { 
     threadId, 
     hasState: !!state,
     factsCount: state?.lastFacts?.length || 0,
@@ -310,7 +310,7 @@ export async function setLastVerification(threadId: string, artifact: Required<P
     sessionMetadata: createSessionMetadata(generateSessionId())
   };
   
-  console.log('🔧 VERIFICATION: setLastVerification BEFORE', { 
+  debugLog('🔧 VERIFICATION: setLastVerification BEFORE', { 
     threadId, 
     prevFactsCount: prev.lastFacts?.length || 0,
     prevDecisionsCount: prev.lastDecisions?.length || 0,
@@ -331,7 +331,7 @@ export async function setLastVerification(threadId: string, artifact: Required<P
     sessionMetadata 
   };
   
-  console.log('🔧 VERIFICATION: setLastVerification AFTER', { 
+  debugLog('🔧 VERIFICATION: setLastVerification AFTER', { 
     threadId, 
     newFactsCount: newState.lastFacts?.length || 0,
     newDecisionsCount: newState.lastDecisions?.length || 0,

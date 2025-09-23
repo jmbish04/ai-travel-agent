@@ -657,10 +657,10 @@ export async function blendWithFacts(
         
         // Get packing items based on weather
         await loadPackingOnce();
-        console.log(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
+        if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
         const band = chooseBandFromTemps(wx.maxC, wx.minC);
         const items = band ? PACKING[band] : [];
-        console.log(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
+        if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
         
         // Use deterministic composer for packing
         const reply = composePackingReply(cityHint, whenHint, wx.summary, items, source);
@@ -715,9 +715,6 @@ export async function blendWithFacts(
               )];
               await setLastReceipts(input.threadId, overviewFacts, overviewDecisions, reply);
             }
-            incGeneratedAnswer();
-            incAnswersWithCitations();
-            try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
             return { reply, citations: [source] };
           }
         }

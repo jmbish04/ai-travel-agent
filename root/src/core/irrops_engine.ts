@@ -13,7 +13,8 @@ export async function processIrrops(
   const startTime = Date.now();
   signal?.throwIfAborted();
   
-  console.log('🔧 IRROPS: Starting processing', { pnr, disruption });
+  const DEBUG = process.env.LOG_LEVEL === 'debug';
+  if (DEBUG) console.debug('🔧 IRROPS: Starting processing', { pnr, disruption });
   
   const validator = new ConstraintValidator();
   const options: IrropsOption[] = [];
@@ -24,7 +25,7 @@ export async function processIrrops(
       const segment = pnr.segments[segmentIndex];
       if (!segment) continue;
 
-      console.log('🔧 IRROPS: Processing segment', segmentIndex, segment);
+      if (DEBUG) console.debug('🔧 IRROPS: Processing segment', segmentIndex, segment);
 
       try {
         // Generate future date for search (tomorrow or later)
@@ -32,7 +33,7 @@ export async function processIrrops(
         tomorrow.setDate(tomorrow.getDate() + 1);
         const futureDate = tomorrow.toISOString().split('T')[0]!;
         
-        console.log('🔧 IRROPS: Searching alternatives with date', futureDate);
+        if (DEBUG) console.debug('🔧 IRROPS: Searching alternatives with date', futureDate);
         
         // Search for alternatives using existing Amadeus integration
         const alternatives = await searchAlternatives(
@@ -48,11 +49,11 @@ export async function processIrrops(
           signal
         );
 
-        console.log('🔧 IRROPS: Found alternatives', alternatives.length, alternatives);
+        if (DEBUG) console.debug('🔧 IRROPS: Found alternatives', alternatives.length);
 
         // Validate each alternative
         for (const alt of alternatives.slice(0, 5)) { // Limit to 5 alternatives per segment
-          console.log('🔧 IRROPS: Processing alternative', alt);
+          if (DEBUG) console.debug('🔧 IRROPS: Processing alternative');
           
           const newSegments = [...pnr.segments];
           newSegments[segmentIndex] = {
@@ -77,7 +78,7 @@ export async function processIrrops(
             true // isIrrops
           );
 
-          console.log('🔧 IRROPS: Validation results', { mctValid, fareResult, carrierResult });
+          if (DEBUG) console.debug('🔧 IRROPS: Validation results', { mctValid, fareValid: fareResult.valid, carrierAllowed: carrierResult.allowed });
 
           if (mctValid && fareResult.valid && carrierResult.allowed) {
             const option: IrropsOption = {
@@ -100,21 +101,21 @@ export async function processIrrops(
               confidence: calculateConfidence(alt, segment, disruption)
             };
             
-            console.log('🔧 IRROPS: Adding valid option', option);
+            if (DEBUG) console.debug('🔧 IRROPS: Adding valid option', { id: option.id });
             options.push(option);
           }
         }
       } catch (error) {
-        console.error(`Failed to process segment ${segmentIndex}:`, error);
+        if (DEBUG) console.error(`Failed to process segment ${segmentIndex}:`, error);
       }
     }
 
-    console.log('🔧 IRROPS: Total options before ranking', options.length);
+    if (DEBUG) console.debug('🔧 IRROPS: Total options before ranking', options.length);
 
     // Rank and return top options
     const rankedOptions = rankOptions(options, preferences);
     
-    console.log('🔧 IRROPS: Final ranked options', rankedOptions.length, rankedOptions);
+    if (DEBUG) console.debug('🔧 IRROPS: Final ranked options', rankedOptions.length);
     
     // Record metrics
     const durationMs = Date.now() - startTime;
@@ -122,7 +123,7 @@ export async function processIrrops(
     
     return rankedOptions;
   } catch (error) {
-    console.error('🔧 IRROPS: Processing failed', error);
+    if (DEBUG) console.error('🔧 IRROPS: Processing failed', error);
     // Record error metrics
     const durationMs = Date.now() - startTime;
     observeIrrops(disruption.type, 0, durationMs, false);

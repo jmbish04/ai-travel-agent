@@ -40,15 +40,27 @@ export async function verifyAnswer(input: {
     evidence_facts: input.facts || [],
   };
   const payload = `${system}\n\nReturn STRICT JSON only.\n\nINPUT:\n${JSON.stringify(ctx)}`;
-  const raw = await callLLM(payload, { responseFormat: 'json', log: input.log });
-  // Try parsing an embedded JSON object if model returned extra text
-  let parsed: unknown;
+  const FAILSAFE = (process.env.LLM_FAILSAFE ?? '').toLowerCase() === 'on' || (process.env.LLM_FAILSAFE ?? '').toLowerCase() === 'true';
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const m = raw.match(/\{[\s\S]*\}/);
-    parsed = m ? JSON.parse(m[0]) : {};
+    const raw = await callLLM(payload, { responseFormat: 'json', log: input.log });
+    // Try parsing an embedded JSON object if model returned extra text
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      parsed = m ? JSON.parse(m[0]) : {};
+    }
+    return VerifySchema.parse(parsed);
+  } catch (err) {
+    if (FAILSAFE) {
+      const fallback: VerifyResult = {
+        verdict: 'warn',
+        notes: ['offline_or_timeout'],
+        scores: { relevance: 0.5, grounding: 0.5, coherence: 0.5, context_consistency: 0.5 },
+      };
+      return fallback;
+    }
+    throw err;
   }
-  return VerifySchema.parse(parsed);
 }
-

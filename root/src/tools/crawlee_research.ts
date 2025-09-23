@@ -16,13 +16,14 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
   if (urls.length === 0) return { ok: false, results: [] };
   
   const engine = process.env.CRAWLEE_ENGINE || 'cheerio';
-  console.log(`🔍 Crawlee engine: ${engine}`);
+  const DEBUG = process.env.LOG_LEVEL === 'debug';
+  if (DEBUG) console.debug(`🔍 Crawlee engine: ${engine}`);
   
   try {
     const results: CrawlResult[] = [];
     const maxPages = Math.min(urls.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '8'));
     
-    console.log(`🔍 Crawlee config: CRAWLEE_ENGINE=${engine}, CRAWLEE_MAX_PAGES=${process.env.CRAWLEE_MAX_PAGES}, maxPages=${maxPages}, urls.length=${urls.length}`);
+    if (DEBUG) console.debug(`🔍 Crawlee config: CRAWLEE_ENGINE=${engine}, CRAWLEE_MAX_PAGES=${process.env.CRAWLEE_MAX_PAGES}, maxPages=${maxPages}, urls.length=${urls.length}`);
     
     if (engine === 'playwright') {
       await runPlaywrightCrawler(urls, maxPages, results);
@@ -31,26 +32,25 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
     }
     
     if (results.length === 0) {
-      console.log(`❌ No content extracted from any pages`);
+      if (DEBUG) console.debug(`❌ No content extracted from any pages`);
       return { ok: false, results: [] };
     }
-    
-    console.log(`📋 Successfully crawled ${results.length} pages, starting summarization...`);
+    if (DEBUG) console.debug(`📋 Successfully crawled ${results.length} pages, starting summarization...`);
     
     // Summarize each page
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (!result) continue;
       
-      console.log(`🤖 Summarizing page ${i + 1}/${results.length}: ${result.title.slice(0, 50)}...`);
+      if (DEBUG) console.debug(`🤖 Summarizing page ${i + 1}/${results.length}: ${result.title.slice(0, 50)}...`);
       result.summary = await summarizePage(result.content, query);
-      console.log(`✅ Summary: ${result.summary.slice(0, 100)}...`);
+      if (DEBUG) console.debug(`✅ Summary: ${result.summary.slice(0, 100)}...`);
     }
     
     // Create overall summary
-    console.log(`🔄 Creating overall summary from ${results.length} page summaries...`);
+    if (DEBUG) console.debug(`🔄 Creating overall summary from ${results.length} page summaries...`);
     const overallSummary = await createOverallSummary(results, query);
-    console.log(`📊 Final summary: ${overallSummary.slice(0, 150)}...`);
+    if (DEBUG) console.debug(`📊 Final summary: ${overallSummary.slice(0, 150)}...`);
     
     return {
       ok: true,
@@ -58,7 +58,7 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
       summary: overallSummary
     };
   } catch (error) {
-    console.error('Crawlee error:', error);
+    if (DEBUG) console.error('Crawlee error:', error);
     
     // Fallback: return basic search results without deep crawling
     const fallbackResults = urls.slice(0, 3).map((url, i) => ({
@@ -129,11 +129,11 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
   
   // Retry failed URLs with Playwright if available
   if (failedUrls.length > 0) {
-    console.log(`🔄 Retrying ${failedUrls.length} failed URLs with Playwright...`);
+    if (DEBUG) console.debug(`🔄 Retrying ${failedUrls.length} failed URLs with Playwright...`);
     try {
       await runPlaywrightCrawler(failedUrls, failedUrls.length, results);
     } catch (e) {
-      console.warn(`❌ Playwright fallback also failed:`, e);
+      if (DEBUG) console.warn(`❌ Playwright fallback also failed:`, e);
     }
   }
 }
