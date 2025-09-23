@@ -428,7 +428,7 @@
                 <div class="guide-content" id="guide">
                     <div class="metric">
                         <span class="metric-name">Pipeline Health</span>
-                        <span class="metric-value">Check which stage is failing: guard→extract→route→gather→blend→verify. Low success rates indicate bottlenecks.</span>
+                        <span class="metric-value">Check which stage is failing: guard→extract→route→gather→blend→verify. Low success rates indicate bottlenecks. Verify rates show result quality.</span>
                     </div>
                     <div class="metric">
                         <span class="metric-name">Confidence Correlation</span>
@@ -587,6 +587,14 @@
                         const successRate = (stage.success_rate * 100).toFixed(1);
                         const className = stage.success_rate < 0.9 ? 'alert' : stage.success_rate < 0.95 ? 'warn' : 'ok';
                         pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Success Rate</span><span class="metric-value ${className}">${successRate}%</span></div>`;
+                        
+                        // Add verification success rate
+                        if (stage.verify_success_rate !== undefined) {
+                            const verifyRate = (stage.verify_success_rate * 100).toFixed(1);
+                            const verifyClass = stage.verify_success_rate < 0.8 ? 'alert' : stage.verify_success_rate < 0.9 ? 'warn' : 'ok';
+                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Verify Rate</span><span class="metric-value ${verifyClass}">${verifyRate}%</span></div>`;
+                        }
+                        
                         if (stage.latency) {
                             const latencyClass = stage.latency.avg_ms > 2000 ? 'alert' : stage.latency.avg_ms > 1000 ? 'warn' : '';
                             pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${stage.stage} Avg Latency</span><span class="metric-value ${latencyClass}">${stage.latency.avg_ms}ms</span></div>`;
@@ -701,6 +709,9 @@
                     data.pipeline_stages.forEach(stage => {
                         if (stage.success_rate < 0.9) {
                             alerts.push([`${stage.stage} success rate ${(stage.success_rate * 100).toFixed(1)}%`, 'alert']);
+                        }
+                        if (stage.verify_success_rate !== undefined && stage.verify_success_rate < 0.8) {
+                            alerts.push([`${stage.stage} verify rate ${(stage.verify_success_rate * 100).toFixed(1)}%`, 'alert']);
                         }
                         if (stage.latency && stage.latency.avg_ms > 2000) {
                             alerts.push([`${stage.stage} latency ${stage.latency.avg_ms.toFixed(0)}ms`, 'warn']);

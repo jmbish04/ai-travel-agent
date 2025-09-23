@@ -87,7 +87,9 @@ const confidenceOutcomes = new Map<string, {
 const stageMetrics = {
   success: new Map<string, number>(),
   failure: new Map<string, number>(),
-  latency: new Map<string, { count: number; sum: number; min: number; max: number }>()
+  latency: new Map<string, { count: number; sum: number; min: number; max: number }>(),
+  verify_success: new Map<string, number>(),
+  verify_failure: new Map<string, number>()
 };
 
 // Search quality tracking
@@ -525,18 +527,25 @@ export function snapshot() {
   // Pipeline stage metrics
   const stages = Array.from(new Set([
     ...Array.from(stageMetrics.success.keys()),
-    ...Array.from(stageMetrics.failure.keys())
+    ...Array.from(stageMetrics.failure.keys()),
+    ...Array.from(stageMetrics.verify_success.keys()),
+    ...Array.from(stageMetrics.verify_failure.keys())
   ])).map(key => {
     const success = stageMetrics.success.get(key) || 0;
     const failure = stageMetrics.failure.get(key) || 0;
     const total = success + failure;
     const latency = stageMetrics.latency.get(key);
     
+    const verifySuccess = stageMetrics.verify_success.get(key) || 0;
+    const verifyFailure = stageMetrics.verify_failure.get(key) || 0;
+    const verifyTotal = verifySuccess + verifyFailure;
+    
     return {
       stage: key,
       success_count: success,
       failure_count: failure,
       success_rate: total > 0 ? Number((success / total).toFixed(3)) : 0,
+      verify_success_rate: verifyTotal > 0 ? Number((verifySuccess / verifyTotal).toFixed(3)) : undefined,
       latency: latency ? {
         count: latency.count,
         avg_ms: latency.count > 0 ? Number((latency.sum / latency.count).toFixed(1)) : 0,
@@ -718,6 +727,20 @@ export function observeRouterConfidence(confidence: number) {
   else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] = (routerConfidenceBuckets['0.6-0.75'] ?? 0) + 1;
   else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] = (routerConfidenceBuckets['0.75-0.9'] ?? 0) + 1;
   else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
+}
+
+export function observeStageVerification(
+  stage: 'guard'|'extract'|'route'|'gather'|'blend'|'verify',
+  intent: string | null,
+  verified: boolean
+) {
+  const key = intent ? `${stage}_${intent}` : stage;
+  
+  if (verified) {
+    stageMetrics.verify_success.set(key, (stageMetrics.verify_success.get(key) || 0) + 1);
+  } else {
+    stageMetrics.verify_failure.set(key, (stageMetrics.verify_failure.get(key) || 0) + 1);
+  }
 }
 
 export function observeStage(
