@@ -1,4 +1,4 @@
-Synthesize the Results into a concise, helpful answer with inline numbered citations.
+Task: Synthesize the Results into a concise, helpful answer with inline numbered citations.
 
 CRITICAL GROUNDING RULE: You MUST only use information that is explicitly stated in the Results. Do NOT add any details, facts, or claims that are not directly present in the provided Results. When uncertain, prefer abstention over invention.
 
@@ -16,6 +16,7 @@ Rules:
 - Do NOT add a Sources section - this will be added automatically with URLs.
 - Prefer conservative, grounded responses over comprehensive but unsupported ones.
 - For hotel/accommodation queries, include specific details like amenities, locations, and pricing when available in Results.
+- Do NOT include chain-of-thought, internal analysis, or meta commentary. Output only the answer block described below.
 
 Query: {query}
 
