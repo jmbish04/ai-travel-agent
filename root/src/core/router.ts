@@ -177,6 +177,11 @@ async function maybeResetContextForMessage(params: {
   const fallbackOrigin = sanitizedSlots.originCity?.trim() || sanitizedSlots.city?.trim();
   const fallbackCity = sanitizedSlots.city?.trim() || fallbackDestination || fallbackOrigin;
 
+  // If the current message uses placeholder location terms ("there", "here", etc.),
+  // prefer prior context over any newly inferred concrete city to prevent drift.
+  // This avoids LLM mis-inference like mapping "there" to an unrelated city.
+  const hasPlaceholderRef = /\b(there|here|that\s+(place|city|destination)|same\s*(place|destination|city)|the\s*same\s*(place|destination|city))\b/i.test(message);
+
   for (const key of ['destinationCity', 'city', 'originCity'] as const) {
     const value = freshSlots[key];
     if (typeof value === 'string') {
@@ -188,7 +193,12 @@ async function maybeResetContextForMessage(params: {
       } else {
         fallback = fallbackCity || fallbackDestination || fallbackOrigin;
       }
-      const resolved = resolveLocationPlaceholder(value, fallback || previousLocation);
+      // Resolve explicit placeholder tokens first
+      let resolved = resolveLocationPlaceholder(value, fallback || previousLocation);
+      // If message itself contains placeholder reference, force-resolve to prior context
+      if (hasPlaceholderRef && !resolved && (fallback || previousLocation)) {
+        resolved = (fallback || previousLocation)!;
+      }
       if (resolved) {
         freshSlots[key] = resolved;
       } else {
