@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  snapshot,
+  snapshotV2,
   incAnswersWithCitations,
   incAnswerUsingExternal,
   incGeneratedAnswer,
@@ -11,7 +11,7 @@ import {
 } from '../../src/util/metrics.js';
 
 describe('metrics snapshot', () => {
-  it('exposes business, quality, flow, and performance fields', () => {
+  it('exposes v2 pipeline, quality, external, and system fields', () => {
     // mutate a few counters to ensure non-zero, but only assert existence/types
     incGeneratedAnswer();
     incVerifyPass();
@@ -21,37 +21,27 @@ describe('metrics snapshot', () => {
     observeE2E(123);
     observeExternal({ target: 'test_tool', status: 'timeout' }, 50);
 
-    const s = snapshot() as any;
+    const s = snapshotV2() as any;
 
-    // Business
-    expect(s.business).toBeDefined();
-    expect(typeof s.business.fcr_rate).toBe('number');
-    expect(typeof s.business.deflection_rate).toBe('number');
-    expect(s.business.session_outcomes).toBeDefined();
+    // Pipeline
+    expect(s.pipeline).toBeDefined();
+    expect(Array.isArray(s.pipeline.stages)).toBe(true);
+    expect(Array.isArray(s.pipeline.alerts)).toBe(true);
 
     // Quality
     expect(s.quality).toBeDefined();
-    expect(typeof s.quality.verify_pass_rate).toBe('number');
-    expect(typeof s.quality.verify_fail_rate).toBe('number');
-    expect(typeof s.quality.citation_coverage).toBe('number');
-    expect(typeof s.quality.clarification_efficacy).toBe('number');
-
-    // Flow
-    expect(s.chat_turns).toBeDefined();
-    expect(s.router_low_conf).toBeDefined();
-    expect(s.router_confidence_buckets).toBeDefined();
-
-    // Performance
-    expect(s.performance).toBeDefined();
-    expect(s.performance.e2e_latency_ms).toBeDefined();
-    expect(typeof s.performance.tool_calls_per_turn).toBe('number');
+    expect(Array.isArray(s.quality.verify)).toBe(true);
+    expect(Array.isArray(s.quality.confidence)).toBe(true);
 
     // External requests aggregation with timeout rate
-    expect(s.external_requests.targets).toBeDefined();
-    expect(Array.isArray(s.external_requests.targets)).toBe(true);
-    const t = s.external_requests.targets.find((x: any) => x.target === 'test_tool');
+    expect(s.external.targets).toBeDefined();
+    expect(Array.isArray(s.external.targets)).toBe(true);
+    const t = s.external.targets.find((x: any) => x.target === 'test_tool');
     expect(t).toBeDefined();
     expect(typeof t.timeout_rate).toBe('number');
+
+    // System
+    expect(s.system).toBeDefined();
+    expect(typeof s.system.active_sessions).toBe('number');
   });
 });
-

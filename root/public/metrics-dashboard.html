@@ -44,9 +44,89 @@
         }
 
         .container {
-            max-width: 1600px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        /* Alert banner */
+        .alerts-banner {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 10px;
+        }
+
+        /* Hero section - Pipeline Health */
+        .hero-section {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: var(--box-shadow);
+        }
+
+        /* Secondary sections */
+        .secondary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        /* Tertiary section */
+        .tertiary-section {
+            background: white;
+            border: 1px solid #dee2e6;
+        }
+
+        /* Collapsible guide */
+        .guide-section {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .guide-header {
+            background: #f8f9fa;
+            padding: 12px 16px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .guide-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .guide-content.expanded {
+            max-height: 500px;
+            padding: 16px;
+        }
+
+        /* Navigation arrows */
+        .nav-arrow {
+            color: #6c757d;
+            font-size: 14px;
+            margin: 8px 0;
+            text-align: center;
+        }
+
+        /* Action hints */
+        .action-hint {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 8px 12px;
+            margin-top: 12px;
+            font-size: 13px;
+            color: #495057;
         }
 
         header {
@@ -410,61 +490,53 @@
         </header>
 
         <div class="dashboard-title">
-            <h1>Travel Assistant Performance Dashboard</h1>
-            <p>Monitor key performance indicators for the Voyant travel assistant. These metrics provide insights into user satisfaction, system reliability, and operational efficiency.</p>
+            <h1>Production Debugging Dashboard</h1>
+            <p>Follow the debugging flow: Pipeline Health → Root Cause Analysis → External Factors. Each section guides you to the next step.</p>
         </div>
 
-        <div class="grid">
-            <div class="card guide-card">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-bug"></i>
-                    </div>
-                    <h2>Production Debugging Guide</h2>
+        <!-- ALERTS BANNER (Immediate attention) -->
+        <div class="alerts-banner">
+            <div class="card-header">
+                <div class="card-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
                 </div>
-                <p class="hint">
-                    How to debug production issues in 30 seconds:
-                </p>
-                <div class="guide-content" id="guide">
-                    <div class="metric">
-                        <span class="metric-name">Pipeline Health</span>
-                        <span class="metric-value">Check which stage is failing: guard→extract→route→gather→blend→verify. Low success rates indicate bottlenecks. Verify rates show result quality.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">Confidence Correlation</span>
-                        <span class="metric-value">High-confidence failures = model drift. Low-confidence successes = undertrained intents.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">External API Context</span>
-                        <span class="metric-value">Slow APIs by location/domain help identify regional issues or specific content problems.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">Search Quality</span>
-                        <span class="metric-value">Complex query rate vs result quality shows if search is handling difficult queries properly.</span>
-                    </div>
-                </div>
+                <h2>Active Alerts</h2>
             </div>
+            <div id="alerts"></div>
+        </div>
 
-            <div class="card business">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-cogs"></i>
-                    </div>
-                    <h2>Pipeline Health</h2>
+        <!-- HERO SECTION: Pipeline Health (Primary debugging entry point) -->
+        <div class="hero-section">
+            <div class="card-header">
+                <div class="card-icon">
+                    <i class="fas fa-cogs"></i>
                 </div>
-                <p class="hint">Success rates and latency for each pipeline stage. Identifies bottlenecks quickly.</p>
-                <div id="pipeline"></div>
+                <h2>Pipeline Health - Where is the bottleneck?</h2>
             </div>
+            <p class="hint">Start here: Success rates and verify rates for each pipeline stage. Low rates = bottleneck found.</p>
+            <div id="pipeline"></div>
+            <div class="action-hint">
+                <strong>Next step:</strong> If any stage shows issues → investigate root causes in sections below
+            </div>
+        </div>
 
+        <div class="nav-arrow">↓ Pipeline issues found? Investigate root causes ↓</div>
+
+        <!-- SECONDARY SECTIONS: Root cause analysis -->
+        <div class="secondary-grid">
             <div class="card chat">
                 <div class="card-header">
                     <div class="card-icon">
                         <i class="fas fa-brain"></i>
                     </div>
-                    <h2>Confidence Correlation</h2>
+                    <h2>Confidence Analysis</h2>
                 </div>
-                <p class="hint">High/low confidence success rates by stage. Identifies model drift and training gaps.</p>
+                <p class="hint">Model performance by confidence level. Identifies training issues and model drift.</p>
                 <div id="confidence"></div>
+                <div class="action-hint">
+                    <strong>High-conf fails:</strong> Model drift → retrain<br>
+                    <strong>Low-conf succeeds:</strong> Add training data
+                </div>
             </div>
 
             <div class="card router">
@@ -474,61 +546,84 @@
                     </div>
                     <h2>Search Quality</h2>
                 </div>
-                <p class="hint">Query complexity distribution and search performance metrics.</p>
+                <p class="hint">Query complexity vs results quality. Shows if search handles difficult queries.</p>
                 <div id="searchQuality"></div>
-            </div>
-
-            <div class="card external">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-globe"></i>
-                    </div>
-                    <h2>External API Context</h2>
+                <div class="action-hint">
+                    <strong>Complex queries fail:</strong> Upgrade search<br>
+                    <strong>Simple queries fail:</strong> Check data quality
                 </div>
-                <p class="hint">API performance by query type, location, and domain. Helps identify regional issues.</p>
-                <div id="external"></div>
-            </div>
-
-            <div class="card perf">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-tachometer-alt"></i>
-                    </div>
-                    <h2>System Performance</h2>
-                </div>
-                <p class="hint">End-to-end latency and throughput metrics.</p>
-                <div id="perf"></div>
-            </div>
-
-            <div class="card tools">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-shield-alt"></i>
-                    </div>
-                    <h2>System Health</h2>
-                </div>
-                <p class="hint">Circuit breakers and rate limiting status.</p>
-                <div id="tools"></div>
-            </div>
-
-            <div class="card alerts">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <h2>Production Alerts</h2>
-                </div>
-                <p class="hint">Active issues requiring immediate attention.</p>
-                <div id="alerts"></div>
             </div>
         </div>
 
+        <!-- TERTIARY SECTION: External factors -->
+        <div class="card external tertiary-section">
+            <div class="card-header">
+                <div class="card-icon">
+                    <i class="fas fa-globe"></i>
+                </div>
+                <h2>External Dependencies</h2>
+            </div>
+            <p class="hint">API performance by location and domain. Check for regional/provider issues.</p>
+            <div id="external"></div>
+            <div class="action-hint">
+                <strong>Specific domains slow:</strong> Contact provider or add caching
+            </div>
+        </div>
+
+        <!-- COLLAPSIBLE GUIDE -->
+        <div class="guide-section">
+            <div class="guide-header" onclick="toggleGuide()">
+                <h2>Debugging Playbook</h2>
+                <i id="guide-icon" class="fas fa-chevron-down"></i>
+            </div>
+            <div class="guide-content" id="guide-content">
+                <p class="hint">30-second debugging workflow:</p>
+                <div id="guide">
+                    <div class="metric">
+                        <span class="metric-name">Step 1: Pipeline Health</span>
+                        <span class="metric-value">Find failing stage: guard→extract→route→gather→blend→verify. Success rate = completion, verify rate = quality.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">Step 2: Confidence Analysis</span>
+                        <span class="metric-value">High-confidence failures = model drift. Low-confidence successes = undertrained intents.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">Step 3: Search Quality</span>
+                        <span class="metric-value">Complex query rate vs result quality shows if search handles difficult queries properly.</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">Step 4: External Dependencies</span>
+                        <span class="metric-value">Slow APIs by location/domain help identify regional issues or provider problems.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden sections for backward compatibility -->
+        <div style="display: none;">
+            <div id="perf"></div>
+            <div id="tools"></div>
+        </div>
+
         <footer>
-            <p>Voyant Travel Assistant Metrics Dashboard • Updated in real-time</p>
+            <p>Voyant Production Debugging Dashboard • Follow the flow for fastest resolution</p>
         </footer>
     </div>
 
     <script>
+        function toggleGuide() {
+            const content = document.getElementById('guide-content');
+            const icon = document.getElementById('guide-icon');
+            
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                icon.className = 'fas fa-chevron-down';
+            } else {
+                content.classList.add('expanded');
+                icon.className = 'fas fa-chevron-up';
+            }
+        }
+
         let autoRefreshInterval;
         const history = {
             e2e_avg_ms: [],
@@ -601,7 +696,7 @@
                         }
                     });
                 } else {
-                    pipelineDiv.innerHTML = '<div class="metric"><span class="metric-name">No pipeline data yet</span><span class="metric-value">-</span></div>';
+                    pipelineDiv.innerHTML = '<div class="metric"><span class="metric-name">No pipeline activity yet</span><span class="metric-value">Send some requests to see metrics</span></div>';
                 }
 
                 // Confidence Correlation (Phase 3 metrics)
@@ -620,12 +715,12 @@
                         }
                     });
                 } else {
-                    confidenceDiv.innerHTML = '<div class="metric"><span class="metric-name">No confidence data yet</span><span class="metric-value">-</span></div>';
+                    confidenceDiv.innerHTML = '<div class="metric"><span class="metric-name">No confidence data yet</span><span class="metric-value">Need requests to analyze</span></div>';
                 }
 
                 // Search Quality (Phase 4 metrics)
                 const searchDiv = document.getElementById('searchQuality');
-                if (data.search_quality) {
+                if (data.search_quality && data.search_quality.total_searches > 0) {
                     const sq = data.search_quality;
                     searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Searches</span><span class="metric-value">${sq.total_searches}</span></div>`;
                     searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Complex Query Rate</span><span class="metric-value">${(parseFloat(sq.complex_query_rate) * 100).toFixed(1)}%</span></div>`;
@@ -635,7 +730,7 @@
                         searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Upgrade Rate</span><span class="metric-value">${(parseFloat(sq.upgrade_rate) * 100).toFixed(1)}%</span></div>`;
                     }
                 } else {
-                    searchDiv.innerHTML = '<div class="metric"><span class="metric-name">No search data yet</span><span class="metric-value">-</span></div>';
+                    searchDiv.innerHTML = '<div class="metric"><span class="metric-name">No search activity yet</span><span class="metric-value">Try some queries</span></div>';
                 }
 
                 // External API Context (Phase 2 metrics)
@@ -656,7 +751,7 @@
                         }
                     });
                 } else {
-                    extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external requests yet</span><span class="metric-value">-</span></div>';
+                    extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external API calls yet</span><span class="metric-value">System ready</span></div>';
                 }
 
                 // Performance (System Metrics)
@@ -741,7 +836,7 @@
                 }
                 
                 if (alerts.length === 0) {
-                    alerts.push(['All systems operating normally', 'ok']);
+                    alerts.push(['All systems ready - no activity yet', 'ok']);
                 }
                 
                 alerts.forEach(([msg, level]) => {

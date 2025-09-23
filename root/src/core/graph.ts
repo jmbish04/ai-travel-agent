@@ -18,7 +18,7 @@ import { detectSearchUpgradeRequest } from './search_upgrade.js';
 declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
-import { incClarify, observeStage, observeRouterResult, observeConfidenceOutcome } from '../util/metrics.js';
+import { incClarify, observeStage, observeRouterResult, observeConfidenceOutcome, observeStageClarify } from '../util/metrics.js';
 import { 
   getThreadSlots, 
   updateThreadSlots, 
@@ -346,7 +346,9 @@ export async function runGraphTurn(
     await updateThreadSlots(threadId, slots, missing, [], intent);
     try { if (intent && missing[0]) incClarify(intent, missing[0]); } catch {}
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
-    observeStage('route', Date.now() - routeStart, false, intent);
+    const d = Date.now() - routeStart;
+    observeStage('route', d, false, intent);
+    try { observeStageClarify('route', intent, d); } catch {}
     return { done: true, reply: q };
   }
   // Clarification resolved: if we previously had awaiting_* flags and now no missing slots

@@ -45,6 +45,11 @@ const clarifyResolved: Record<string, number> = {};
 const fallbacks: Record<string, number> = { web: 0, browser: 0 };
 const verifyFailsByReason: Record<string, number> = {};
 
+// Track clarification resolution latency per intent:slot
+type LatAgg = { count: number; sum: number; min: number; max: number };
+const clarifyResolutionLatency = new Map<string, LatAgg>();
+const pendingClarify = new Map<string, number>(); // key = intent:slot → timestamp
+
 // Router confidence distribution buckets
 const routerConfidenceBuckets: Record<string, number> = {
   '0.0-0.5': 0,
@@ -83,7 +88,10 @@ const confidenceOutcomes = new Map<string, {
   low_conf_fail: number
 }>();
 
-// Stage-level metrics
+// Router anomaly tracking per intent
+const routerAnomalies = new Map<string, { high_conf_miss: number; low_conf_hit: number }>();
+
+// Stage-level metrics (legacy, string key "stage_intent")
 const stageMetrics = {
   success: new Map<string, number>(),
   failure: new Map<string, number>(),
@@ -91,6 +99,42 @@ const stageMetrics = {
   verify_success: new Map<string, number>(),
   verify_failure: new Map<string, number>()
 };
+
+// Stage-level metrics (v2) with separate stage and intent
+type StageName = 'guard'|'extract'|'route'|'gather'|'blend'|'verify';
+type Outcome = 'success'|'clarify'|'fail'|'escalated';
+type LatencyAgg = { count: number; sum: number; min: number; max: number; samples: number[] };
+type StageIntentStats = { outcomes: Record<Outcome, number>; latency: LatencyAgg };
+const pipelineStats = new Map<StageName, Map<string, StageIntentStats>>();
+const LAT_SAMPLES_MAX = 500;
+function getStageIntentStats(stage: StageName, intent: string): StageIntentStats {
+  const byIntent = pipelineStats.get(stage) ?? new Map<string, StageIntentStats>();
+  if (!pipelineStats.has(stage)) pipelineStats.set(stage, byIntent);
+  const key = intent || 'unknown';
+  const cur = byIntent.get(key) ?? {
+    outcomes: { success: 0, clarify: 0, fail: 0, escalated: 0 },
+    latency: { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0, samples: [] },
+  };
+  if (!byIntent.has(key)) byIntent.set(key, cur);
+  return cur;
+}
+function addLatency(lat: LatAgg | LatencyAgg, v: number) {
+  lat.count += 1;
+  lat.sum += v;
+  lat.min = Math.min(lat.min, v);
+  lat.max = Math.max(lat.max, v);
+  const arr = (lat as any).samples as number[] | undefined;
+  if (arr) {
+    arr.push(v);
+    if (arr.length > LAT_SAMPLES_MAX) arr.shift();
+  }
+}
+function percentile(arr: number[], p: number): number {
+  if (!arr || arr.length === 0) return 0;
+  const a = [...arr].sort((x, y) => x - y);
+  const idx = Math.min(a.length - 1, Math.max(0, Math.floor((p / 100) * (a.length - 1))));
+  return a[idx];
+}
 
 // Search quality tracking
 const searchQuality = new Map<string, {
@@ -278,12 +322,26 @@ export function incRouterLowConf(intent: string) {
 export function incClarify(intent: string, slot: string) {
   const key = `${intent || 'unknown'}:${slot || 'unknown'}`;
   bump(clarifyRequests, key);
+  // Record pending start timestamp for resolution latency
+  pendingClarify.set(key, Date.now());
   if (counterClarify) counterClarify.inc({ intent: intent || 'unknown', slot: slot || 'unknown' });
   void pushIngest('clarify_total', { intent: intent || 'unknown', slot: slot || 'unknown' });
 }
 
-export function incClarifyResolved(intent: string) {
+export function incClarifyResolved(intent: string, slot?: string) {
   bump(clarifyResolved, intent || 'unknown');
+  // Compute resolution latency if we know the slot
+  if (slot) {
+    const key = `${intent || 'unknown'}:${slot || 'unknown'}`;
+    const t0 = pendingClarify.get(key);
+    if (t0) {
+      const d = Date.now() - t0;
+      pendingClarify.delete(key);
+      const agg = clarifyResolutionLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+      addLatency(agg, d);
+      clarifyResolutionLatency.set(key, agg);
+    }
+  }
   if (counterClarifyResolved) counterClarifyResolved.inc({ intent: intent || 'unknown' });
   void pushIngest('clarify_resolved_total', { intent: intent || 'unknown' });
 }
@@ -754,17 +812,23 @@ export function observeStage(
   // Track success/failure
   if (success) {
     stageMetrics.success.set(key, (stageMetrics.success.get(key) || 0) + 1);
+    // v2
+    const s = getStageIntentStats(stage, intent || '');
+    s.outcomes.success += 1;
   } else {
     stageMetrics.failure.set(key, (stageMetrics.failure.get(key) || 0) + 1);
+    const s = getStageIntentStats(stage, intent || '');
+    s.outcomes.fail += 1;
   }
   
   // Track latency
   const latency = stageMetrics.latency.get(key) || { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
-  latency.count += 1;
-  latency.sum += durationMs;
-  latency.min = Math.min(latency.min, durationMs);
-  latency.max = Math.max(latency.max, durationMs);
+  addLatency(latency, durationMs);
   stageMetrics.latency.set(key, latency);
+
+  // v2 latency
+  const s2 = getStageIntentStats(stage, intent || '');
+  addLatency(s2.latency, durationMs);
 }
 
 export function observeRouterResult(
@@ -783,6 +847,18 @@ export function observeRouterResult(
   // Track missing slots as a quality indicator
   if (missingSlots > 0) {
     bump(clarifyRequests, `${intent}:missing_slots`);
+  }
+
+  // Track anomalies
+  if (missingSlots > 0 && confidence >= 0.9) {
+    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
+    r.high_conf_miss += 1;
+    routerAnomalies.set(intent || 'unknown', r);
+  }
+  if (missingSlots === 0 && confidence < 0.6 && success) {
+    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
+    r.low_conf_hit += 1;
+    routerAnomalies.set(intent || 'unknown', r);
   }
 }
 
@@ -835,4 +911,142 @@ export function observeConfidenceOutcome(
   }
   
   confidenceOutcomes.set(key, stats);
+}
+
+// Explicit stage outcome helpers for v2
+export function observeStageClarify(stage: StageName, intent: string | undefined, durationMs: number) {
+  const s = getStageIntentStats(stage, intent || '');
+  s.outcomes.clarify += 1;
+  addLatency(s.latency, durationMs);
+}
+export function observeStageEscalated(stage: StageName, intent: string | undefined, durationMs: number) {
+  const s = getStageIntentStats(stage, intent || '');
+  s.outcomes.escalated += 1;
+  addLatency(s.latency, durationMs);
+}
+
+// New JSON snapshot (v2)
+export function snapshotV2() {
+  // Pipeline stages with separate stage and intent
+  const stages: Array<{ stage: StageName; intent: string; totals: Record<Outcome, number>; latency: { p50: number; p95: number; max: number } }>
+    = [];
+  for (const [stage, byIntent] of pipelineStats.entries()) {
+    for (const [intent, stats] of byIntent.entries()) {
+      stages.push({
+        stage,
+        intent,
+        totals: { ...stats.outcomes },
+        latency: {
+          p50: percentile(stats.latency.samples, 50),
+          p95: percentile(stats.latency.samples, 95),
+          max: stats.latency.max,
+        }
+      });
+    }
+  }
+
+  // Intent health aggregation
+  const intentAgg = new Map<string, { requests: number; clarifications: number; verifyFails: number; totalTurns: number; turnLatencySum: number; turnCount: number }>();
+  // Use route totals as requests, clarify totals as clarifications, verify failures from stage verify
+  const byIntentRoute = pipelineStats.get('route') || new Map();
+  for (const [intent, stats] of byIntentRoute.entries()) {
+    const a = intentAgg.get(intent) || { requests: 0, clarifications: 0, verifyFails: 0, totalTurns: 0, turnLatencySum: 0, turnCount: 0 };
+    a.requests += (stats.outcomes.success + stats.outcomes.clarify + stats.outcomes.fail + stats.outcomes.escalated);
+    a.clarifications += stats.outcomes.clarify;
+    intentAgg.set(intent, a);
+  }
+  const byIntentVerify = pipelineStats.get('verify') || new Map();
+  for (const [intent, stats] of byIntentVerify.entries()) {
+    const a = intentAgg.get(intent) || { requests: 0, clarifications: 0, verifyFails: 0, totalTurns: 0, turnLatencySum: 0, turnCount: 0 };
+    a.verifyFails += stats.outcomes.fail;
+    intentAgg.set(intent, a);
+  }
+  // Use blend latency as proxy for turn latency
+  const byIntentBlend = pipelineStats.get('blend') || new Map();
+  for (const [intent, stats] of byIntentBlend.entries()) {
+    const a = intentAgg.get(intent) || { requests: 0, clarifications: 0, verifyFails: 0, totalTurns: 0, turnLatencySum: 0, turnCount: 0 };
+    a.turnLatencySum += stats.latency.sum;
+    a.turnCount += stats.latency.count;
+    intentAgg.set(intent, a);
+  }
+  const intents = Array.from(intentAgg.entries()).map(([intent, a]) => ({
+    intent,
+    requests: a.requests,
+    clarification_rate: a.requests > 0 ? Number((a.clarifications / a.requests).toFixed(3)) : 0,
+    fallback_rate: 0, // not attributed per-intent in current impl
+    verify_fail_rate: a.requests > 0 ? Number((a.verifyFails / a.requests).toFixed(3)) : 0,
+    avg_turn_latency: a.turnCount > 0 ? Number((a.turnLatencySum / a.turnCount).toFixed(1)) : 0,
+  }));
+
+  // Verify quality breakdown
+  const verify = Object.entries(verifyFailsByReason).map(([reason, count]) => ({ reason, count }));
+  const confidence = Array.from(confidenceOutcomes.entries()).map(([key, s]) => {
+    const [stage, intent] = key.includes('_') ? ((): [string, string] => { const i = key.indexOf('_'); return [key.slice(0, i), key.slice(i + 1)]; })() : [key, ''];
+    const totalHigh = s.high_conf_success + s.high_conf_fail;
+    const totalLow = s.low_conf_success + s.low_conf_fail;
+    return {
+      stage,
+      intent,
+      high: { total: totalHigh, success_rate: totalHigh > 0 ? Number((s.high_conf_success / totalHigh).toFixed(3)) : 0 },
+      low: { total: totalLow, success_rate: totalLow > 0 ? Number((s.low_conf_success / totalLow).toFixed(3)) : 0 },
+    };
+  });
+
+  // Search aggregation (reuse previous)
+  const sq = searchQuality.get('search_quality');
+  const search = sq ? {
+    total: sq.total,
+    complex_query_rate: sq.total > 0 ? Number((sq.complexQueries / sq.total).toFixed(3)) : 0,
+    avg_complexity_confidence: sq.avgComplexityConfidence.count > 0 ? Number((sq.avgComplexityConfidence.sum / sq.avgComplexityConfidence.count).toFixed(3)) : 0,
+    upgrade_rate: sq.total > 0 ? Number((sq.upgradeRequests / sq.total).toFixed(3)) : 0,
+    avg_results_per_search: sq.resultCounts.count > 0 ? Number((sq.resultCounts.sum / sq.resultCounts.count).toFixed(1)) : 0,
+  } : { total: 0, complex_query_rate: 0, avg_complexity_confidence: 0, upgrade_rate: 0, avg_results_per_search: 0 };
+
+  // External aggregation
+  const targets = Array.from(externalAgg.entries()).map(([target, agg]) => ({
+    target,
+    total: agg.total,
+    byStatus: agg.byStatus,
+    byContext: agg.byContext,
+    latency: {
+      avg_ms: agg.latency.count > 0 ? Number((agg.latency.sum / agg.latency.count).toFixed(1)) : 0,
+      max_ms: agg.latency.max,
+    },
+    timeout_rate: agg.total > 0 ? Number(((agg.byStatus['timeout'] ?? 0) / agg.total).toFixed(3)) : 0,
+  }));
+
+  // LLM placeholder (can be populated later)
+  const llm = {};
+
+  // System block
+  const active_sessions = Array.from(sessions.values()).filter(s => !s.resolved).length;
+  const system = {
+    active_sessions,
+    breaker: getAllBreakerStats(),
+    rate_limit: getAllLimiterStats(),
+  };
+
+  // Alerts (basic rules)
+  const alerts: Array<{ message: string; level: 'warn'|'alert' }>
+    = [];
+  for (const s of stages) {
+    const total = s.totals.success + s.totals.clarify + s.totals.fail + s.totals.escalated;
+    if (total === 0) continue;
+    const successRate = s.totals.success / total;
+    if (successRate < 0.9) alerts.push({ message: `${s.stage}/${s.intent} success ${(successRate*100).toFixed(1)}%`, level: 'alert' });
+    if (s.latency.p95 > 5000) alerts.push({ message: `${s.stage}/${s.intent} p95 ${s.latency.p95.toFixed(0)}ms`, level: 'warn' });
+  }
+  for (const t of targets) {
+    if (t.timeout_rate > 0.05) alerts.push({ message: `${t.target} timeouts ${(t.timeout_rate*100).toFixed(1)}%`, level: 'alert' });
+  }
+
+  return {
+    pipeline: { stages, alerts },
+    intents,
+    quality: { verify, confidence },
+    search,
+    external: { targets },
+    llm,
+    system,
+  };
 }

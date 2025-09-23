@@ -48,7 +48,7 @@ import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
-import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession, resolveSession } from '../util/metrics.js';
+import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
   results: Array<{ title: string; url: string; description: string }>
@@ -156,13 +156,6 @@ async function performWebSearch(
     } catch {
       // ignore
     }
-  }
-  
-  // Metrics instrumentation
-  incGeneratedAnswer();
-  if (citations.length > 0) {
-    incAnswersWithCitations();
-    try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
   }
   
   return { reply, citations };
@@ -324,6 +317,7 @@ export async function handleChat(
           return ChatOutput.parse({ reply: result.reply, threadId });
         }
         
+        const vStart = Date.now();
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -333,6 +327,10 @@ export async function handleChat(
           slotsSummary: slots,
           lastIntent: intent,
         });
+        try {
+          const { observeStage } = await import('../util/metrics.js');
+          observeStage('verify', Date.now() - vStart, lastAudit.verdict !== 'fail', intent);
+        } catch {}
         // Metrics
         try {
           const { incVerifyFail, incVerifyPass, observeVerifyScores, observeConfidenceOutcome } = await import('../util/metrics.js');
@@ -431,9 +429,6 @@ export async function handleChat(
       }
     }
 
-    // Resolve session as completed
-    resolveSession(threadId, 'auto');
-    
     return ChatOutput.parse({
       reply: verifiedReply,
       threadId,
@@ -641,11 +636,6 @@ export async function blendWithFacts(
           await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
-        // Metrics instrumentation
-        incGeneratedAnswer();
-        incAnswersWithCitations();
-        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
-        
         return { reply, citations: [source] };
       } else {
         ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
@@ -689,10 +679,6 @@ export async function blendWithFacts(
           )];
           await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
-        
-        // Metrics instrumentation
-        incGeneratedAnswer();
-        incAnswersWithCitations();
         
         return { reply, citations: [source] };
       } else {
@@ -904,7 +890,12 @@ export async function blendWithFacts(
     }`;
 
     try {
+      const blendStart = Date.now();
       const [cotAnalysis, rawReply] = await callLLMBatch([cotPrompt, finalPrompt], { log: ctx.log });
+      try {
+        const { observeStage } = await import('../util/metrics.js');
+        observeStage('blend', Date.now() - blendStart, true, input.route.intent);
+      } catch {}
       
       // Check if CoT suggests missing critical information
       if (cotAnalysis && cotAnalysis.includes('missing') && (cotAnalysis.includes('city') || cotAnalysis.includes('date'))) {
@@ -965,13 +956,7 @@ export async function blendWithFacts(
         ctx.log.warn({ reply: replyWithSource, cits, hasExternal: cits.length > 0 }, 'citation_validation_failed');
       }
       
-      // Metrics instrumentation
-      incGeneratedAnswer();
-      if (cits.length > 0) {
-        incAnswersWithCitations();
-        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
-      }
-      
+      // Metrics recorded centrally in handleChat
       return { reply: replyWithSource, citations: cits.length ? cits : undefined };
       
     } catch (e) {
