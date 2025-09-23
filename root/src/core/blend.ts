@@ -195,56 +195,45 @@ export async function handleChat(
   
   const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
     /^\s*\/why\b/i.test(input.message);
+  ctx.log.debug({ wantReceipts, message: input.message, isWhyCommand: /^\s*\/why\b/i.test(input.message) }, 'why_command_detection');
   if (wantReceipts) {
+    ctx.log.debug({ threadId }, 'entering_why_command_handler');
     await setLastUserMessage(threadId, input.message);
     const stored = await getLastReceipts(threadId) || {};
+    ctx.log.debug({ threadId, stored, factsCount: stored.facts?.length || 0, decisionsCount: stored.decisions?.length || 0 }, 'why_command_stored_data');
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
     let reply = stored.reply || 'No previous answer to explain.';
     const token_estimate = 400;
     const receipts = buildReceiptsSkeleton(facts as Fact[], decisions, token_estimate);
+    
+    const formatDecision = (d: string | Decision) => {
+      if (typeof d === 'string') return d;
+      return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+    };
+    
     try {
       const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
       let audit: Awaited<ReturnType<typeof verifyAnswer>> | undefined;
-      if (autoVerify) {
-        const last = await getLastVerification(threadId);
-        if (last) {
-          // Map stored artifact to VerifyResult shape (scores optional)
-          audit = {
-            verdict: last.verdict,
-            notes: last.notes || [],
-            scores: last.scores,
-            revisedAnswer: last.revisedAnswer,
-          } as any;
-        }
-      }
-      if (!audit) {
-        audit = await verifyAnswer({
-          reply,
-          facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
-          log: ctx.log,
-          latestUser: await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))(),
-          previousUsers: await (async () => {
-            const msgs = await getContext(threadId);
-            const users = msgs.filter(m => m.role === 'user').map(m => m.content);
-            // exclude the very last if equal to latest
-            const last = users[users.length - 1];
-            const trimmed = (await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))()) || '';
-            const filtered = users.filter(u => u !== trimmed);
-            return filtered.slice(-2);
-          })(),
-          slotsSummary: await getThreadSlots(threadId),
-          lastIntent: await getLastIntent(threadId),
-        });
-        try {
-          if (audit.verdict === 'fail') {
-            const { incVerifyFail } = await import('../util/metrics.js');
-            incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
-          } else {
-            const { incVerifyPass } = await import('../util/metrics.js');
-            incVerifyPass();
-          }
-        } catch {}
+      
+      // For /why commands, always use stored verification, never re-verify
+      const last = await getLastVerification(threadId);
+      if (last) {
+        // Map stored artifact to VerifyResult shape (scores optional)
+        audit = {
+          verdict: last.verdict,
+          notes: last.notes || [],
+          scores: last.scores,
+          revisedAnswer: last.revisedAnswer,
+        } as any;
+      } else {
+        // Fallback if no stored verification exists
+        audit = {
+          verdict: 'pass' as const,
+          notes: ['No verification data available'],
+          scores: undefined,
+          revisedAnswer: undefined,
+        } as any;
       }
       if (audit.verdict === 'fail' && audit.revisedAnswer) {
         reply = audit.revisedAnswer;
@@ -252,11 +241,6 @@ export async function handleChat(
       const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores } };
       const safe = ReceiptsSchema.parse(merged);
       
-      // For /why commands, return only receipts content as reply
-      const formatDecision = (d: string | Decision) => {
-        if (typeof d === 'string') return d;
-        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
-      };
       const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit.verdict}${audit.notes.length > 0 ? ` (${audit.notes.join(', ')})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
@@ -264,21 +248,20 @@ export async function handleChat(
         .replace(/&gt;/g, '>');
       
       try { incGeneratedAnswer(); } catch {}
+      ctx.log.debug({ threadId }, 'why_command_returning_success');
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources, receipts: safe });
     } catch {
-      const formatDecision = (d: string | Decision) => {
-        if (typeof d === 'string') return d;
-        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
-      };
       const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: not available\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       try { incGeneratedAnswer(); } catch {}
+      ctx.log.debug({ threadId }, 'why_command_returning_error');
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources });
     }
   }
+  ctx.log.debug({ threadId, message: input.message }, 'continuing_to_normal_pipeline');
   await pushMessage(threadId, { role: 'user', content: input.message });
   await setLastUserMessage(threadId, input.message);
   ctx.onStatus?.('Processing your travel request...');

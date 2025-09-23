@@ -253,10 +253,7 @@ async function maybeResetContextForMessage(params: {
 async function clearConsentState(threadId?: string) {
   if (!threadId) return;
   
-  // Get current slots
-  const currentSlots = await getThreadSlots(threadId);
-  
-  // List of keys to remove
+  // List of keys to remove - only consent and conflicting travel data
   const keysToRemove = [
     // Consent states
     'awaiting_deep_research_consent',
@@ -291,19 +288,8 @@ async function clearConsentState(threadId?: string) {
     'clarification_reasoning'
   ];
   
-  // Create new slots object without the keys to remove
-  const cleanedSlots: Record<string, string> = {};
-  for (const [key, value] of Object.entries(currentSlots)) {
-    if (!keysToRemove.includes(key)) {
-      cleanedSlots[key] = value;
-    }
-  }
-  
-  // Clear all slots and set only the cleaned ones
-  await clearThreadSlots(threadId);
-  if (Object.keys(cleanedSlots).length > 0) {
-    await updateThreadSlots(threadId, cleanedSlots, []);
-  }
+  // Remove only the specified keys, preserving receipts and session data
+  await updateThreadSlots(threadId, {}, [], keysToRemove);
 }
 
 export async function routeIntent({ message, threadId, logger }: {

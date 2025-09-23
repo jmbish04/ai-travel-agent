@@ -202,12 +202,47 @@ export async function setLastReceipts(
 ): Promise<void> {
   const store = getSessionStore();
   const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastFacts: facts, lastDecisions: decisions, lastReply: reply });
+  
+  // Preserve or create sessionMetadata to prevent session invalidation
+  let sessionMetadata: SessionMetadata;
+  if (!prev.sessionMetadata || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const newState = { 
+    ...prev, 
+    lastFacts: facts, 
+    lastDecisions: decisions, 
+    lastReply: reply,
+    sessionMetadata 
+  };
+  
+  console.log('🔧 RECEIPTS: setLastReceipts', { 
+    threadId, 
+    factsCount: facts.length, 
+    decisionsCount: decisions.length, 
+    reply: reply?.substring(0, 50) + '...',
+    factsSample: facts.slice(0, 2)
+  });
+  
+  await store.setJson('state', threadId, newState);
 }
 
 export async function getLastReceipts(threadId: string): Promise<{ facts?: Fact[]; decisions?: Array<string | Decision>; reply?: string }> {
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
+  
+  console.log('🔧 RECEIPTS: getLastReceipts', { 
+    threadId, 
+    hasState: !!state,
+    factsCount: state?.lastFacts?.length || 0,
+    decisionsCount: state?.lastDecisions?.length || 0,
+    hasSessionMetadata: !!state?.sessionMetadata,
+    isSessionValid: state?.sessionMetadata ? isSessionValid(state.sessionMetadata) : false
+  });
+  
   return { facts: state?.lastFacts, decisions: state?.lastDecisions, reply: state?.lastReply };
 }
 
@@ -234,6 +269,11 @@ export async function setLastUserMessage(threadId: string, message: string): Pro
     lastIntent: prev?.lastIntent,
     prevUserMessage: prev?.lastUserMessage,
     lastUserMessage: message,
+    // Preserve receipts and verification data
+    lastFacts: prev?.lastFacts,
+    lastDecisions: prev?.lastDecisions,
+    lastReply: prev?.lastReply,
+    lastVerification: prev?.lastVerification,
     sessionMetadata
   };
   
@@ -249,7 +289,36 @@ export async function getPrevUserMessage(threadId: string): Promise<string | und
 export async function setLastVerification(threadId: string, artifact: Required<Pick<SlotState,'lastVerification'>>['lastVerification']): Promise<void> {
   const store = getSessionStore();
   const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastVerification: { ...artifact, createdAt: Date.now() } });
+  
+  console.log('🔧 VERIFICATION: setLastVerification BEFORE', { 
+    threadId, 
+    prevFactsCount: prev.lastFacts?.length || 0,
+    prevDecisionsCount: prev.lastDecisions?.length || 0,
+    hasSessionMetadata: !!prev.sessionMetadata
+  });
+  
+  // Preserve or create sessionMetadata to prevent session invalidation
+  let sessionMetadata: SessionMetadata;
+  if (!prev.sessionMetadata || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const newState = { 
+    ...prev, 
+    lastVerification: { ...artifact, createdAt: Date.now() },
+    sessionMetadata 
+  };
+  
+  console.log('🔧 VERIFICATION: setLastVerification AFTER', { 
+    threadId, 
+    newFactsCount: newState.lastFacts?.length || 0,
+    newDecisionsCount: newState.lastDecisions?.length || 0,
+    hasSessionMetadata: !!newState.sessionMetadata
+  });
+  
+  await store.setJson('state', threadId, newState);
 }
 
 export async function getLastVerification(threadId: string): Promise<SlotState['lastVerification'] | undefined> {

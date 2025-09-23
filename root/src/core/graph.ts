@@ -157,27 +157,30 @@ export async function runGraphTurn(
   const previousQuery = prevSlots.last_search_query;
   const { reply: previousAnswer } = await getLastReceipts(threadId);
   
-  ctx.log.debug({ message, previousQuery, hasQuery: !!previousQuery }, 'search_upgrade_check');
+  // If no search query, use the previous user message for upgrade detection
+  const previousUserMessage = await getLastUserMessage(threadId);
+  const queryForUpgrade = previousQuery || previousUserMessage;
   
-  if (previousQuery) {
+  ctx.log.debug({ message, previousQuery, previousUserMessage, hasQuery: !!queryForUpgrade }, 'search_upgrade_check');
+  
+  if (queryForUpgrade) {
     const upgradeResult = await detectSearchUpgradeRequest({
       message,
-      previousQuery,
+      previousQuery: queryForUpgrade,
       previousAnswer,
       log: ctx.log
     });
     
-    ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_result');
+    ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_result');
     
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
-      ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_detected');
-      // Deepen the user's current topic using their latest message + context,
-      // not the stale previousQuery, to avoid losing intent like "hotels".
+      ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_detected');
+      // Use the original query for upgrade, not the upgrade command
       const slotCtx = await getThreadSlots(threadId);
-      const optimizedCurrent = await optimizeSearchQuery(message, slotCtx, 'web_search', ctx.log);
+      const optimizedOriginal = await optimizeSearchQuery(queryForUpgrade, slotCtx, 'web_search', ctx.log);
       // Persist the optimized query for continuity across turns
-      await updateThreadSlots(threadId, { last_search_query: optimizedCurrent }, []);
-      return await performDeepResearchNode(optimizedCurrent, ctx, threadId);
+      await updateThreadSlots(threadId, { last_search_query: optimizedOriginal }, []);
+      return await performDeepResearchNode(optimizedOriginal, ctx, threadId);
     }
   }
   
