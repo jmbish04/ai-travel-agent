@@ -140,7 +140,7 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
       .filter(k => !['restaurants','eateries','bars','cafes'].includes(k))
       .join(',');
 
-    let pois = await searchPOIs({ 
+    const pois = await searchPOIs({ 
       lat: first.latitude, 
       lon: first.longitude, 
       limit: limit + 3, // Get more for better filtering

@@ -335,7 +335,7 @@ export async function runGraphTurn(
   }
   
   // Use cached router result instead of calling routeIntentNode
-  let intent = C.forced ?? C.route?.intent;
+  const intent = C.forced ?? C.route?.intent;
   
   // === SLOT PROCESSING ===
   const prior = await getThreadSlots(threadId);

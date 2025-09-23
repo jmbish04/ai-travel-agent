@@ -357,7 +357,7 @@ function fallbackExtractCity(text: string): string {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) {
-      let city = match[1].split(/[.,!?]/)[0]?.trim();
+      const city = match[1].split(/[.,!?]/)[0]?.trim();
       if (city) {
         // Handle abbreviations
         const abbrevMap: Record<string, string> = {
