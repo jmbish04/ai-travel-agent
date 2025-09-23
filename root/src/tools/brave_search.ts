@@ -3,6 +3,7 @@ import { getPrompt } from '../core/prompts.js';
 import { callLLM } from '../core/llm.js';
 import { deepResearchPages } from './crawlee_research.js';
 import { withResilience } from '../util/resilience.js';
+import { observeExternal } from '../util/metrics.js';
 
 export interface SearchResult {
   title: string;
@@ -11,8 +12,8 @@ export interface SearchResult {
 }
 
 export type Out =
-  | { ok: true; results: SearchResult[]; deepSummary?: string; reason?: string }
-  | { ok: false; reason: string };
+  | { ok: true; results: SearchResult[]; deepSummary?: string; reason?: string; confidence?: number }
+  | { ok: false; reason: string; confidence?: number };
 
 function withTimeout(ms: number, signal?: AbortSignal) {
   const ctrl = new AbortController();
@@ -21,19 +22,16 @@ function withTimeout(ms: number, signal?: AbortSignal) {
   return { signal: linked, cancel: () => clearTimeout(t) };
 }
 
-/**
- * Search for travel information using Brave Search API
- */
 export async function searchTravelInfo(query: string, log?: any, deepResearch = false): Promise<Out> {
   if (!query.trim()) {
     if (log) log.debug(`❌ Brave Search: empty query`);
-    return { ok: false, reason: 'no_query' };
+    return { ok: false, reason: 'no_query', confidence: 0.0 };
   }
   
   const apiKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!apiKey) {
     if (log) log.debug(`❌ Brave Search: no API key configured`);
-    return { ok: false, reason: 'no_api_key' };
+    return { ok: false, reason: 'no_api_key', confidence: 0.0 };
   }
 
   if (log) log.debug(`🔍 Brave Search: query="${query}", apiKey="${apiKey.slice(0, 10)}..."`);
@@ -100,7 +98,12 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
       if (log) log.debug(`⏭️ Skipping deep research: deepResearch=${deepResearch}, results=${results.length}`);
     }
     
-    return { ok: true, results, deepSummary };
+    // Calculate confidence based on result quality
+    const confidence = results.length === 0 ? 0.1 : 
+                      results.length < 3 ? 0.5 :
+                      deepSummary ? 0.9 : 0.7;
+    
+    return { ok: true, results, deepSummary, confidence };
     
   } catch (e) {
     if (log) {
@@ -114,7 +117,7 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
     // Handle circuit breaker errors
     if (e instanceof Error && e.name === 'CircuitBreakerError') {
       if (log) log.debug(`🔌 Brave Search circuit breaker is open`);
-      return { ok: false, reason: 'circuit_breaker_open' };
+      return { ok: false, reason: 'circuit_breaker_open', confidence: 0.0 };
     }
     
     // Handle different error types from the wrapper
@@ -123,27 +126,27 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
       
       if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
         if (log) log.debug(`🚫 Brave Search rate limited`);
-        return { ok: false, reason: 'rate_limited' };
+        return { ok: false, reason: 'rate_limited', confidence: 0.0 };
       }
       
       if (errorMessage.includes('unauthorized') || errorMessage.includes('401') || errorMessage.includes('403')) {
         if (log) log.debug(`🔑 Brave Search authentication error`);
-        return { ok: false, reason: 'auth_error' };
+        return { ok: false, reason: 'auth_error', confidence: 0.0 };
       }
       
       if (errorMessage.includes('timeout')) {
         if (log) log.debug(`⏰ Brave Search timeout`);
-        return { ok: false, reason: 'timeout' };
+        return { ok: false, reason: 'timeout', confidence: 0.0 };
       }
       
       if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
         if (log) log.debug(`🌐 Brave Search network error`);
-        return { ok: false, reason: 'network' };
+        return { ok: false, reason: 'network', confidence: 0.0 };
       }
     }
     
     if (log) log.debug(`❓ Brave Search unknown error type: ${e?.constructor?.name || typeof e}`);
-    return { ok: false, reason: 'unknown_error' };
+    return { ok: false, reason: 'unknown_error', confidence: 0.0 };
   }
 }
 

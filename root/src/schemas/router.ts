@@ -17,6 +17,7 @@ export const RouterSlots = z.object({
   search_query: z.string().nullable().optional(),
   // IRROPS-specific slots
   recordLocator: z.string().nullable().optional(),
+  flightNumber: z.string().nullable().optional(),
   disruptionType: z.string().nullable().optional(),
   affectedSegments: z.string().nullable().optional(),
   maxPriceIncrease: z.string().nullable().optional(),

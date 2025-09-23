@@ -42,13 +42,13 @@ function hasTravelContext(message: string): boolean {
   const lower = message.toLowerCase();
   return Array.from(contexts).some(term => lower.includes(term));
 }
-import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage, getLastVerification, setLastVerification, getLastIntent, getThreadSlots } from './slot_memory.js';
+import { getLastReceipts, setLastReceipts, updateThreadSlots, setLastUserMessage, getLastVerification, setLastVerification, getLastIntent, getThreadSlots, getLastSearchConfidence } from './slot_memory.js';
 import { buildReceiptsSkeleton, ReceiptsSchema, Decision, createDecision } from './receipts.js';
 import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
-import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession, resolveSession } from '../util/metrics.js';
+import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
   results: Array<{ title: string; url: string; description: string }>
@@ -158,13 +158,6 @@ async function performWebSearch(
     }
   }
   
-  // Metrics instrumentation
-  incGeneratedAnswer();
-  if (citations.length > 0) {
-    incAnswersWithCitations();
-    try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
-  }
-  
   return { reply, citations };
 }
 
@@ -195,90 +188,73 @@ export async function handleChat(
   
   const wantReceipts = Boolean((input as { receipts?: boolean }).receipts) ||
     /^\s*\/why\b/i.test(input.message);
+  ctx.log.debug({ wantReceipts, message: input.message, isWhyCommand: /^\s*\/why\b/i.test(input.message) }, 'why_command_detection');
   if (wantReceipts) {
+    ctx.log.debug({ threadId }, 'entering_why_command_handler');
     await setLastUserMessage(threadId, input.message);
     const stored = await getLastReceipts(threadId) || {};
+    ctx.log.debug({ threadId, stored, factsCount: stored.facts?.length || 0, decisionsCount: stored.decisions?.length || 0 }, 'why_command_stored_data');
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
     let reply = stored.reply || 'No previous answer to explain.';
     const token_estimate = 400;
     const receipts = buildReceiptsSkeleton(facts as Fact[], decisions, token_estimate);
+    
+    const formatDecision = (d: string | Decision) => {
+      if (typeof d === 'string') return d;
+      return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+    };
+    
     try {
       const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
       let audit: Awaited<ReturnType<typeof verifyAnswer>> | undefined;
-      if (autoVerify) {
-        const last = await getLastVerification(threadId);
-        if (last) {
-          // Map stored artifact to VerifyResult shape (scores optional)
-          audit = {
-            verdict: last.verdict,
-            notes: last.notes || [],
-            scores: last.scores,
-            revisedAnswer: last.revisedAnswer,
-          } as any;
-        }
+      
+      // For /why commands, always use stored verification, never re-verify
+      const last = await getLastVerification(threadId);
+      if (last) {
+        // Map stored artifact to VerifyResult shape (scores optional)
+        audit = {
+          verdict: last.verdict,
+          notes: last.notes || [],
+          scores: last.scores,
+          revisedAnswer: last.revisedAnswer,
+        } as any;
+      } else {
+        // Fallback if no stored verification exists
+        audit = {
+          verdict: 'pass' as const,
+          notes: ['No verification data available'],
+          scores: undefined,
+          revisedAnswer: undefined,
+        } as any;
       }
-      if (!audit) {
-        audit = await verifyAnswer({
-          reply,
-          facts: (facts as Fact[]).map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
-          log: ctx.log,
-          latestUser: await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))(),
-          previousUsers: await (async () => {
-            const msgs = await getContext(threadId);
-            const users = msgs.filter(m => m.role === 'user').map(m => m.content);
-            // exclude the very last if equal to latest
-            const last = users[users.length - 1];
-            const trimmed = (await (async () => (await import('./slot_memory.js')).getLastUserMessage(threadId))()) || '';
-            const filtered = users.filter(u => u !== trimmed);
-            return filtered.slice(-2);
-          })(),
-          slotsSummary: await getThreadSlots(threadId),
-          lastIntent: await getLastIntent(threadId),
-        });
-        try {
-          if (audit.verdict === 'fail') {
-            const { incVerifyFail } = await import('../util/metrics.js');
-            incVerifyFail((audit.notes?.[0] || 'fail').toLowerCase());
-          } else {
-            const { incVerifyPass } = await import('../util/metrics.js');
-            incVerifyPass();
-          }
-        } catch {}
-      }
-      if (audit.verdict === 'fail' && audit.revisedAnswer) {
+      if (audit && audit.verdict === 'fail' && audit.revisedAnswer) {
         reply = audit.revisedAnswer;
       }
-      const merged = { ...receipts, selfCheck: { verdict: audit.verdict, notes: audit.notes, scores: (audit as any).scores } };
+      const merged = { ...receipts, selfCheck: { verdict: audit?.verdict || 'pass', notes: audit?.notes || [], scores: (audit as any)?.scores } };
       const safe = ReceiptsSchema.parse(merged);
       
-      // For /why commands, return only receipts content as reply
-      const formatDecision = (d: string | Decision) => {
-        if (typeof d === 'string') return d;
-        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
-      };
-      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit.verdict}${audit.notes.length > 0 ? ` (${audit.notes.join(', ')})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
+      const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: ${audit?.verdict || 'pass'}${(audit?.notes?.length || 0) > 0 ? ` (${audit?.notes?.join(', ') || ''})` : ''}\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       
       try { incGeneratedAnswer(); } catch {}
+      ctx.log.debug({ threadId }, 'why_command_returning_success');
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources, receipts: safe });
     } catch {
-      const formatDecision = (d: string | Decision) => {
-        if (typeof d === 'string') return d;
-        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
-      };
       const receiptsReply = `--- RECEIPTS ---\n\nSources: ${receipts.sources.join(', ')}\n\nDecisions: ${decisions.map(formatDecision).join(' ')}\n\nSelf-Check: not available\n\nBudget: ${receipts.budgets.ext_api_latency_ms || 0}ms API, ~${token_estimate} tokens`
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       try { incGeneratedAnswer(); } catch {}
+      ctx.log.debug({ threadId }, 'why_command_returning_error');
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources });
     }
   }
+  ctx.log.debug({ threadId, message: input.message }, 'continuing_to_normal_pipeline');
   await pushMessage(threadId, { role: 'user', content: input.message });
   await setLastUserMessage(threadId, input.message);
   ctx.onStatus?.('Processing your travel request...');
@@ -341,6 +317,7 @@ export async function handleChat(
           return ChatOutput.parse({ reply: result.reply, threadId });
         }
         
+        const vStart = Date.now();
         lastAudit = await verifyAnswer({
           reply: result.reply,
           facts: facts.map(f => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -350,21 +327,39 @@ export async function handleChat(
           slotsSummary: slots,
           lastIntent: intent,
         });
+        try {
+          const { observeStage } = await import('../util/metrics.js');
+          observeStage('verify', Date.now() - vStart, lastAudit.verdict !== 'fail', intent);
+        } catch {}
         // Metrics
         try {
-          const { incVerifyFail, incVerifyPass, observeVerifyScores } = await import('../util/metrics.js');
-          if (lastAudit.verdict === 'fail') {
+          const { incVerifyFail, incVerifyPass, observeVerifyScores, observeConfidenceOutcome } = await import('../util/metrics.js');
+          if (lastAudit && lastAudit.verdict === 'fail') {
             incVerifyFail((lastAudit.notes?.[0] || 'fail').toLowerCase());
-          } else {
+          } else if (lastAudit) {
             incVerifyPass();
           }
-          if ((lastAudit as any).scores) {
+          
+          // Track verify confidence correlation
+          if (lastAudit && lastAudit.confidence !== undefined) {
+            const success = lastAudit.verdict === 'pass';
+            observeConfidenceOutcome('verify', lastAudit.confidence, success);
+          }
+          
+          // Track search confidence → verify outcome correlation
+          const searchConfidence = await getLastSearchConfidence(threadId);
+          if (searchConfidence !== undefined && lastAudit) {
+            const searchSuccess = lastAudit.verdict === 'pass';
+            observeConfidenceOutcome('search', searchConfidence, searchSuccess, intent);
+          }
+          
+          if (lastAudit && (lastAudit as any).scores) {
             observeVerifyScores((lastAudit as any).scores);
           }
         } catch {}
 
         // Apply routing on verdict
-        if (lastAudit.verdict === 'fail') {
+        if (lastAudit && lastAudit.verdict === 'fail') {
           // Don't rewrite IRROPS responses - they have structured format
           const lastIntent = await getLastIntent(threadId);
           if (lastIntent === 'irrops') {
@@ -374,20 +369,22 @@ export async function handleChat(
           } else {
             verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
           }
-        } else if (lastAudit.verdict === 'warn') {
+        } else if (lastAudit && lastAudit.verdict === 'warn') {
           const warnInline = (process.env.VERIFY_WARN_INLINE ?? 'true') === 'true';
           if (warnInline) {
             verifiedReply = `${result.reply}\n\nNote: Automated self-check flagged minor uncertainties.`;
           }
         }
         // Persist verification artifact for /why
-        await setLastVerification(threadId, {
-          verdict: lastAudit.verdict,
-          notes: lastAudit.notes || [],
-          scores: (lastAudit as any).scores,
-          revisedAnswer: lastAudit.revisedAnswer,
-          reply: verifiedReply,
-        });
+        if (lastAudit) {
+          await setLastVerification(threadId, {
+            verdict: lastAudit.verdict,
+            notes: lastAudit.notes || [],
+            scores: (lastAudit as any).scores,
+            revisedAnswer: lastAudit.revisedAnswer,
+            reply: verifiedReply,
+          });
+        }
       } catch {
         // Swallow verify errors; keep original reply
       }
@@ -432,9 +429,6 @@ export async function handleChat(
       }
     }
 
-    // Resolve session as completed
-    resolveSession(threadId, 'auto');
-    
     return ChatOutput.parse({
       reply: verifiedReply,
       threadId,
@@ -642,11 +636,6 @@ export async function blendWithFacts(
           await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
         
-        // Metrics instrumentation
-        incGeneratedAnswer();
-        incAnswersWithCitations();
-        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
-        
         return { reply, citations: [source] };
       } else {
         ctx.log.debug({ reason: 'reason' in wx ? wx.reason : 'unknown' }, 'weather_adapter_failed');
@@ -668,10 +657,10 @@ export async function blendWithFacts(
         
         // Get packing items based on weather
         await loadPackingOnce();
-        console.log(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
+        if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
         const band = chooseBandFromTemps(wx.maxC, wx.minC);
         const items = band ? PACKING[band] : [];
-        console.log(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
+        if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
         
         // Use deterministic composer for packing
         const reply = composePackingReply(cityHint, whenHint, wx.summary, items, source);
@@ -690,10 +679,6 @@ export async function blendWithFacts(
           )];
           await setLastReceipts(input.threadId, factsArr, decisions, reply);
         }
-        
-        // Metrics instrumentation
-        incGeneratedAnswer();
-        incAnswersWithCitations();
         
         return { reply, citations: [source] };
       } else {
@@ -730,9 +715,6 @@ export async function blendWithFacts(
               )];
               await setLastReceipts(input.threadId, overviewFacts, overviewDecisions, reply);
             }
-            incGeneratedAnswer();
-            incAnswersWithCitations();
-            try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
             return { reply, citations: [source] };
           }
         }
@@ -905,7 +887,12 @@ export async function blendWithFacts(
     }`;
 
     try {
+      const blendStart = Date.now();
       const [cotAnalysis, rawReply] = await callLLMBatch([cotPrompt, finalPrompt], { log: ctx.log });
+      try {
+        const { observeStage } = await import('../util/metrics.js');
+        observeStage('blend', Date.now() - blendStart, true, input.route.intent);
+      } catch {}
       
       // Check if CoT suggests missing critical information
       if (cotAnalysis && cotAnalysis.includes('missing') && (cotAnalysis.includes('city') || cotAnalysis.includes('date'))) {
@@ -966,13 +953,7 @@ export async function blendWithFacts(
         ctx.log.warn({ reply: replyWithSource, cits, hasExternal: cits.length > 0 }, 'citation_validation_failed');
       }
       
-      // Metrics instrumentation
-      incGeneratedAnswer();
-      if (cits.length > 0) {
-        incAnswersWithCitations();
-        try { (await import('../util/metrics.js')).incAnswerUsingExternal(); } catch {}
-      }
-      
+      // Metrics recorded centrally in handleChat
       return { reply: replyWithSource, citations: cits.length ? cits : undefined };
       
     } catch (e) {

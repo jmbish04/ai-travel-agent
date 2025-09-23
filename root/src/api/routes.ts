@@ -3,7 +3,7 @@ import express from 'express';
 import type pino from 'pino';
 import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
-import { getPrometheusText, metricsMode, snapshot, incMessages, observeE2E, ingestEvent, startSession, resolveSession, incVerifyFail, incVerifyPass } from '../util/metrics.js';
+import { getPrometheusText, metricsMode, snapshot, snapshotV2, observeE2E, ingestEvent, incVerifyFail, incVerifyPass } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
 import { getLastReceipts, getLastVerification } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
@@ -17,15 +17,9 @@ export const router = (log: pino.Logger): Router => {
     }
     try {
       const t0 = Date.now();
-      incMessages();
       const out = await handleChat(parsed.data, { log });
       // e2e latency
       observeE2E(Date.now() - t0);
-      // Best-effort session start/resolve (dev/demo): treat each reply as resolved
-      if (out.threadId) {
-        startSession(out.threadId);
-        resolveSession(out.threadId, 'auto');
-      }
       // Build receipts only when requested via flag or '/why' command
       const wantReceipts = Boolean(parsed.data.receipts) ||
         /^\s*\/why\b/i.test(parsed.data.message);
@@ -103,15 +97,16 @@ export const router = (log: pino.Logger): Router => {
     }
   });
   // Optional /metrics endpoint
-  r.get('/metrics', async (_req, res) => {
+  r.get('/metrics', async (req, res) => {
     const mode = metricsMode();
     if (mode === 'prom') {
       const text = await getPrometheusText();
       res.setHeader('Content-Type', 'text/plain; version=0.0.4');
       return res.status(200).send(text);
     }
-    // Always provide JSON snapshot when Prometheus is not enabled
-    return res.json(snapshot());
+    // JSON mode: v2 by default; legacy via query
+    const legacy = String(req.query.mode || '').toLowerCase() === 'legacy';
+    return res.json(legacy ? snapshot() : snapshotV2());
   });
 
   // Lightweight ingest endpoint to merge CLI/off-process metrics

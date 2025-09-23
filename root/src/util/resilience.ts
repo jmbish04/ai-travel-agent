@@ -29,7 +29,7 @@ const DEFAULT_CONFIG = {
 const SERVICE_CONFIGS = {
   'amadeus': {
     maxAttempts: 3,
-    timeoutMs: 15000,
+    timeoutMs: Number(process.env.AMADEUS_TIMEOUT_MS || 15000),
     maxConcurrent: 2,
     minTime: 500
   },
@@ -143,7 +143,7 @@ export async function withResilience<T>(
 export async function withPolicies<T>(
   fn: () => Promise<T>, 
   signal?: AbortSignal, 
-  timeoutMs = 15000
+  timeoutMs = Number(process.env.AMADEUS_TIMEOUT_MS || 15000)
 ): Promise<T> {
   return withResilience('amadeus', fn, signal);
 }

@@ -2,6 +2,7 @@ import { VECTARA } from '../config/vectara.js';
 import { VectaraQueryResponse, VectaraQueryResponseT } from '../schemas/vectara.js';
 import { ExternalFetchError } from '../util/fetch.js';
 import { withResilience } from '../util/resilience.js';
+import { observeExternal } from '../util/metrics.js';
 
 /**
  * TTL cache for Vectara query responses to reduce latency on repeated queries.
@@ -64,21 +65,47 @@ export class VectaraClient {
    * Query Vectara for policy information with semantic search and citations.
    */
   async query(text: string, opts: QueryOptions): Promise<VectaraQueryResponseT> {
+    const start = Date.now();
+    
     if (!VECTARA.ENABLED || !this.auth) {
+      observeExternal({
+        target: 'vectara',
+        status: 'error',
+        query_type: 'disabled',
+        domain: opts.corpus
+      }, Date.now() - start);
       throw new ExternalFetchError('network', 'vectara_disabled');
     }
 
     const corpus = this.corpusKey(opts.corpus);
     if (!corpus) {
+      observeExternal({
+        target: 'vectara',
+        status: 'error',
+        query_type: 'missing_corpus',
+        domain: opts.corpus
+      }, Date.now() - start);
       throw new ExternalFetchError('network', 'vectara_corpus_missing');
     }
 
     const cacheKey = `${corpus}::${text}`;
     const hit = qCache.get(cacheKey);
-    if (hit) return hit;
+    if (hit) {
+      observeExternal({
+        target: 'vectara',
+        status: 'ok',
+        query_type: 'cache_hit',
+        domain: opts.corpus
+      }, Date.now() - start);
+      return hit;
+    }
 
     const isV2 = VECTARA.QUERY_PATH.startsWith('/v2');
     const url = `${this.base}${VECTARA.QUERY_PATH}`;
+    
+    // Determine query complexity for metrics
+    const queryComplexity = text.length > 100 ? 'complex' : 
+                           text.split(' ').length > 10 ? 'medium' : 'simple';
     
     // v1 request body (deprecated/retired in production, used by tests/mocks)
     const bodyV1: Record<string, unknown> = {
@@ -152,14 +179,43 @@ export class VectaraClient {
       });
 
       qCache.set(cacheKey, normalized);
+      
+      observeExternal({
+        target: 'vectara',
+        status: 'ok',
+        query_type: queryComplexity,
+        domain: opts.corpus
+      }, Date.now() - start);
+      
       return normalized;
     } catch (e) {
       // Handle circuit breaker errors
       if (e instanceof Error && e.name === 'CircuitBreakerError') {
+        observeExternal({
+          target: 'vectara',
+          status: 'breaker_open',
+          query_type: queryComplexity,
+          domain: opts.corpus
+        }, Date.now() - start);
         throw new ExternalFetchError('network', 'vectara_circuit_breaker_open');
       }
       
-      if (e instanceof ExternalFetchError) throw e;
+      if (e instanceof ExternalFetchError) {
+        observeExternal({
+          target: 'vectara',
+          status: 'error',
+          query_type: queryComplexity,
+          domain: opts.corpus
+        }, Date.now() - start);
+        throw e;
+      }
+      
+      observeExternal({
+        target: 'vectara',
+        status: 'error',
+        query_type: queryComplexity,
+        domain: opts.corpus
+      }, Date.now() - start);
       throw new ExternalFetchError('network', 'vectara_query_failed');
     }
   }

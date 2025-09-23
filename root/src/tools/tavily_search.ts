@@ -23,15 +23,22 @@ export async function searchTravelInfo(
   log?: any,
   deepResearch = false,
 ): Promise<Out> {
+  const start = Date.now();
+  
   if (!query.trim()) {
     log?.debug?.('❌ Tavily: empty query');
-    return { ok: false, reason: 'no_query' };
+    return { ok: false, reason: 'no_query', confidence: 0.0 };
   }
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
     log?.debug?.('❌ Tavily: no API key configured');
-    return { ok: false, reason: 'no_api_key' };
+    return { ok: false, reason: 'no_api_key', confidence: 0.0 };
   }
+  
+  // Determine query complexity for metrics
+  const queryComplexity = query.length > 100 ? 'complex' : 
+                         query.split(' ').length > 10 ? 'medium' : 'simple';
+  const searchType = deepResearch ? 'deep' : 'basic';
   
   try {
     const client = new TavilyClient({ apiKey });
@@ -67,26 +74,33 @@ export async function searchTravelInfo(
         log?.debug?.(`❌ Tavily deep research error: ${e}`);
       }
     }
-    return { ok: true, results, deepSummary };
+    
+    // Calculate confidence based on result quality
+    const confidence = results.length === 0 ? 0.1 : 
+                      results.length < 3 ? 0.5 :
+                      deepSummary ? 0.9 : 0.7;
+    
+    return { ok: true, results, deepSummary, confidence };
   } catch (e: unknown) {
     log?.debug?.('❌ Tavily error', e);
     
     const msg = e instanceof Error ? e.message.toLowerCase() : '';
     if (msg.includes('circuit') || msg.includes('breaker')) {
-      return { ok: false, reason: 'circuit_breaker_open' };
+      return { ok: false, reason: 'circuit_breaker_open', confidence: 0.0 };
     }
     if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized')) {
-      return { ok: false, reason: 'auth_error' };
+      return { ok: false, reason: 'auth_error', confidence: 0.0 };
     }
     if (msg.includes('429') || msg.includes('rate')) {
-      return { ok: false, reason: 'rate_limited' };
+      return { ok: false, reason: 'rate_limited', confidence: 0.0 };
     }
     if (msg.includes('timeout')) {
-      return { ok: false, reason: 'timeout' };
+      return { ok: false, reason: 'timeout', confidence: 0.0 };
     }
     if (msg.includes('network') || msg.includes('fetch')) {
-      return { ok: false, reason: 'network' };
+      return { ok: false, reason: 'network', confidence: 0.0 };
     }
-    return { ok: false, reason: 'unknown_error' };
+    
+    return { ok: false, reason: 'unknown_error', confidence: 0.0 };
   }
 }

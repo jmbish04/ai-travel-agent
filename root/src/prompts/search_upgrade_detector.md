@@ -1,36 +1,32 @@
-Task: Decide if the latest user message is asking to improve the previous web search by requesting a deeper or more comprehensive follow-up search on the same topic.
+Determine if user requests deeper search on the EXACT SAME topic as previous query.
 
 Context:
-- Latest user message: "{user_message}"
-- Previous search query: "{previous_query}"
-- Previous answer summary: "{previous_answer}"
+- Current: "{user_message}"  
+- Previous: "{previous_query}"
+- Answer: "{previous_answer}"
 
-Guidelines:
-- Return `upgrade = true` when the user explicitly or implicitly asks for a better search, more thorough results, deeper digging, additional credible sources, or an improved follow-up for the same subject.
-- Treat phrases such as "search deeper", "search better", "give me more", "look harder", "find official sources", "need richer info", "more detail", "expand the search", or similar semantics as upgrade requests when they reference the same topic.
-- Return `upgrade = false` when the user provides a brand-new topic, gives a revised query containing new primary entities, declines further search, or changes to a different travel task.
-- When the message is ambiguous, prefer `upgrade = false` unless there is a direct reference to enhancing the same search.
+Rules:
+- upgrade = true: ONLY when explicitly asking for better/deeper search on identical topic
+- upgrade = false: ANY new topic, location change, or domain shift
+- When uncertain: upgrade = false
 
-Topic continuity rules:
-- A domain shift is NOT an upgrade. Examples of domain shifts: general city guides → hotels/accommodation; hotels → restaurants; guides → flights; guides → visas/policies; attractions → weather.
-- If the latest message narrows or pivots to a different travel subdomain (e.g., "best hotels", "top restaurants", "visa rules", "find flights"), set `upgrade = false` unless the user explicitly asks to "search deeper" on the same subtopic.
+Examples:
+✅ UPGRADE (same topic):
+- Previous: "paris hotels" → Current: "search deeper for paris hotels"
+- Previous: "rome weather" → Current: "find more sources on that weather"
 
-Output strict JSON with keys:
+❌ NO UPGRADE (different topics):
+- Previous: "paris hotels" → Current: "germany travel restrictions" 
+- Previous: "tokyo weather" → Current: "restaurants in tokyo"
+- Previous: "berlin guide" → Current: "flights to berlin"
+
+Output JSON:
 {
-  "upgrade": true|false,
-  "confidence": number between 0 and 1 (two decimals preferred),
-  "reason": "short explanation (≤ 40 words)"
+  "upgrade": boolean,
+  "confidence": 0.0-1.0,
+  "reason": "explanation (≤20 words)"
 }
 
-Confidence calibration:
-- 0.80–1.00: clear instruction to deepen the same search.
-- 0.60–0.79: likely upgrade but some ambiguity (still treat as upgrade if semantics align).
-- <0.60: ambiguous or unrelated to the previous search; set `upgrade = false`.
-
-Examples (informal, do not quote back):
-- "Those hotel results were light—search deeper" → upgrade = true.
-- "Find flights from Paris to Tokyo" after hotel search → upgrade = false.
-- "Thanks" → upgrade = false.
-- "Can you dig up more official sources on that?" → upgrade = true.
-- "Search better" → upgrade = true.
- - "Best hotels there right now" after a "Paris travel guide" search → upgrade = false (domain shift: guide → hotels).
+Confidence thresholds:
+- 0.90+: Explicit "search better/deeper" on same topic
+- <0.70: Set upgrade = false

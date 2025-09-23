@@ -18,7 +18,7 @@ import { detectSearchUpgradeRequest } from './search_upgrade.js';
 declare const process: NodeJS.Process;
 import { blendWithFacts } from './blend.js';
 import { buildClarifyingQuestion } from './clarifier.js';
-import { incClarify } from '../util/metrics.js';
+import { incClarify, observeStage, observeRouterResult, observeConfidenceOutcome, observeStageClarify } from '../util/metrics.js';
 import { 
   getThreadSlots, 
   updateThreadSlots, 
@@ -28,7 +28,9 @@ import {
   readConsentState,
   writeConsentState,
   getLastReceipts,
-  setLastReceipts
+  setLastSearchConfidence,
+  setLastReceipts,
+  getLastUserMessage
 } from './slot_memory.js';
 import { createDecision } from './receipts.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
@@ -95,8 +97,10 @@ export async function runGraphTurn(
   ctx: { log: Logger; onStatus?: (status: string) => void },
 ): Promise<NodeOut> {
   let llmCallsThisTurn = 0;
+  const turnStart = Date.now();
   
   // === GUARD STAGE: Fast micro-rules first ===
+  const guardStart = Date.now();
   const { 
     checkYesNoShortcut,
     buildTurnCache 
@@ -117,11 +121,13 @@ export async function runGraphTurn(
       await writeConsentState(threadId, { type: '', pending: '' });
 
       if (verdict === 'yes' && consentState.pending) {
+        observeStage('guard', Date.now() - guardStart, true);
         if (consentState.type === 'deep') {
           return await performDeepResearchNode(consentState.pending, ctx, threadId);
         }
         return await performWebSearchNode(consentState.pending, ctx, threadId);
       }
+      observeStage('guard', Date.now() - guardStart, true);
       return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
     }
   }
@@ -151,32 +157,48 @@ export async function runGraphTurn(
   }
   
   // === EXTRACT STAGE: Router-once with intent-gated extractors ===
+  const extractStart = Date.now();
   // Check for search upgrade request BEFORE routing
   const prevSlots = await getThreadSlots(threadId);
   const previousQuery = prevSlots.last_search_query;
   const { reply: previousAnswer } = await getLastReceipts(threadId);
   
-  ctx.log.debug({ message, previousQuery, hasQuery: !!previousQuery }, 'search_upgrade_check');
+  // Only consider search upgrade when we actually have a prior web search query.
+  // Using previous user message as a fallback caused unrelated turns (e.g., policy) to be misclassified.
+  const queryForUpgrade = previousQuery; // do NOT fallback to previous user message
+
+  // Quick guard: if the current message looks like a policy question, skip upgrade detection entirely.
+  const looksLikePolicy = /\b(policy|fare\s*rules?|baggage|allowance|refund|risk[- ]?free|24\s*hour)\b/i.test(message);
+
+  ctx.log.debug({ message, previousQuery, hasQuery: !!queryForUpgrade, looksLikePolicy }, 'search_upgrade_check');
   
-  if (previousQuery) {
+  if (queryForUpgrade && !looksLikePolicy) {
     const upgradeResult = await detectSearchUpgradeRequest({
       message,
-      previousQuery,
+      previousQuery: queryForUpgrade,
       previousAnswer,
       log: ctx.log
     });
     
-    ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_result');
+    ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_result');
     
     if (upgradeResult.upgrade && upgradeResult.confidence > 0.6) {
-      ctx.log.debug({ upgradeResult, previousQuery }, 'search_upgrade_detected');
-      // Deepen the user's current topic using their latest message + context,
-      // not the stale previousQuery, to avoid losing intent like "hotels".
+      ctx.log.debug({ upgradeResult, queryForUpgrade }, 'search_upgrade_detected');
+      
+      // Track upgrade request for metrics
+      try {
+        const { observeSearchQuality } = await import('../util/metrics.js');
+        // Record upgrade request with placeholder complexity
+        observeSearchQuality({ isComplex: false, confidence: 0 }, 0, true);
+      } catch {}
+      
+      // Use the original query for upgrade, not the upgrade command
       const slotCtx = await getThreadSlots(threadId);
-      const optimizedCurrent = await optimizeSearchQuery(message, slotCtx, 'web_search', ctx.log);
+      const optimizedOriginal = await optimizeSearchQuery(queryForUpgrade, slotCtx, 'web_search', ctx.log);
       // Persist the optimized query for continuity across turns
-      await updateThreadSlots(threadId, { last_search_query: optimizedCurrent }, []);
-      return await performDeepResearchNode(optimizedCurrent, ctx, threadId);
+      await updateThreadSlots(threadId, { last_search_query: optimizedOriginal }, []);
+      observeStage('extract', Date.now() - extractStart, true);
+      return await performDeepResearchNode(optimizedOriginal, ctx, threadId);
     }
   }
   
@@ -208,9 +230,14 @@ export async function runGraphTurn(
         };
         llmCallsThisTurn++;
         ctx.log.debug({ route: C.route }, 'router_once');
+        
+        // Track router result
+        observeRouterResult(routed.intent, routed.confidence, 0);
       }
     }
   }
+  
+  observeStage('extract', Date.now() - extractStart, true, C.route?.intent);
   
   // Intent-gated extractors
   const routedIntent = C.forced ?? C.route?.intent;
@@ -298,8 +325,10 @@ export async function runGraphTurn(
   }
   
   // === ROUTE STAGE: Use cached router result ===
+  const routeStart = Date.now();
   // Check for unrelated content
   if (C.clsContent?.content_type === 'unrelated') {
+    observeStage('route', Date.now() - routeStart, false);
     return {
       done: true,
       reply: 'I focus on travel planning. Is there something about weather, destinations, packing, or attractions I can help with?',
@@ -317,9 +346,12 @@ export async function runGraphTurn(
   // Check for missing required slots
   const missing = intent ? checkMissingSlots(intent, slots, message) : [];
   if (missing.length > 0) {
-    await updateThreadSlots(threadId, slots, missing);
+    await updateThreadSlots(threadId, slots, missing, [], intent);
     try { if (intent && missing[0]) incClarify(intent, missing[0]); } catch {}
     const q = await buildClarifyingQuestion(missing, slots, ctx.log);
+    const d = Date.now() - routeStart;
+    observeStage('route', d, false, intent);
+    try { observeStageClarify('route', intent, d); } catch {}
     return { done: true, reply: q };
   }
   // Clarification resolved: if we previously had awaiting_* flags and now no missing slots
@@ -332,8 +364,10 @@ export async function runGraphTurn(
   }
 
   // Update slots and set intent
-  await updateThreadSlots(threadId, slots, []);
+  await updateThreadSlots(threadId, slots, [], [], intent);
   await setLastIntent(threadId, intent as any);
+  
+  observeStage('route', Date.now() - routeStart, true, intent);
   
   // Log metrics
   ctx.log.debug({ 
@@ -343,8 +377,19 @@ export async function runGraphTurn(
   }, 'graph_turn_complete');
   
   // === ACT STAGE: Route to domain nodes ===
+  const actStart = Date.now();
   const routeCtx: NodeCtx = { msg: message, threadId, onStatus: ctx.onStatus };
-  return intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
+  const result: NodeOut = intent ? await routeToDomainNode(intent, routeCtx, slots, ctx) : { done: true, reply: "Unable to determine intent", citations: [] };
+  
+  const actSuccess = 'done' in result && result.done;
+  observeStage('gather', Date.now() - actStart, actSuccess, intent);
+  
+  // Track router confidence correlation with actual success
+  if (C.route?.confidence !== undefined) {
+    observeConfidenceOutcome('router', C.route.confidence, actSuccess, C.route.intent);
+  }
+  
+  return result;
 }
 
 // === HELPER FUNCTIONS ===
@@ -443,9 +488,30 @@ async function weatherNode(
     return { done: true, reply: 'Which city would you like weather information for?' };
   }
   
+  // Fallback slot extraction if month/dates not already extracted
+  let finalSlots = mergedSlots;
+  if (!mergedSlots.month && !mergedSlots.dates) {
+    try {
+      const { extractSlots } = await import('./parsers.js');
+      const lastMessage = await getLastUserMessage(ctx.threadId);
+      if (lastMessage) {
+        const extractedSlots = await extractSlots(lastMessage, mergedSlots, logger.log);
+        finalSlots = { ...mergedSlots, ...extractedSlots };
+        console.log(`🌍 WEATHER: Extracted additional slots:`, extractedSlots);
+      }
+    } catch (error) {
+      logger.log?.debug({ error: String(error) }, 'weather_slot_extraction_failed');
+    }
+  }
+  
   try {
     const { getWeather } = await import('../tools/weather.js');
-    const result = await getWeather({ city });
+    const result = await getWeather({ 
+      city,
+      month: finalSlots.month,
+      dates: finalSlots.dates,
+      datesOrMonth: finalSlots.datesOrMonth
+    });
     
     if (result.ok) {
       const normalizedSource = (result.source || 'Open-Meteo').toString();
@@ -651,6 +717,11 @@ async function flightsNode(
   const threadSlots = sanitizeSlotsView(await getThreadSlots(ctx.threadId));
   const mergedSlots = { ...threadSlots, ...slots };
   
+  // Clear any previous Amadeus failure flags to allow retry
+  if (mergedSlots.amadeus_failed) {
+    await updateThreadSlots(ctx.threadId, { amadeus_failed: '' }, []);
+  }
+  
   // Try Amadeus API first
   try {
     const { searchFlights, convertToAmadeusDate } = await import('../tools/amadeus_flights.js');
@@ -696,6 +767,7 @@ async function flightsNode(
         };
       } else {
         // Amadeus returned no results or error → fallback to web with notice
+        await updateThreadSlots(ctx.threadId, { amadeus_failed: 'true' }, []);
         const converted = departureDate ? await convertToAmadeusDate(departureDate) : '';
         const query = `${mergedSlots.originCity} ${mergedSlots.destinationCity || mergedSlots.city} flights ${converted}`.trim();
         const web = await webSearchNode(ctx, { ...mergedSlots, search_query: query }, logger);
@@ -771,6 +843,10 @@ async function irropsNode(
       const futureDateTime = tomorrow.toISOString();
       const arrivalTime = new Date(tomorrow.getTime() + 3 * 60 * 60 * 1000).toISOString(); // +3 hours
       
+      // Extract flight number and carrier from slots
+      const flightNumber = mergedSlots.flightNumber || 'AA123';
+      const carrier = flightNumber.length >= 2 ? flightNumber.substring(0, 2) : 'AA';
+      
       // Mock PNR for testing - in production would require actual PNR data
       pnr = {
         recordLocator: mergedSlots.recordLocator || 'ABC123',
@@ -780,8 +856,8 @@ async function irropsNode(
           destination: mergedSlots.destinationCity || mergedSlots.city || 'LAX',
           departure: futureDateTime,
           arrival: arrivalTime,
-          carrier: 'AA',
-          flightNumber: 'AA123',
+          carrier: carrier,
+          flightNumber: flightNumber,
           cabin: 'Y',
           status: 'XX' // Cancelled
         }]
@@ -1065,6 +1141,11 @@ async function performWebSearchNode(
   await updateThreadSlots(threadId, { last_search_query: query }, []);
   
   const searchResult = await searchTravelInfo(query, ctx.log);
+  
+  // Save search confidence for later correlation with verify outcomes
+  if (searchResult.confidence !== undefined) {
+    await setLastSearchConfidence(threadId, searchResult.confidence);
+  }
   
   if (!searchResult.ok) {
     ctx.log.debug({ reason: searchResult.reason }, 'web_search_failed');

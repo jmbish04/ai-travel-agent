@@ -1,5 +1,17 @@
 import type { Fact, Decision } from './receipts.js';
 import { getSessionStore } from './session_store.js';
+import { 
+  generateSessionId, 
+  createSessionMetadata, 
+  isSessionValid, 
+  updateSessionAccess,
+  type SessionMetadata 
+} from './session_manager.js';
+import {
+  getSlotsToPreserve,
+  clearWorkflowState,
+  SLOT_CATEGORIES
+} from './context_manager.js';
 
 const isDebugMode = process.env.LOG_LEVEL === 'debug';
 
@@ -18,7 +30,7 @@ export function isTemporalReference(value: string): boolean {
 type SlotState = {
   slots: Record<string, string>;
   expectedMissing: string[];
-  lastIntent?: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system';
+  lastIntent?: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'irrops'|'unknown'|'web_search'|'system';
   lastFacts?: Fact[];
   lastDecisions?: Array<string | Decision>;
   lastReply?: string;
@@ -32,11 +44,25 @@ type SlotState = {
     reply?: string;
     createdAt?: number;
   };
+  sessionMetadata: SessionMetadata;
 };
 
 export async function getThreadSlots(threadId: string): Promise<Record<string, string>> {
   const store = getSessionStore();
-  const slots = await store.getSlots(threadId);
+  const state = await store.getJson<SlotState>('state', threadId);
+  
+  // Validate session and clean if invalid
+  if (!state || !isSessionValid(state.sessionMetadata)) {
+    debugLog('🔧 SLOTS: Invalid or expired session, starting fresh', { threadId });
+    await clearThreadSlots(threadId);
+    return {};
+  }
+  
+  // Update session access time
+  const updatedMetadata = updateSessionAccess(state.sessionMetadata);
+  await store.setJson('state', threadId, { ...state, sessionMetadata: updatedMetadata });
+  
+  const slots = state.slots || {};
   debugLog('🔧 SLOTS: getThreadSlots', { threadId, slots });
   return slots;
 }
@@ -44,7 +70,12 @@ export async function getThreadSlots(threadId: string): Promise<Record<string, s
 export async function getExpectedMissing(threadId: string): Promise<string[]> {
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
-  return state?.expectedMissing ?? [];
+  
+  if (!state || !isSessionValid(state.sessionMetadata)) {
+    return [];
+  }
+  
+  return state.expectedMissing ?? [];
 }
 
 export async function updateThreadSlots(
@@ -52,30 +83,83 @@ export async function updateThreadSlots(
   slots: Record<string, string | null>,
   expectedMissing: string[] = [],
   remove: string[] = [],
+  newIntent?: string
 ): Promise<void> {
-  // Filter out null values
+  const store = getSessionStore();
+  const prevState = await store.getJson<SlotState>('state', threadId);
+  
+  // Initialize session if needed
+  let sessionMetadata: SessionMetadata;
+  let currentSlots: Record<string, string> = {};
+  let lastIntent: string | undefined;
+  
+  if (!prevState || !isSessionValid(prevState.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+    debugLog('🔧 SLOTS: Created new session', { threadId, sessionId: sessionMetadata.id });
+  } else {
+    sessionMetadata = updateSessionAccess(prevState.sessionMetadata);
+    currentSlots = prevState.slots || {};
+    lastIntent = prevState.lastIntent;
+  }
+  
+  // Handle intent transitions with context management
+  if (newIntent && lastIntent && newIntent !== lastIntent) {
+    debugLog('🔧 SLOTS: Intent transition detected', { 
+      threadId, 
+      from: lastIntent, 
+      to: newIntent 
+    });
+    
+    // Get slots to preserve based on intent transition
+    const preservedSlots = getSlotsToPreserve(currentSlots, lastIntent, newIntent);
+    
+    // Clear workflow state immediately
+    const cleanedSlots = clearWorkflowState(preservedSlots);
+    
+    debugLog('🔧 SLOTS: Context transition applied', {
+      threadId,
+      preserved: Object.keys(preservedSlots),
+      cleared: Object.keys(currentSlots).filter(k => !preservedSlots[k])
+    });
+    
+    currentSlots = cleanedSlots;
+  }
+  
+  // Filter out null values but allow empty strings for clearing
   const filteredSlots: Record<string, string> = {};
   for (const [k, v] of Object.entries(slots)) {
-    if (typeof v === 'string' && v.trim().length > 0) {
+    if (typeof v === 'string') {
       filteredSlots[k] = v;
     }
   }
-
-  const store = getSessionStore();
-  const prevState = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
+  
+  // Merge with current slots
+  const updatedSlots = { ...currentSlots, ...filteredSlots };
+  
+  // Remove specified slots
+  for (const key of remove) {
+    delete updatedSlots[key];
+  }
+  
+  // Update slot store
+  await store.setSlots(threadId, updatedSlots, remove.length ? Array.from(new Set(remove)) : undefined);
+  
+  // Update state with session metadata and intent
+  const newState: SlotState = { 
+    ...prevState,
+    slots: updatedSlots,
+    expectedMissing,
+    lastIntent: (newIntent || lastIntent) as SlotState['lastIntent'],
+    sessionMetadata
+  };
+  await store.setJson('state', threadId, newState);
   
   debugLog('🔧 SLOTS: updateThreadSlots', { 
     threadId, 
     newSlots: filteredSlots, 
-    prevSlots: prevState.slots, 
+    prevSlots: Object.keys(currentSlots),
+    intent: newIntent || lastIntent
   });
-  
-  // Update slots
-  await store.setSlots(threadId, filteredSlots, remove.length ? Array.from(new Set(remove)) : undefined);
-  
-  // Update state
-  const newState = { ...prevState, expectedMissing };
-  await store.setJson('state', threadId, newState);
 }
 
 export async function clearThreadSlots(threadId: string): Promise<void> {
@@ -83,10 +167,25 @@ export async function clearThreadSlots(threadId: string): Promise<void> {
   await store.clear(threadId);
 }
 
-export async function setLastIntent(threadId: string, intent: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'unknown'|'web_search'|'system'): Promise<void> {
+export async function setLastIntent(threadId: string, intent: 'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'irrops'|'unknown'|'web_search'|'system'): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastIntent: intent });
+  const prev = await store.getJson<SlotState>('state', threadId);
+  
+  let sessionMetadata: SessionMetadata;
+  if (!prev || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const state: SlotState = { 
+    slots: prev?.slots || {}, 
+    expectedMissing: prev?.expectedMissing || [],
+    lastIntent: intent,
+    sessionMetadata
+  };
+  
+  await store.setJson('state', threadId, state);
 }
 
 export async function getLastIntent(threadId: string): Promise<'weather'|'destinations'|'packing'|'attractions'|'policy'|'flights'|'irrops'|'unknown'|'web_search'|'system'|undefined> {
@@ -102,13 +201,52 @@ export async function setLastReceipts(
   reply?: string,
 ): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastFacts: facts, lastDecisions: decisions, lastReply: reply });
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { 
+    slots: {}, 
+    expectedMissing: [],
+    sessionMetadata: createSessionMetadata(generateSessionId())
+  };
+  
+  // Preserve or create sessionMetadata to prevent session invalidation
+  let sessionMetadata: SessionMetadata;
+  if (!prev.sessionMetadata || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const newState = { 
+    ...prev, 
+    lastFacts: facts, 
+    lastDecisions: decisions, 
+    lastReply: reply,
+    sessionMetadata 
+  };
+  
+  debugLog('🔧 RECEIPTS: setLastReceipts', { 
+    threadId, 
+    factsCount: facts.length, 
+    decisionsCount: decisions.length, 
+    reply: reply?.substring(0, 50) + '...',
+    factsSample: facts.slice(0, 2)
+  });
+  
+  await store.setJson('state', threadId, newState);
 }
 
 export async function getLastReceipts(threadId: string): Promise<{ facts?: Fact[]; decisions?: Array<string | Decision>; reply?: string }> {
   const store = getSessionStore();
   const state = await store.getJson<SlotState>('state', threadId);
+  
+  debugLog('🔧 RECEIPTS: getLastReceipts', { 
+    threadId, 
+    hasState: !!state,
+    factsCount: state?.lastFacts?.length || 0,
+    decisionsCount: state?.lastDecisions?.length || 0,
+    hasSessionMetadata: !!state?.sessionMetadata,
+    isSessionValid: state?.sessionMetadata ? isSessionValid(state.sessionMetadata) : false
+  });
+  
   return { facts: state?.lastFacts, decisions: state?.lastDecisions, reply: state?.lastReply };
 }
 
@@ -118,11 +256,44 @@ export async function getLastUserMessage(threadId: string): Promise<string | und
   return state?.lastUserMessage;
 }
 
+export async function setLastSearchConfidence(threadId: string, confidence: number): Promise<void> {
+  if (!threadId) return;
+  await updateThreadSlots(threadId, { last_search_confidence: confidence.toString() }, []);
+}
+
+export async function getLastSearchConfidence(threadId: string): Promise<number | undefined> {
+  if (!threadId) return undefined;
+  const slots = await getThreadSlots(threadId);
+  const conf = slots.last_search_confidence;
+  return conf ? parseFloat(conf) : undefined;
+}
+
 export async function setLastUserMessage(threadId: string, message: string): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  const withPrev = { ...prev, prevUserMessage: prev.lastUserMessage, lastUserMessage: message };
-  await store.setJson('state', threadId, withPrev);
+  const prev = await store.getJson<SlotState>('state', threadId);
+  
+  let sessionMetadata: SessionMetadata;
+  if (!prev || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const state: SlotState = {
+    slots: prev?.slots || {},
+    expectedMissing: prev?.expectedMissing || [],
+    lastIntent: prev?.lastIntent,
+    prevUserMessage: prev?.lastUserMessage,
+    lastUserMessage: message,
+    // Preserve receipts and verification data
+    lastFacts: prev?.lastFacts,
+    lastDecisions: prev?.lastDecisions,
+    lastReply: prev?.lastReply,
+    lastVerification: prev?.lastVerification,
+    sessionMetadata
+  };
+  
+  await store.setJson('state', threadId, state);
 }
 
 export async function getPrevUserMessage(threadId: string): Promise<string | undefined> {
@@ -133,8 +304,41 @@ export async function getPrevUserMessage(threadId: string): Promise<string | und
 
 export async function setLastVerification(threadId: string, artifact: Required<Pick<SlotState,'lastVerification'>>['lastVerification']): Promise<void> {
   const store = getSessionStore();
-  const prev = await store.getJson<SlotState>('state', threadId) ?? { slots: {}, expectedMissing: [] };
-  await store.setJson('state', threadId, { ...prev, lastVerification: { ...artifact, createdAt: Date.now() } });
+  const prev = await store.getJson<SlotState>('state', threadId) ?? { 
+    slots: {}, 
+    expectedMissing: [],
+    sessionMetadata: createSessionMetadata(generateSessionId())
+  };
+  
+  debugLog('🔧 VERIFICATION: setLastVerification BEFORE', { 
+    threadId, 
+    prevFactsCount: prev.lastFacts?.length || 0,
+    prevDecisionsCount: prev.lastDecisions?.length || 0,
+    hasSessionMetadata: !!prev.sessionMetadata
+  });
+  
+  // Preserve or create sessionMetadata to prevent session invalidation
+  let sessionMetadata: SessionMetadata;
+  if (!prev.sessionMetadata || !isSessionValid(prev.sessionMetadata)) {
+    sessionMetadata = createSessionMetadata(generateSessionId());
+  } else {
+    sessionMetadata = updateSessionAccess(prev.sessionMetadata);
+  }
+  
+  const newState = { 
+    ...prev, 
+    lastVerification: { ...artifact, createdAt: Date.now() },
+    sessionMetadata 
+  };
+  
+  debugLog('🔧 VERIFICATION: setLastVerification AFTER', { 
+    threadId, 
+    newFactsCount: newState.lastFacts?.length || 0,
+    newDecisionsCount: newState.lastDecisions?.length || 0,
+    hasSessionMetadata: !!newState.sessionMetadata
+  });
+  
+  await store.setJson('state', threadId, newState);
 }
 
 export async function getLastVerification(threadId: string): Promise<SlotState['lastVerification'] | undefined> {
@@ -347,5 +551,6 @@ export async function writeConsentState(threadId: string, next: { type: 'web' | 
     updates.pending_web_search_query = next.pending;
   }
   
+  console.log(`🔧 CONSENT: writeConsentState called with type='${next.type}', updates:`, updates);
   await updateThreadSlots(threadId, updates, []);
 }

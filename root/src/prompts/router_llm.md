@@ -24,7 +24,7 @@ Guidelines:
 Intent Classification Rules:
 - `flights`: ANY flight-related query including "flights", "fly", "book flight", "airline", flight prices, flight schedules, flight booking, travel from X to Y with dates
 - `irrops`: Flight disruptions, cancellations, delays, rebooking requests, equipment changes, missed connections, "my flight was cancelled", "flight delayed", "need to rebook"
-- `policy`: Visa requirements, immigration rules, passport info, entry requirements, travel policies
+- `policy`: Visa requirements, immigration rules, passport info, entry requirements, travel policies, travel restrictions, border controls
 - `web_search`: Explicit search requests ("search for", "find information about"), complex multi-constraint queries, research requests, ANY hotel/accommodation/lodging query (e.g., "best hotels in Bangkok", "hotel near LAX", "accommodation in Tokyo"), AND general information about specific places (e.g., "tell me about Paris", "what's Paris like?")
 - `system`: Questions about the AI assistant, consent responses, clarifications, app functionality
 - `destinations`: Travel destination recommendations, "where should I go" questions, asking for destination suggestions (NOT asking about specific places)
@@ -70,7 +70,7 @@ Output schema (strict JSON only):
 {
   "intent": "destinations|packing|attractions|weather|flights|irrops|policy|web_search|system|unknown",
   "needExternal": true|false,
-  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "region": "...", "month": "...", "dates": "...", "travelerProfile": "..."},
+  "slots": {"city": "...", "originCity": "...", "destinationCity": "...", "region": "...", "month": "...", "dates": "...", "travelerProfile": "...", "flightNumber": "..."},
   "confidence": 0..1
 }
 
@@ -86,6 +86,12 @@ Output: {"intent":"flights","needExternal":true,"slots":{"originCity":"Paris","d
 
 Input: "what's the weather in NYC in June?"
 Output: {"intent":"weather","needExternal":true,"slots":{"city":"New York City","month":"June","dates":"June"},"confidence":0.90}
+
+Input: "Weather in Paris today?"
+Output: {"intent":"weather","needExternal":true,"slots":{"city":"Paris","dates":"today"},"confidence":0.95}
+
+Input: "How's the weather in London right now?"
+Output: {"intent":"weather","needExternal":true,"slots":{"city":"London","dates":"today"},"confidence":0.92}
 
 Input: "what to pack for Tokyo in March"
 Output: {"intent":"packing","needExternal":false,"slots":{"city":"Tokyo","month":"March","dates":"March"},"confidence":0.85}
@@ -103,7 +109,7 @@ Input: "what to do there?"
 Output: {"intent":"attractions","needExternal":false,"slots":{},"confidence":0.40}
 
 Input: "My flight AA123 was cancelled, please help me rebook"
-Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"","destinationCity":""},"confidence":0.95}
+Output: {"intent":"irrops","needExternal":true,"slots":{"flightNumber":"AA123"},"confidence":0.95}
 
 Input: "Flight delayed 3 hours due to weather, need alternatives"
 Output: {"intent":"irrops","needExternal":true,"slots":{},"confidence":0.90}
@@ -137,6 +143,9 @@ Output: {"intent":"flights","needExternal":true,"slots":{"originCity":"New York 
 
 Input: "Passport requirements for Thailand"
 Output: {"intent":"policy","needExternal":true,"slots":{"city":"Thailand"},"confidence":0.90}
+
+Input: "Latest travel restrictions for Germany"
+Output: {"intent":"policy","needExternal":true,"slots":{"city":"Germany"},"confidence":0.92}
 
 Input: "recommend some destinations in Asia"
 Output: {"intent":"destinations","needExternal":true,"slots":{"region":"Asia"},"confidence":0.90}
@@ -174,4 +183,4 @@ Input: "What are the change fees for JetBlue flights? Get me the official policy
 Output: {"intent":"policy","needExternal":true,"slots":{"city":"JetBlue"},"confidence":0.92}
 
 Input: "My flight DL8718 from CDG to LHR was cancelled, please help me rebook"
-Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","dates":"today"},"confidence":0.93}
+Output: {"intent":"irrops","needExternal":true,"slots":{"originCity":"Paris","destinationCity":"London","flightNumber":"DL8718","dates":"today"},"confidence":0.93}

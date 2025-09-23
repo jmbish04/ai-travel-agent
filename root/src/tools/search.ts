@@ -1,5 +1,7 @@
 import { searchTravelInfo as braveSearch } from './brave_search.js';
 import { searchTravelInfo as tavilySearch } from './tavily_search.js';
+import { observeExternal, observeSearchQuality } from '../util/metrics.js';
+import { assessQueryComplexity } from '../core/complexity.js';
 import type { Out } from './brave_search.js';
 
 export {
@@ -29,7 +31,43 @@ export async function searchTravelInfo(
   log?: any,
   deepResearch = false,
 ): Promise<Out> {
-  return provider() === 'tavily'
-    ? tavilySearch(query, log, deepResearch)
-    : braveSearch(query, log, deepResearch);
+  const start = Date.now();
+  
+  // Start complexity assessment async (don't block search)
+  const complexityPromise = assessQueryComplexity(query, log).catch(() => 
+    ({ isComplex: false, confidence: 0, reasoning: 'assessment_failed' })
+  );
+  
+  const queryComplexity = query.length > 50 ? 'complex' : 'simple'; // fallback for immediate use
+  const searchType = deepResearch ? 'deep' : 'basic';
+  
+  try {
+    const result = provider() === 'tavily'
+      ? await tavilySearch(query, log, deepResearch)
+      : await braveSearch(query, log, deepResearch);
+    
+    observeExternal({
+      target: 'search',
+      status: result.ok ? 'ok' : 'error',
+      query_type: searchType,
+      domain: queryComplexity
+    }, Date.now() - start);
+    
+    // Track search quality metrics async (don't block response)
+    if (result.ok) {
+      complexityPromise.then(complexity => {
+        observeSearchQuality(complexity, result.results.length, false);
+      }).catch(() => {}); // ignore metrics failures
+    }
+    
+    return result;
+  } catch (error) {
+    observeExternal({
+      target: 'search',
+      status: 'error',
+      query_type: searchType,
+      domain: queryComplexity
+    }, Date.now() - start);
+    throw error;
+  }
 }

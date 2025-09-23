@@ -229,16 +229,27 @@ export async function flightOffersGet(
       console.log('📡 Making Amadeus API call with params:', params);
       const response = await amadeus.shopping.flightOffersSearch.get(params);
       console.log('✅ Amadeus API response received, data length:', response.data?.length || 0);
-      return response.data;
+      if (!response.data || response.data.length === 0) {
+        console.log('🔍 Empty response details:', {
+          status: response.status,
+          headers: response.headers,
+          body: JSON.stringify(response.body || response, null, 2).slice(0, 1000)
+        });
+      }
+      return { data: response.data, response };
     }, signal, Number(process.env.AMADEUS_API_TIMEOUT_MS || 45000));
     
     // Log successful result
-    console.log('Amadeus flight search successful:', result?.length || 0, 'offers');
+    console.log('Amadeus flight search successful:', result?.data?.length || 0, 'offers');
+    
+    // Check for warnings in the response
+    const responseBody = JSON.parse(result?.response?.body || '{}');
+    const warnings = responseBody.warnings || [];
     
     // Return in expected format for graph
-    if (result && result.length > 0) {
+    if (result?.data && result.data.length > 0) {
       // Extract top 3 flight offers with details
-      const topOffers = result.slice(0, 3).map((offer: any) => {
+      const topOffers = result.data.slice(0, 3).map((offer: any) => {
         const price = offer.price?.total;
         const currency = offer.price?.currency || 'EUR';
         const segments = offer.itineraries?.[0]?.segments || [];
@@ -254,21 +265,31 @@ export async function flightOffersGet(
         };
       });
       
-      const summary = `Found ${result.length} flight offers from ${query.originLocationCode} to ${query.destinationLocationCode} on ${query.departureDate}
+      const summary = `Found ${result.data.length} flight offers from ${query.originLocationCode} to ${query.destinationLocationCode} on ${query.departureDate}
 
 Top options:
 ${topOffers.map((offer: any, i: number) => 
   `${i + 1}. ${offer.price} - ${offer.departure} → ${offer.arrival} (${offer.airline}, ${offer.stops})`
 ).join('\n')}
 
-${result.length > 3 ? `\n...and ${result.length - 3} more options available.` : ''}`;
+${result.data.length > 3 ? `\n...and ${result.data.length - 3} more options available.` : ''}`;
 
       return {
         ok: true,
         source: 'amadeus',
-        offers: result,
-        count: result.length,
+        offers: result.data,
+        count: result.data.length,
         summary
+      };
+    }
+    
+    // Handle case with warnings but no results
+    if (warnings.length > 0) {
+      const warningDetails = warnings.map((w: any) => w.detail).join('; ');
+      return { 
+        ok: false, 
+        reason: 'incomplete_search',
+        message: `Flight search incomplete: ${warningDetails}. This may be due to limited test data availability.`
       };
     }
     
