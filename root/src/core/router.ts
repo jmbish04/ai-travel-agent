@@ -323,6 +323,18 @@ async function runLlmRouteAndPostProcess(
 
   const normalizedSlots = normalizeSlots(ctxSlots, llm.slots, llm.intent);
   let llmNormalized: RouterResultT = { ...llm, slots: normalizedSlots } as RouterResultT;
+
+  // Heuristic anchor: packing keywords should route to packing (not web_search)
+  // Keeps one LLM call per turn while stabilizing UX for common phrasing
+  const PACKING_RE = /\b(pack|packing|bring)\b/i;
+  if (llmNormalized.intent === 'web_search' && PACKING_RE.test(message)) {
+    llmNormalized = RouterResult.parse({
+      intent: 'packing',
+      needExternal: true, // packing uses weather facts
+      slots: normalizeSlots(ctxSlots, llm.slots || {}, 'packing'),
+      confidence: Math.max(0.8, llmNormalized.confidence),
+    });
+  }
   logger?.log?.debug({ intent: llmNormalized.intent, confidence: Number(llmNormalized.confidence.toFixed(2)) }, 'router_final_result');
   incTurn(llmNormalized.intent);
   try { observeRouterConfidence(llmNormalized.confidence); } catch {}
