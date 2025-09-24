@@ -199,6 +199,16 @@ export async function handleChat(
   ctx.log.debug({ threadId, message: input.message }, 'continuing_to_normal_pipeline');
   await pushMessage(threadId, { role: 'user', content: input.message });
   await setLastUserMessage(threadId, input.message);
+  // BIG_LLM_MODE: route to Meta‑Agent
+  if ((process.env.BIG_LLM_MODE || '').toLowerCase() === 'on') {
+    ctx.onStatus?.('Processing your travel request...');
+    const { runMetaAgentTurn } = await import('../agent/meta_agent.js');
+    const out = await runMetaAgentTurn(input.message, threadId, { log: ctx.log });
+    await pushMessage(threadId, { role: 'assistant', content: out.reply });
+    try { incGeneratedAnswer(); } catch {}
+    return ChatOutput.parse({ reply: out.reply, threadId, citations: out.citations });
+  }
+
   ctx.onStatus?.('Processing your travel request...');
   const result = await runGraphTurn(input.message, threadId, ctx);
   if ('done' in result) {

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 type PromptName =
   | 'system'
+  | 'meta_agent'
   | 'blend'
   | 'blend_planner'
   | 'cot'
@@ -76,6 +77,7 @@ export async function preloadPrompts(): Promise<void> {
   candidates.push(path.join(here, '..', 'prompts'));
   
   const base = candidates.find((c) => fs.existsSync(c)) || path.join(process.cwd(), 'src', 'prompts');
+  PROMPTS.meta_agent = await loadFileSafe(path.join(base, 'meta_agent.md'));
   PROMPTS.system = await loadFileSafe(path.join(base, 'system.md'));
   PROMPTS.blend = await loadFileSafe(path.join(base, 'blend.md'));
   PROMPTS.blend_planner = await loadFileSafe(path.join(base, 'blend_planner.md'));

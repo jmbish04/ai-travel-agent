@@ -236,6 +236,60 @@ function stubSynthesize(prompt: string): string {
   throw new Error("LLM service temporarily unavailable");
 }
 
+// OpenAI-style chat with tools (function calling)
+export async function chatWithToolsLLM(opts: {
+  messages: Array<{ role: 'system'|'user'|'assistant'|'tool'; content: string; name?: string; tool_call_id?: string }>;
+  tools: Array<{ type: 'function'; function: { name: string; description?: string; parameters: unknown } }>;
+  tool_choice?: 'auto' | { type: 'function'; function: { name: string } };
+  timeoutMs?: number;
+  log?: any;
+  signal?: AbortSignal;
+}): Promise<any> {
+  const baseUrl = process.env.LLM_PROVIDER_BASEURL;
+  const apiKey = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+  const model = process.env.LLM_MODEL || 'x-ai/grok-4-fast:free';
+  if (!baseUrl || !apiKey) {
+    // Return empty response to trigger local fallback
+    return { choices: [{ message: { role: 'assistant', content: '' } }] };
+  }
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(new Error('llm_tools_timeout')), Math.max(1000, opts.timeoutMs ?? 15000));
+  const signal = opts.signal;
+  try {
+    const res = await undiciFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: opts.messages,
+        tools: opts.tools,
+        tool_choice: opts.tool_choice || 'auto',
+        temperature: 0.2,
+        max_tokens: 1200,
+      }),
+      signal: signal ?? controller.signal,
+    });
+    clearTimeout(t);
+    if (!res.ok) {
+      const errorText = await res.text();
+      opts.log?.debug?.(`❌ chatWithToolsLLM failed: ${res.status} - ${errorText.substring(0, 200)}`);
+      // empty message to enable fallback
+      return { choices: [{ message: { role: 'assistant', content: '' } }] };
+    }
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    opts.log?.debug?.(`❌ chatWithToolsLLM error: ${String(e)}`);
+    return { choices: [{ message: { role: 'assistant', content: '' } }] };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // NLP Service Functions
 export async function extractCityWithLLM(
   message: string,
