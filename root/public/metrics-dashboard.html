@@ -1,862 +1,1229 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voyant Metrics Dashboard</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --primary: #2563eb;
-            --primary-dark: #1d4ed8;
-            --secondary: #64748b;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --info: #3b82f6;
-            --dark: #1e293b;
-            --light: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --gray-700: #334155;
-            --gray-800: #1e293b;
-            --gray-900: #0f172a;
-            --border-radius: 8px;
-            --box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            background-color: #f1f5f9;
-            color: var(--gray-800);
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-        }
-
-        /* Alert banner */
-        .alerts-banner {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 10px;
-        }
-
-        /* Hero section - Pipeline Health */
-        .hero-section {
-            background: white;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 24px;
-            box-shadow: var(--box-shadow);
-        }
-
-        /* Secondary sections */
-        .secondary-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-
-        /* Tertiary section */
-        .tertiary-section {
-            background: white;
-            border: 1px solid #dee2e6;
-        }
-
-        /* Collapsible guide */
-        .guide-section {
-            background: white;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .guide-header {
-            background: #f8f9fa;
-            padding: 12px 16px;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .guide-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease;
-        }
-
-        .guide-content.expanded {
-            max-height: 500px;
-            padding: 16px;
-        }
-
-        /* Navigation arrows */
-        .nav-arrow {
-            color: #6c757d;
-            font-size: 14px;
-            margin: 8px 0;
-            text-align: center;
-        }
-
-        /* Action hints */
-        .action-hint {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            padding: 8px 12px;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #495057;
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-            padding: 16px 24px;
-            background: white;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .logo-icon {
-            background: var(--primary);
-            color: white;
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-        }
-
-        .logo-text {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--gray-900);
-        }
-
-        .logo-text span {
-            color: var(--primary);
-        }
-
-        .header-controls {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            border-radius: 50px;
-            font-weight: 500;
-            font-size: 14px;
-        }
-
-        .status-indicator.online {
-            background-color: rgba(16, 185, 129, 0.1);
-            color: var(--success);
-        }
-
-        .status-indicator.offline {
-            background-color: rgba(239, 68, 68, 0.1);
-            color: var(--danger);
-        }
-
-        .refresh-btn {
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-weight: 500;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.2s ease;
-        }
-
-        .refresh-btn:hover {
-            background: var(--primary-dark);
-        }
-
-        .auto-refresh {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            color: var(--gray-600);
-        }
-
-        .auto-refresh input {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--primary);
-        }
-
-        .dashboard-title {
-            margin-bottom: 24px;
-            padding: 0 8px;
-        }
-
-        .dashboard-title h1 {
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--gray-900);
-            margin-bottom: 8px;
-        }
-
-        .dashboard-title p {
-            color: var(--gray-600);
-            max-width: 800px;
-            font-size: 16px;
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 24px;
-            margin-bottom: 24px;
-        }
-
-        .card {
-            background: white;
-            border-radius: var(--border-radius);
-            padding: 24px;
-            box-shadow: var(--box-shadow);
-            transition: box-shadow 0.2s ease;
-        }
-
-        .card:hover {
-            box-shadow: var(--box-shadow-lg);
-        }
-
-        .card-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .card-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-        }
-
-        .card.business .card-icon {
-            background: rgba(37, 99, 235, 0.1);
-            color: var(--primary);
-        }
-
-        .card.chat .card-icon {
-            background: rgba(100, 116, 139, 0.1);
-            color: var(--secondary);
-        }
-
-        .card.router .card-icon {
-            background: rgba(245, 158, 11, 0.1);
-            color: var(--warning);
-        }
-
-        .card.clarify .card-icon {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--success);
-        }
-
-        .card.fallback .card-icon {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--danger);
-        }
-
-        .card.citations .card-icon {
-            background: rgba(59, 130, 246, 0.1);
-            color: var(--info);
-        }
-
-        .card.external .card-icon {
-            background: rgba(163, 163, 163, 0.1);
-            color: var(--gray-500);
-        }
-
-        .card.perf .card-icon {
-            background: rgba(139, 92, 246, 0.1);
-            color: #8b5cf6;
-        }
-
-        .card.tools .card-icon {
-            background: rgba(236, 72, 153, 0.1);
-            color: #ec4899;
-        }
-
-        .card.alerts .card-icon {
-            background: rgba(249, 115, 22, 0.1);
-            color: #f97316;
-        }
-
-        .card.trends .card-icon {
-            background: rgba(14, 165, 233, 0.1);
-            color: #0ea5e9;
-        }
-
-        .card h2 {
-            font-size: 20px;
-            font-weight: 600;
-            color: var(--gray-900);
-        }
-
-        .card .hint {
-            color: var(--gray-600);
-            font-size: 14px;
-            margin-bottom: 20px;
-            line-height: 1.5;
-        }
-
-        .metric {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--gray-100);
-        }
-
-        .metric:last-child {
-            border-bottom: none;
-        }
-
-        .metric-name {
-            color: var(--gray-700);
-            font-weight: 500;
-            font-size: 14px;
-        }
-
-        .metric-value {
-            font-weight: 600;
-            color: var(--gray-900);
-            font-size: 15px;
-        }
-
-        .alert {
-            color: var(--danger);
-            font-weight: 600;
-        }
-
-        .warn {
-            color: var(--warning);
-            font-weight: 600;
-        }
-
-        .ok {
-            color: var(--success);
-            font-weight: 600;
-        }
-
-        .spark {
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-            letter-spacing: 1px;
-            color: var(--primary);
-            font-size: 16px;
-        }
-
-        .guide-card {
-            grid-column: 1 / -1;
-        }
-
-        .guide-content {
-            margin-top: 16px;
-        }
-
-        .guide-content .metric {
-            padding: 16px;
-            background-color: var(--gray-100);
-            border-radius: 6px;
-            margin-bottom: 12px;
-            border-bottom: none;
-        }
-
-        .guide-content .metric:last-child {
-            margin-bottom: 0;
-        }
-
-        .guide-content .metric-name {
-            font-weight: 600;
-            color: var(--gray-800);
-        }
-
-        .guide-content .metric-value {
-            font-weight: 400;
-            color: var(--gray-700);
-            text-align: right;
-            max-width: 70%;
-        }
-
-        .guide-content .metric-value b {
-            font-weight: 600;
-        }
-
-        footer {
-            text-align: center;
-            padding: 24px;
-            color: var(--gray-500);
-            font-size: 14px;
-            border-top: 1px solid var(--gray-200);
-            margin-top: 24px;
-        }
-
-        @media (max-width: 1200px) {
-            .grid {
-                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            }
-        }
-
-        @media (max-width: 768px) {
-            .grid {
-                grid-template-columns: 1fr;
-            }
-            
-            header {
-                flex-direction: column;
-                gap: 16px;
-                align-items: flex-start;
-            }
-            
-            .header-controls {
-                width: 100%;
-                justify-content: space-between;
-            }
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voyant Metrics Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-bxMPr4HbtX0iC4d2TPV5KT9fSx7XDyEL6pF5M6IwQlGRf8bOiE7PJUID4nPrcB8V3gMbdvO1uC13Bscx1Ax7mw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <style>
+    :root {
+      --color-bg: #f4f6fa;
+      --color-surface: #ffffff;
+      --color-border: #e4e7ec;
+      --color-neutral: #667085;
+      --color-muted: #8a93a4;
+      --color-heading: #1d2736;
+      --color-primary: #2563eb;
+      --color-primary-dark: #1d4ed8;
+      --color-positive: #12b76a;
+      --color-warning: #f79009;
+      --color-critical: #f04438;
+      --color-info: #3b82f6;
+      --shadow-sm: 0 8px 16px rgba(15, 23, 42, 0.04);
+      --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.1);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--color-bg);
+      color: var(--color-heading);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .dashboard {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px 24px 72px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .app-header {
+      background: var(--color-surface);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      padding: 20px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border: 1px solid var(--color-border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand__icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .brand__title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand__title span {
+      color: var(--color-primary);
+    }
+
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 500;
+      background: rgba(37, 99, 235, 0.08);
+      color: var(--color-primary);
+      border: 1px solid rgba(37, 99, 235, 0.16);
+      transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+    }
+
+    .status-pill--warn {
+      background: rgba(247, 144, 9, 0.12);
+      color: var(--color-warning);
+      border-color: rgba(247, 144, 9, 0.24);
+    }
+
+    .status-pill--critical {
+      background: rgba(240, 68, 56, 0.12);
+      color: var(--color-critical);
+      border-color: rgba(240, 68, 56, 0.24);
+    }
+
+    .status-pill__dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    }
+
+    .status-pill--warn .status-pill__dot {
+      box-shadow: 0 0 0 4px rgba(247, 144, 9, 0.12);
+    }
+
+    .status-pill--critical .status-pill__dot {
+      box-shadow: 0 0 0 4px rgba(240, 68, 56, 0.12);
+    }
+
+    .header-actions__group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .timestamp {
+      font-size: 14px;
+      color: var(--color-muted);
+    }
+
+    .button {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      padding: 10px 20px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .button--primary {
+      background: var(--color-primary);
+      color: #fff;
+      box-shadow: 0 10px 18px rgba(37, 99, 235, 0.18);
+    }
+
+    .button--primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 22px rgba(37, 99, 235, 0.22);
+      background: var(--color-primary-dark);
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--color-neutral);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--color-primary);
+      cursor: pointer;
+    }
+
+    .app-content {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .section {
+      background: var(--color-surface);
+      border-radius: var(--radius-lg);
+      padding: 24px 28px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+    }
+
+    .section__header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+
+    .section__title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .section__subtitle {
+      font-size: 14px;
+      color: var(--color-neutral);
+      max-width: 720px;
+    }
+
+    .summary-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .summary-card {
+      padding: 18px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.03) 0%, rgba(37, 99, 235, 0.0) 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .summary-card--positive {
+      background: linear-gradient(180deg, rgba(18, 183, 106, 0.06) 0%, rgba(18, 183, 106, 0.02) 100%);
+      border-color: rgba(18, 183, 106, 0.18);
+    }
+
+    .summary-card--critical {
+      background: linear-gradient(180deg, rgba(240, 68, 56, 0.08) 0%, rgba(240, 68, 56, 0.03) 100%);
+      border-color: rgba(240, 68, 56, 0.2);
+    }
+
+    .summary-card__label {
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--color-muted);
+    }
+
+    .summary-card__value {
+      font-size: 26px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .summary-card__caption {
+      font-size: 13px;
+      color: var(--color-neutral);
+    }
+
+    .alerts-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .alert-item {
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid rgba(240, 68, 56, 0.24);
+      background: rgba(240, 68, 56, 0.08);
+      color: var(--color-critical);
+    }
+
+    .alert-item--warn {
+      border-color: rgba(247, 144, 9, 0.24);
+      background: rgba(247, 144, 9, 0.08);
+      color: var(--color-warning);
+    }
+
+    .alert-item__label {
+      font-weight: 600;
+    }
+
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+
+    .pipeline-card {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background: #fbfdff;
+    }
+
+    .pipeline-card__title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .pipeline-card__stage {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .pipeline-card__meta {
+      font-size: 13px;
+      color: var(--color-neutral);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .progress {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .progress__bar {
+      flex: 1;
+      height: 8px;
+      background: rgba(37, 99, 235, 0.12);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress__value {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      background: var(--color-primary);
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    .progress--warn .progress__value {
+      background: var(--color-warning);
+    }
+
+    .progress--critical .progress__value {
+      background: var(--color-critical);
+    }
+
+    .progress__label {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .metric-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+    }
+
+    .metric-row:last-child {
+      border-bottom: none;
+    }
+
+    .metric-row__label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--color-heading);
+    }
+
+    .metric-row__value {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .metric-row--positive .metric-row__value {
+      color: var(--color-positive);
+    }
+
+    .metric-row--warn .metric-row__value {
+      color: var(--color-warning);
+    }
+
+    .metric-row--critical .metric-row__value {
+      color: var(--color-critical);
+    }
+
+    .panel-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .panel {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background: #fff;
+    }
+
+    .panel__title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--color-heading);
+    }
+
+    .panel__description {
+      font-size: 13px;
+      color: var(--color-neutral);
+    }
+
+    .empty-state {
+      padding: 16px;
+      border-radius: var(--radius-md);
+      border: 1px dashed var(--color-border);
+      text-align: center;
+      font-size: 14px;
+      color: var(--color-neutral);
+      background: #fafbfc;
+    }
+
+    .guide {
+      border-radius: var(--radius-md);
+      background: #f8fafc;
+      padding: 18px;
+      border: 1px solid var(--color-border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .guide__title {
+      font-weight: 600;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .guide__steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .guide-step {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      font-size: 13px;
+      color: var(--color-neutral);
+    }
+
+    .guide-step__badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(37, 99, 235, 0.12);
+      color: var(--color-primary);
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 13px;
+      color: var(--color-neutral);
+      padding: 24px 0 48px;
+    }
+
+    @media (max-width: 768px) {
+      .dashboard {
+        padding: 16px 16px 56px;
+      }
+
+      .app-header {
+        padding: 18px;
+      }
+
+      .section {
+        padding: 20px;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="logo">
-                <div class="logo-icon">
-                    <i class="fas fa-chart-line"></i>
-                </div>
-                <div class="logo-text">Voyant<span>Metrics</span></div>
-            </div>
-            <div class="header-controls">
-                <div id="status" class="status-indicator offline">
-                    <i class="fas fa-circle"></i>
-                    <span>Connecting...</span>
-                </div>
-                <button class="refresh-btn" onclick="fetchMetrics()">
-                    <i class="fas fa-sync-alt"></i>
-                    <span>Refresh</span>
-                </button>
-                <label class="auto-refresh">
-                    <input type="checkbox" id="autoRefresh" checked> Auto-refresh
-                </label>
-            </div>
-        </header>
-
-        <div class="dashboard-title">
-            <h1>Production Debugging Dashboard</h1>
-            <p>Follow the debugging flow: Pipeline Health → Root Cause Analysis → External Factors. Each section guides you to the next step.</p>
+  <div class="dashboard">
+    <header class="app-header">
+      <div class="brand" aria-label="Voyant Metrics">
+        <div class="brand__icon" aria-hidden="true">
+          <i class="fas fa-chart-line"></i>
         </div>
-
-        <!-- ALERTS BANNER (Immediate attention) -->
-        <div class="alerts-banner">
-            <div class="card-header">
-                <div class="card-icon">
-                    <i class="fas fa-exclamation-triangle"></i>
-                </div>
-                <h2>Active Alerts</h2>
-            </div>
-            <div id="alerts"></div>
+        <div class="brand__title">Voyant<span>Metrics</span></div>
+      </div>
+      <div class="header-actions">
+        <div class="status-pill" id="statusPill" role="status" aria-live="polite">
+          <span class="status-pill__dot" aria-hidden="true"></span>
+          <span class="status-pill__label" id="statusLabel">Connecting…</span>
         </div>
-
-        <!-- HERO SECTION: Pipeline Health (Primary debugging entry point) -->
-        <div class="hero-section">
-            <div class="card-header">
-                <div class="card-icon">
-                    <i class="fas fa-cogs"></i>
-                </div>
-                <h2>Pipeline Health - Where is the bottleneck?</h2>
-            </div>
-            <p class="hint">Start here: Success rates and verify rates for each pipeline stage. Low rates = bottleneck found.</p>
-            <div id="pipeline"></div>
-            <div class="action-hint">
-                <strong>Next step:</strong> If any stage shows issues → investigate root causes in sections below
-            </div>
+        <div class="header-actions__group">
+          <span class="timestamp" id="lastUpdated">Last updated —</span>
+          <button class="button button--primary" id="refreshBtn" type="button">
+            <i class="fas fa-rotate"></i>
+            <span>Refresh data</span>
+          </button>
+          <label class="toggle" for="autoRefresh">
+            <input type="checkbox" id="autoRefresh" name="autoRefresh" checked />
+            <span>Auto-refresh</span>
+          </label>
         </div>
+      </div>
+    </header>
 
-        <div class="nav-arrow">↓ Pipeline issues found? Investigate root causes ↓</div>
-
-        <!-- SECONDARY SECTIONS: Root cause analysis -->
-        <div class="secondary-grid">
-            <div class="card chat">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-brain"></i>
-                    </div>
-                    <h2>Confidence Analysis</h2>
-                </div>
-                <p class="hint">Model performance by confidence level. Identifies training issues and model drift.</p>
-                <div id="confidence"></div>
-                <div class="action-hint">
-                    <strong>High-conf fails:</strong> Model drift → retrain<br>
-                    <strong>Low-conf succeeds:</strong> Add training data
-                </div>
-            </div>
-
-            <div class="card router">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <i class="fas fa-search"></i>
-                    </div>
-                    <h2>Search Quality</h2>
-                </div>
-                <p class="hint">Query complexity vs results quality. Shows if search handles difficult queries.</p>
-                <div id="searchQuality"></div>
-                <div class="action-hint">
-                    <strong>Complex queries fail:</strong> Upgrade search<br>
-                    <strong>Simple queries fail:</strong> Check data quality
-                </div>
-            </div>
+    <main class="app-content">
+      <section class="section" aria-labelledby="summary-title">
+        <div class="section__header">
+          <h2 class="section__title" id="summary-title">Executive overview</h2>
+          <p class="section__subtitle">Enterprise snapshot across pipeline, search, and customer-facing latency.</p>
         </div>
+        <div class="summary-grid" id="summaryGrid"></div>
+      </section>
 
-        <!-- TERTIARY SECTION: External factors -->
-        <div class="card external tertiary-section">
-            <div class="card-header">
-                <div class="card-icon">
-                    <i class="fas fa-globe"></i>
-                </div>
-                <h2>External Dependencies</h2>
-            </div>
-            <p class="hint">API performance by location and domain. Check for regional/provider issues.</p>
-            <div id="external"></div>
-            <div class="action-hint">
-                <strong>Specific domains slow:</strong> Contact provider or add caching
-            </div>
+      <section class="section" aria-labelledby="alerts-title">
+        <div class="section__header">
+          <h2 class="section__title" id="alerts-title">Active alerts</h2>
+          <p class="section__subtitle">Immediate issues that require attention across the production stack.</p>
         </div>
+        <div class="alerts-list" id="alertsList"></div>
+      </section>
 
-        <!-- COLLAPSIBLE GUIDE -->
-        <div class="guide-section">
-            <div class="guide-header" onclick="toggleGuide()">
-                <h2>Debugging Playbook</h2>
-                <i id="guide-icon" class="fas fa-chevron-down"></i>
-            </div>
-            <div class="guide-content" id="guide-content">
-                <p class="hint">30-second debugging workflow:</p>
-                <div id="guide">
-                    <div class="metric">
-                        <span class="metric-name">Step 1: Pipeline Health</span>
-                        <span class="metric-value">Find failing stage: guard→extract→route→gather→blend→verify. Success rate = completion, verify rate = quality.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">Step 2: Confidence Analysis</span>
-                        <span class="metric-value">High-confidence failures = model drift. Low-confidence successes = undertrained intents.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">Step 3: Search Quality</span>
-                        <span class="metric-value">Complex query rate vs result quality shows if search handles difficult queries properly.</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-name">Step 4: External Dependencies</span>
-                        <span class="metric-value">Slow APIs by location/domain help identify regional issues or provider problems.</span>
-                    </div>
-                </div>
-            </div>
+      <section class="section" aria-labelledby="pipeline-title" data-section="pipeline">
+        <div class="section__header">
+          <h2 class="section__title" id="pipeline-title">Pipeline health</h2>
+          <p class="section__subtitle">Success rate, latency, and throughput by stage/intent. Investigate cards in red first.</p>
         </div>
+        <div class="pipeline-grid" id="pipelineGrid"></div>
+      </section>
 
-        <!-- Hidden sections for backward compatibility -->
-        <div style="display: none;">
-            <div id="perf"></div>
-            <div id="tools"></div>
+      <section class="section" aria-labelledby="quality-title">
+        <div class="section__header">
+          <h2 class="section__title" id="quality-title">Conversation quality & safety</h2>
+          <p class="section__subtitle">Monitor classifier accuracy, verification success, and confidence calibration.</p>
         </div>
+        <div class="panel-grid">
+          <article class="panel" aria-label="Conversation metrics">
+            <header class="panel__title"><i class="fas fa-comments"></i>Conversation outcomes</header>
+            <p class="panel__description">Key quality KPIs across content classification, escalation reasons, and receipts.</p>
+            <div class="metric-list" id="conversationMetrics"></div>
+          </article>
+          <article class="panel" aria-label="Confidence correlation">
+            <header class="panel__title"><i class="fas fa-signal"></i>Confidence correlation</header>
+            <p class="panel__description">Compare success rates for high/low confidence routes to validate routing thresholds.</p>
+            <div class="metric-list" id="confidenceMetrics"></div>
+          </article>
+          <article class="panel" aria-label="Search quality">
+            <header class="panel__title"><i class="fas fa-search"></i>Search quality</header>
+            <p class="panel__description">Usage, upgrade rate, and complexity mix across Brave/Tavily and deep research.</p>
+            <div class="metric-list" id="searchMetrics"></div>
+          </article>
+        </div>
+      </section>
 
-        <footer>
-            <p>Voyant Production Debugging Dashboard • Follow the flow for fastest resolution</p>
-        </footer>
-    </div>
+      <section class="section" aria-labelledby="operations-title">
+        <div class="section__header">
+          <h2 class="section__title" id="operations-title">Operational readiness</h2>
+          <p class="section__subtitle">External dependencies, system latency, and resilience signals.</p>
+        </div>
+        <div class="panel-grid">
+          <article class="panel" aria-label="External APIs">
+            <header class="panel__title"><i class="fas fa-globe"></i>External partners</header>
+            <div class="metric-list" id="externalMetrics"></div>
+          </article>
+          <article class="panel" aria-label="Performance">
+            <header class="panel__title"><i class="fas fa-tachometer-alt"></i>Response performance</header>
+            <div class="metric-list" id="performanceMetrics"></div>
+          </article>
+          <article class="panel" aria-label="Platform controls">
+            <header class="panel__title"><i class="fas fa-toolbox"></i>Platform controls</header>
+            <div class="metric-list" id="systemMetrics"></div>
+          </article>
+        </div>
+      </section>
 
-    <script>
-        function toggleGuide() {
-            const content = document.getElementById('guide-content');
-            const icon = document.getElementById('guide-icon');
-            
-            if (content.classList.contains('expanded')) {
-                content.classList.remove('expanded');
-                icon.className = 'fas fa-chevron-down';
-            } else {
-                content.classList.add('expanded');
-                icon.className = 'fas fa-chevron-up';
-            }
+      <section class="section" aria-labelledby="playbook-title">
+        <div class="section__header">
+          <h2 class="section__title" id="playbook-title">Response playbook</h2>
+          <p class="section__subtitle">Use this sequence when metrics degrade to keep debugging conversations consistent across teams.</p>
+        </div>
+        <div class="guide">
+          <div class="guide__title"><i class="fas fa-route"></i>Operational flow</div>
+          <div class="guide__steps">
+            <div class="guide-step">
+              <span class="guide-step__badge">1</span>
+              <span>Start with <strong>Pipeline health</strong>. Confirm which stage or intent is degrading via success rate and latency.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step__badge">2</span>
+              <span>Review <strong>Conversation quality</strong> cards to isolate classifier accuracy, verification failures, or safety escalations.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step__badge">3</span>
+              <span>Inspect <strong>Operational readiness</strong> to validate partner APIs, rate limits, and circuit breakers before escalating.</span>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step__badge">4</span>
+              <span>Log remediation steps in the incident tracker. Re-run refresh once mitigations are deployed.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      © <span id="footerYear"></span> Navan · Built for production observability and on-call readiness
+    </footer>
+  </div>
+
+  <script>
+    const API_ENDPOINT = '/metrics';
+    const REFRESH_INTERVAL_MS = 5000;
+
+    const els = {
+      statusPill: document.getElementById('statusPill'),
+      statusLabel: document.getElementById('statusLabel'),
+      lastUpdated: document.getElementById('lastUpdated'),
+      summary: document.getElementById('summaryGrid'),
+      alerts: document.getElementById('alertsList'),
+      pipeline: document.getElementById('pipelineGrid'),
+      conversation: document.getElementById('conversationMetrics'),
+      confidence: document.getElementById('confidenceMetrics'),
+      search: document.getElementById('searchMetrics'),
+      external: document.getElementById('externalMetrics'),
+      performance: document.getElementById('performanceMetrics'),
+      system: document.getElementById('systemMetrics'),
+      autoRefresh: document.getElementById('autoRefresh'),
+      refreshBtn: document.getElementById('refreshBtn')
+    };
+
+    let autoRefreshTimer;
+
+    function formatPercent(value, fractionDigits = 1) {
+      if (value === undefined || value === null || Number.isNaN(value)) return '—';
+      return `${(value * 100).toFixed(fractionDigits)}%`;
+    }
+
+    function formatNumber(value) {
+      if (value === undefined || value === null || Number.isNaN(value)) return '—';
+      return value.toLocaleString();
+    }
+
+    function formatMilliseconds(value) {
+      if (value === undefined || value === null || Number.isNaN(value)) return '—';
+      return `${Math.round(value).toLocaleString()} ms`;
+    }
+
+    function clearNode(node) {
+      while (node.firstChild) {
+        node.removeChild(node.firstChild);
+      }
+    }
+
+    function setStatus(state, message) {
+      els.statusPill.classList.remove('status-pill--warn', 'status-pill--critical');
+      if (state === 'ok') {
+        els.statusLabel.textContent = message || 'Connected';
+      } else if (state === 'warn') {
+        els.statusPill.classList.add('status-pill--warn');
+        els.statusLabel.textContent = message || 'Degraded';
+      } else if (state === 'critical') {
+        els.statusPill.classList.add('status-pill--critical');
+        els.statusLabel.textContent = message || 'Unavailable';
+      } else {
+        els.statusLabel.textContent = message || 'Connecting…';
+      }
+    }
+
+    function renderEmpty(container, message) {
+      clearNode(container);
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = message;
+      container.appendChild(empty);
+    }
+
+    function createMetricRow(label, value, tone) {
+      const row = document.createElement('div');
+      row.className = 'metric-row';
+      if (tone) {
+        row.classList.add(`metric-row--${tone}`);
+      }
+      const labelEl = document.createElement('span');
+      labelEl.className = 'metric-row__label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'metric-row__value';
+      valueEl.textContent = value;
+      row.append(labelEl, valueEl);
+      return row;
+    }
+
+    function adaptLegacyPayload(payload) {
+      if (!payload || (payload.pipeline && Array.isArray(payload.pipeline.stages))) {
+        const normalized = payload || {};
+        if (normalized.quality && !Array.isArray(normalized.quality.conversation)) {
+          normalized.quality.conversation = [];
         }
+        return normalized;
+      }
 
-        let autoRefreshInterval;
-        const history = {
-            e2e_avg_ms: [],
-            fcr_rate: [],
-            verify_fail_rate: []
+      const legacy = payload || {};
+
+      // Pipeline
+      let pipelineRaw = [];
+      if (Array.isArray(legacy.pipeline_stages)) {
+        pipelineRaw = legacy.pipeline_stages;
+      } else if (legacy.pipeline && Array.isArray(legacy.pipeline.stages)) {
+        pipelineRaw = legacy.pipeline.stages;
+      }
+
+      const pipelineStages = pipelineRaw.map((stage) => {
+        const key = stage.stage || '';
+        const parts = key.split('_');
+        const stageName = parts[0] || 'unknown';
+        const intent = parts.slice(1).join('_') || (stage.intent || '');
+        const totalsLegacy = stage.totals || {};
+        const totals = {
+          success: stage.success_count || totalsLegacy.success || 0,
+          clarify: stage.clarify_count || totalsLegacy.clarify || 0,
+          fail: stage.failure_count || totalsLegacy.fail || 0,
+          escalated: stage.escalated_count || totalsLegacy.escalated || 0
         };
+        const latencyBlock = stage.latency || {};
+        return {
+          stage: stageName,
+          intent,
+          totals,
+          latency: {
+            p95: typeof latencyBlock.p95 === 'number' ? latencyBlock.p95 : 0,
+            avg_ms: latencyBlock.avg_ms,
+            max_ms: latencyBlock.max_ms,
+            min_ms: latencyBlock.min_ms
+          }
+        };
+      });
 
-        function pushHistory(key, value) {
-            if (typeof value !== 'number' || !isFinite(value)) return;
-            const arr = history[key] || (history[key] = []);
-            arr.push(value);
-            if (arr.length > 30) arr.shift();
+      let pipelineAlerts = [];
+      if (legacy.pipeline && Array.isArray(legacy.pipeline.alerts)) {
+        pipelineAlerts = legacy.pipeline.alerts;
+      } else if (Array.isArray(legacy.alerts)) {
+        pipelineAlerts = legacy.alerts;
+      }
+
+      // Quality metrics
+      const qualityStats = legacy.quality || {};
+      const conversationMetrics = [];
+
+      if (typeof qualityStats.verify_pass_rate === 'number') {
+        conversationMetrics.push({
+          label: 'Verify pass rate',
+          value: qualityStats.verify_pass_rate,
+          format: 'percent',
+          tone: qualityStats.verify_pass_rate >= 0.9 ? 'positive' : qualityStats.verify_pass_rate < 0.8 ? 'critical' : ''
+        });
+      }
+      if (typeof qualityStats.verify_fail_rate === 'number') {
+        conversationMetrics.push({
+          label: 'Verify fail rate',
+          value: qualityStats.verify_fail_rate,
+          format: 'percent',
+          tone: qualityStats.verify_fail_rate > 0.15 ? 'critical' : ''
+        });
+      }
+      if (typeof qualityStats.citation_coverage === 'number') {
+        conversationMetrics.push({
+          label: 'Citation coverage',
+          value: qualityStats.citation_coverage,
+          format: 'percent',
+          tone: qualityStats.citation_coverage >= 0.8 ? 'positive' : ''
+        });
+      }
+      if (typeof qualityStats.clarification_efficacy === 'number') {
+        conversationMetrics.push({
+          label: 'Clarification efficacy',
+          value: qualityStats.clarification_efficacy,
+          format: 'percent'
+        });
+      }
+
+      let confidenceRaw = [];
+      if (Array.isArray(legacy.confidence_correlation)) {
+        confidenceRaw = legacy.confidence_correlation;
+      } else if (Array.isArray(qualityStats.confidence)) {
+        confidenceRaw = qualityStats.confidence;
+      }
+
+      const confidenceMetrics = confidenceRaw.map((entry) => ({
+        stage: entry.stage || 'unknown',
+        intent: entry.intent || '',
+        high: entry.high || entry.high_confidence || { total: 0, success_rate: 0 },
+        low: entry.low || entry.low_confidence || { total: 0, success_rate: 0 }
+      }));
+
+      // Search metrics
+      const searchLegacy = legacy.search || legacy.search_quality || {};
+      const toNumber = (value) => {
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string' && value.trim() !== '') {
+          const parsed = parseFloat(value);
+          return Number.isNaN(parsed) ? undefined : parsed;
         }
+        return undefined;
+      };
 
-        function sparkline(values) {
-            if (!values || values.length === 0) return '';
-            const blocks = ['▁','▂','▃','▄','▅','▆','▇','█'];
-            const min = Math.min(...values);
-            const max = Math.max(...values);
-            const range = max - min || 1;
-            return values.map(v => {
-                const idx = Math.min(blocks.length - 1, Math.max(0, Math.floor(((v - min) / range) * (blocks.length - 1))));
-                return blocks[idx];
-            }).join('');
+      const searchMetrics = {
+        total: searchLegacy.total || searchLegacy.total_searches || 0,
+        complex_query_rate: (function () {
+          const first = toNumber(searchLegacy.complex_query_rate);
+          if (first !== undefined) return first;
+          return toNumber(searchLegacy.complexQueryRate);
+        })(),
+        avg_complexity_confidence: (function () {
+          const first = toNumber(searchLegacy.avg_complexity_confidence);
+          if (first !== undefined) return first;
+          return toNumber(searchLegacy.avgComplexityConfidence);
+        })(),
+        avg_results_per_search: (function () {
+          const first = toNumber(searchLegacy.avg_results_per_search);
+          if (first !== undefined) return first;
+          return toNumber(searchLegacy.avgResultsPerSearch);
+        })(),
+        upgrade_rate: (function () {
+          const first = toNumber(searchLegacy.upgrade_rate);
+          if (first !== undefined) return first;
+          return toNumber(searchLegacy.upgradeRate);
+        })()
+      };
+
+      // External targets
+      let externalTargets = [];
+      if (legacy.external && Array.isArray(legacy.external.targets)) {
+        externalTargets = legacy.external.targets;
+      } else if (legacy.external_requests && Array.isArray(legacy.external_requests.targets)) {
+        externalTargets = legacy.external_requests.targets;
+      }
+
+      // Performance
+      const performanceBlock = legacy.performance || {};
+
+      // System / platform controls
+      let breakerStats = {};
+      if (legacy.system && legacy.system.breaker) {
+        breakerStats = legacy.system.breaker;
+      } else if (legacy.breaker && legacy.breaker.byTarget) {
+        breakerStats = legacy.breaker.byTarget;
+      }
+      let rateLimitStats = {};
+      if (legacy.system && legacy.system.rate_limit) {
+        rateLimitStats = legacy.system.rate_limit;
+      } else if (legacy.rate_limit && legacy.rate_limit.byTarget) {
+        rateLimitStats = legacy.rate_limit.byTarget;
+      }
+
+      return {
+        pipeline: { stages: pipelineStages, alerts: pipelineAlerts },
+        quality: { conversation: conversationMetrics, confidence: confidenceMetrics },
+        search: searchMetrics,
+        external: { targets: externalTargets },
+        performance: performanceBlock,
+        system: { breaker: breakerStats, rate_limit: rateLimitStats }
+      };
+    }
+
+    function renderSummary(data) {
+      clearNode(els.summary);
+      const pipelineData = data && data.pipeline ? data.pipeline : {};
+      const alertsCount = Array.isArray(pipelineData.alerts) ? pipelineData.alerts.length : 0;
+      const stages = Array.isArray(pipelineData.stages) ? pipelineData.stages : [];
+      const avgSuccess = stages.length
+        ? stages.reduce((sum, s) => {
+            const totals = s.totals || {};
+            const total = (totals.success || 0) + (totals.clarify || 0) + (totals.fail || 0) + (totals.escalated || 0);
+            return sum + (total ? totals.success / total : 0);
+          }, 0) / stages.length
+        : null;
+      const searchData = data && data.search ? data.search : {};
+      const upgradeRate = typeof searchData.upgrade_rate === 'number' ? searchData.upgrade_rate : null;
+      const latencyBlock = data && data.performance && data.performance.e2e_latency_ms ? data.performance.e2e_latency_ms : null;
+      const avgLatency = latencyBlock && typeof latencyBlock.avg_ms === 'number' ? latencyBlock.avg_ms : null;
+
+      const summaryItems = [
+        {
+          label: 'Pipeline success',
+          value: avgSuccess !== null ? formatPercent(avgSuccess) : '—',
+          caption: avgSuccess !== null ? 'Avg success across active stages' : 'Awaiting production traffic',
+          tone: avgSuccess !== null && avgSuccess >= 0.95 ? 'positive' : avgSuccess !== null && avgSuccess < 0.9 ? 'critical' : ''
+        },
+        {
+          label: 'Active alerts',
+          value: alertsCount.toString(),
+          caption: alertsCount ? 'Review incident log immediately' : 'All clear',
+          tone: alertsCount ? 'critical' : 'positive'
+        },
+        {
+          label: 'Avg response',
+          value: formatMilliseconds(avgLatency),
+          caption: 'End-to-end response time',
+          tone: avgLatency !== null && avgLatency > 5000 ? 'critical' : avgLatency !== null && avgLatency > 3500 ? 'warn' : ''
+        },
+        {
+          label: 'Search upgrade rate',
+          value: upgradeRate !== null ? formatPercent(Number(upgradeRate)) : '—',
+          caption: 'Share of queries requiring deep research',
+          tone: upgradeRate !== null && Number(upgradeRate) > 0.35 ? 'warn' : ''
         }
+      ];
 
-        function renderMetrics(key, value, container) {
-            if (typeof value === 'object' && value !== null) {
-                Object.entries(value).forEach(([k, v]) => {
-                    container.innerHTML += `<div class="metric"><span class="metric-name">${k}</span><span class="metric-value">${v}</span></div>`;
-                });
-            } else {
-                container.innerHTML += `<div class="metric"><span class="metric-name">${key}</span><span class="metric-value">${value}</span></div>`;
-            }
+      summaryItems.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'summary-card';
+        if (item.tone === 'positive') card.classList.add('summary-card--positive');
+        if (item.tone === 'critical') card.classList.add('summary-card--critical');
+        const labelEl = document.createElement('span');
+        labelEl.className = 'summary-card__label';
+        labelEl.textContent = item.label;
+        const valueEl = document.createElement('span');
+        valueEl.className = 'summary-card__value';
+        valueEl.textContent = item.value;
+        const captionEl = document.createElement('span');
+        captionEl.className = 'summary-card__caption';
+        captionEl.textContent = item.caption;
+        card.append(labelEl, valueEl, captionEl);
+        els.summary.appendChild(card);
+      });
+    }
+
+    function renderAlerts(alerts) {
+      if (!alerts || alerts.length === 0) {
+        renderEmpty(els.alerts, 'No active alerts. System standing by.');
+        return;
+      }
+      clearNode(els.alerts);
+      alerts.forEach((alert) => {
+        const item = document.createElement('div');
+        item.className = 'alert-item';
+        if (alert.level === 'warn') item.classList.add('alert-item--warn');
+        const label = document.createElement('span');
+        label.className = 'alert-item__label';
+        label.textContent = alert.message;
+        const meta = document.createElement('span');
+        meta.className = 'alert-item__meta';
+        meta.textContent = alert.code ? `#${alert.code}` : '';
+        item.append(label, meta);
+        els.alerts.appendChild(item);
+      });
+    }
+
+    function renderPipeline(stages) {
+      if (!stages || stages.length === 0) {
+        renderEmpty(els.pipeline, 'No pipeline activity yet. Trigger user journeys to populate metrics.');
+        return;
+      }
+      clearNode(els.pipeline);
+      const sorted = [...stages].sort((a, b) => {
+        const ta = a.totals || {};
+        const tb = b.totals || {};
+        const totalA = (ta.success || 0) + (ta.clarify || 0) + (ta.fail || 0) + (ta.escalated || 0);
+        const totalB = (tb.success || 0) + (tb.clarify || 0) + (tb.fail || 0) + (tb.escalated || 0);
+        const rateA = totalA ? (ta.success || 0) / totalA : 0;
+        const rateB = totalB ? (tb.success || 0) / totalB : 0;
+        return rateA - rateB;
+      });
+      sorted.forEach((stage) => {
+        const totals = stage.totals || {};
+        const total = (totals.success || 0) + (totals.clarify || 0) + (totals.fail || 0) + (totals.escalated || 0);
+        const successRate = total ? (totals.success || 0) / total : 0;
+        const latency = stage.latency && typeof stage.latency.p95 === 'number' ? stage.latency.p95 : null;
+        const card = document.createElement('article');
+        card.className = 'pipeline-card';
+
+        const title = document.createElement('div');
+        title.className = 'pipeline-card__title';
+        const stageEl = document.createElement('span');
+        stageEl.className = 'pipeline-card__stage';
+        stageEl.textContent = stage.stage || 'unknown';
+        const meta = document.createElement('span');
+        meta.className = 'pipeline-card__meta';
+        meta.textContent = stage.intent ? `Intent · ${stage.intent}` : 'Unclassified intent';
+        title.append(stageEl, meta);
+
+        const progress = document.createElement('div');
+        progress.className = 'progress';
+        const bar = document.createElement('div');
+        bar.className = 'progress__bar';
+        const barValue = document.createElement('div');
+        barValue.className = 'progress__value';
+        barValue.style.width = `${Math.round(successRate * 100)}%`;
+        if (successRate < 0.9) {
+          progress.classList.add('progress--critical');
+        } else if (successRate < 0.95) {
+          progress.classList.add('progress--warn');
         }
+        bar.appendChild(barValue);
+        const progressLabel = document.createElement('span');
+        progressLabel.className = 'progress__label';
+        progressLabel.textContent = formatPercent(successRate);
+        progress.append(bar, progressLabel);
 
-        async function fetchMetrics() {
-            try {
-                const response = await fetch('/metrics');
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const metrics = document.createElement('div');
+        metrics.className = 'metric-list';
+        metrics.appendChild(createMetricRow('Volume', formatNumber(total)));
+        metrics.appendChild(createMetricRow('Clarifications', formatNumber(totals.clarify || 0)));
+        metrics.appendChild(createMetricRow('Failures', formatNumber(totals.fail || 0), totals.fail ? 'critical' : 'positive'));
+        metrics.appendChild(createMetricRow('p95 latency', formatMilliseconds(latency), latency !== null && latency > 5000 ? 'critical' : latency !== null && latency > 2500 ? 'warn' : ''));
 
-                let data = await response.json();
-                // Back-compat: adapt legacy snapshot() shape to v2 if needed
-                if (!data.pipeline && Array.isArray(data.pipeline_stages)) {
-                    const stagesV2 = data.pipeline_stages.map((s) => {
-                        const key = s.stage || '';
-                        const idx = key.indexOf('_');
-                        const stage = idx > 0 ? key.slice(0, idx) : key;
-                        const intent = idx > 0 ? key.slice(idx + 1) : '';
-                        const totals = {
-                            success: s.success_count || 0,
-                            clarify: 0,
-                            fail: s.failure_count || 0,
-                            escalated: 0,
-                        };
-                        const latency = s.latency ? {
-                            p50: s.latency.avg_ms || 0,
-                            p95: s.latency.max_ms || (s.latency.avg_ms || 0),
-                            max: s.latency.max_ms || 0,
-                        } : { p50: 0, p95: 0, max: 0 };
-                        return { stage, intent, totals, latency };
-                    });
-                    data = { 
-                        pipeline: { stages: stagesV2, alerts: [] },
-                        quality: { confidence: [] },
-                        search: { total: 0 },
-                        external: { targets: data.external_requests?.targets || [] },
-                        performance: data.performance || {},
-                        system: { breaker: data.breaker?.byTarget || {}, rate_limit: data.rate_limit?.byTarget || {} }
-                    };
-                }
-                const statusEl = document.getElementById('status');
-                statusEl.className = 'status-indicator online';
-                statusEl.innerHTML = '<i class="fas fa-circle"></i><span>Connected</span>';
+        card.append(title, progress, metrics);
+        els.pipeline.appendChild(card);
+      });
+    }
 
-                // Clear containers
-                ['pipeline', 'confidence', 'searchQuality', 'external', 'perf', 'tools', 'alerts'].forEach(id => {
-                    document.getElementById(id).innerHTML = '';
-                });
+    function renderConversation(conversation) {
+      if (!Array.isArray(conversation) || conversation.length === 0) {
+        renderEmpty(els.conversation, 'No conversation quality data yet.');
+        return;
+      }
+      clearNode(els.conversation);
+      conversation.forEach((metric) => {
+        const tone = metric.tone || '';
+        let rawValue = metric.value;
+        if (rawValue === undefined || rawValue === null) rawValue = metric.percentage;
+        if (rawValue === undefined || rawValue === null) rawValue = metric.count;
+        const formatted = metric.format === 'percent' ? formatPercent(rawValue) : formatNumber(rawValue);
+        els.conversation.appendChild(createMetricRow(metric.label || metric.metric || 'Metric', formatted, tone));
+      });
+    }
 
-                // Pipeline Health (v2 metrics)
-                const pipelineDiv = document.getElementById('pipeline');
-                if (data.pipeline && Array.isArray(data.pipeline.stages) && data.pipeline.stages.length > 0) {
-                    data.pipeline.stages.slice().sort((a,b)=>{const ta=a.totals;const tb=b.totals;const ra=(ta.success)/Math.max(1,(ta.success+ta.clarify+ta.fail+ta.escalated));const rb=(tb.success)/Math.max(1,(tb.success+tb.clarify+tb.fail+tb.escalated));return ra-rb;}).forEach(s => {
-                        const t=s.totals; const total=Math.max(1,(t.success+t.clarify+t.fail+t.escalated)); const successRate=(t.success/total*100).toFixed(1);
-                        const className = parseFloat(successRate) < 90 ? 'alert' : parseFloat(successRate) < 95 ? 'warn' : 'ok';
-                        pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${s.stage}/${s.intent} Success</span><span class="metric-value ${className}">${successRate}%</span></div>`;
-                        
-                        // Add verification success rate
-                        if (false) {
-                            const verifyRate = (stage.verify_success_rate * 100).toFixed(1);
-                            const verifyClass = stage.verify_success_rate < 0.8 ? 'alert' : stage.verify_success_rate < 0.9 ? 'warn' : 'ok';
-                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">Verify Rate</span><span class="metric-value ${verifyClass}">${verifyRate}%</span></div>`;
-                        }
-                        
-                        if (s.latency && s.latency.p95 !== undefined) {
-                            const latencyClass = s.latency.p95 > 5000 ? 'alert' : s.latency.p95 > 2000 ? 'warn' : '';
-                            pipelineDiv.innerHTML += `<div class="metric"><span class="metric-name">${s.stage}/${s.intent} p95</span><span class="metric-value ${latencyClass}">${s.latency.p95.toFixed(0)}ms</span></div>`;
-                        }
-                    });
-                } else {
-                    pipelineDiv.innerHTML = '<div class="metric"><span class="metric-name">No pipeline activity yet</span><span class="metric-value">Send some requests to see metrics</span></div>';
-                }
-
-                // Confidence Correlation (v2)
-                const confidenceDiv = document.getElementById('confidence');
-                if (data.quality && Array.isArray(data.quality.confidence) && data.quality.confidence.length > 0) {
-                    data.quality.confidence.forEach(c => {
-                        if (c.high.total > 0) {
-                            const highSuccessRate = (c.high.success_rate * 100).toFixed(1);
-                            const className = c.high.success_rate < 0.8 ? 'alert' : '';
-                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${c.stage}/${c.intent} High-Conf</span><span class="metric-value ${className}">${highSuccessRate}%</span></div>`;
-                        }
-                        if (c.low.total > 0) {
-                            const lowSuccessRate = (c.low.success_rate * 100).toFixed(1);
-                            const className = c.low.success_rate > 0.6 ? 'ok' : '';
-                            confidenceDiv.innerHTML += `<div class="metric"><span class="metric-name">${c.stage}/${c.intent} Low-Conf</span><span class="metric-value ${className}">${lowSuccessRate}%</span></div>`;
-                        }
-                    });
-                } else {
-                    confidenceDiv.innerHTML = '<div class="metric"><span class="metric-name">No confidence data yet</span><span class="metric-value">Need requests to analyze</span></div>';
-                }
-
-                // Search Quality (v2)
-                const searchDiv = document.getElementById('searchQuality');
-                if (data.search && typeof data.search.total === "number" && data.search.total > 0) {
-                    const sq = data.search;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Searches</span><span class="metric-value">${sq.total}</span></div>`;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Complex Query Rate</span><span class="metric-value">${(sq.complex_query_rate * 100).toFixed(1)}%</span></div>`;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Complexity Confidence</span><span class="metric-value">${sq.avg_complexity_confidence}</span></div>`;
-                    searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Results per Search</span><span class="metric-value">${sq.avg_results_per_search}</span></div>`;
-                    if (sq.upgrade_rate) {
-                        searchDiv.innerHTML += `<div class="metric"><span class="metric-name">Upgrade Rate</span><span class="metric-value">${(parseFloat(sq.upgrade_rate) * 100).toFixed(1)}%</span></div>`;
-                    }
-                } else {
-                    searchDiv.innerHTML = '<div class="metric"><span class="metric-name">No search activity yet</span><span class="metric-value">Try some queries</span></div>';
-                }
-
-                // External (v2)
-                const extDiv = document.getElementById('external');
-                if (data.external && data.external.targets && data.external.targets.length > 0) {
-                    data.external.targets.forEach(target => {
-                        const latencyClass = target.latency.avg_ms > 5000 ? 'alert' : target.latency.avg_ms > 2000 ? 'warn' : '';
-                        extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} Avg Latency</span><span class="metric-value ${latencyClass}">${target.latency.avg_ms.toFixed(0)}ms</span></div>`;
-                        
-                        // Show context breakdown if available
-                        if (target.byContext && Object.keys(target.byContext).length > 0) {
-                            const topContexts = Object.entries(target.byContext)
-                                .sort(([,a], [,b]) => b - a)
-                                .slice(0, 3);
-                            topContexts.forEach(([context, count]) => {
-                                extDiv.innerHTML += `<div class="metric"><span class="metric-name">${target.target} ${context}</span><span class="metric-value">${count}</span></div>`;
-                            });
-                        }
-                    });
-                } else {
-                    extDiv.innerHTML = '<div class="metric"><span class="metric-name">No external API calls yet</span><span class="metric-value">System ready</span></div>';
-                }
-
-                // Performance (System Metrics)
-                const perfDiv = document.getElementById('perf');
-                if (data.performance && data.performance.e2e_latency_ms) {
-                    const avgLatency = data.performance.e2e_latency_ms.avg_ms || 0;
-                    const latencyClass = avgLatency > 5000 ? 'alert' : avgLatency > 3000 ? 'warn' : 'ok';
-                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Avg Response Time</span><span class="metric-value ${latencyClass}">${avgLatency.toFixed(0)}ms</span></div>`;
-                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Min Response Time</span><span class="metric-value">${data.performance.e2e_latency_ms.min_ms || 0}ms</span></div>`;
-                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Max Response Time</span><span class="metric-value">${data.performance.e2e_latency_ms.max_ms || 0}ms</span></div>`;
-                    perfDiv.innerHTML += `<div class="metric"><span class="metric-name">Total Requests</span><span class="metric-value">${data.performance.e2e_latency_ms.count || 0}</span></div>`;
-                } else {
-                    perfDiv.innerHTML = '<div class="metric"><span class="metric-name">No performance data yet</span><span class="metric-value">-</span></div>';
-                }
-
-                // System Health
-                const toolsDiv = document.getElementById('tools');
-                let hasHealthData = false;
-                
-                // Circuit breaker status
-                if (data.system && data.system.breaker && Object.keys(data.system.breaker).length > 0) {
-                    hasHealthData = true;
-                    for (const [target, status] of Object.entries(data.system.breaker)) {
-                        const state = status.state === 'closed' ? '✓ Healthy' : `⚠ ${status.state}`;
-                        const className = status.state === 'closed' ? 'ok' : 'warn';
-                        toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Circuit</span><span class="metric-value ${className}">${state}</span></div>`;
-                    }
-                }
-                
-                // Rate limiting
-                if (data.system && data.system.rate_limit && Object.keys(data.system.rate_limit).length > 0) {
-                    hasHealthData = true;
-                    for (const [target, limits] of Object.entries(data.system.rate_limit)) {
-                        if (limits.queued_current > 0) {
-                            toolsDiv.innerHTML += `<div class="metric"><span class="metric-name">${target} Queued</span><span class="metric-value warn">${limits.queued_current}</span></div>`;
-                        }
-                    }
-                }
-                
-                if (!hasHealthData) {
-                    toolsDiv.innerHTML = '<div class="metric"><span class="metric-name">All systems healthy</span><span class="metric-value ok">✓</span></div>';
-                }
-
-                // Production Alerts
-                const alertsDiv = document.getElementById('alerts');
-                alertsDiv.innerHTML = '';
-                if (data.pipeline && Array.isArray(data.pipeline.alerts) && data.pipeline.alerts.length > 0) {
-                    data.pipeline.alerts.forEach((alert) => {
-                        const levelClass = alert.level === 'alert' ? 'alert' : alert.level === 'warn' ? 'warn' : '';
-                        alertsDiv.innerHTML += `<div class="metric"><span class="metric-name ${levelClass}">${alert.message}</span><span class="metric-value"></span></div>`;
-                    });
-                } else {
-                    alertsDiv.innerHTML = '<div class="metric"><span class="metric-name ok">All systems ready</span><span class="metric-value"></span></div>';
-                }
-
-            } catch (error) {
-                const statusEl = document.getElementById('status');
-                statusEl.className = 'status-indicator offline';
-                statusEl.innerHTML = `<i class="fas fa-circle"></i><span>Error: ${error.message}</span>`;
-            }
+    function renderConfidence(confidence) {
+      if (!Array.isArray(confidence) || confidence.length === 0) {
+        renderEmpty(els.confidence, 'Waiting for confidence calibration data.');
+        return;
+      }
+      clearNode(els.confidence);
+      confidence.forEach((entry) => {
+        if (entry.high && entry.high.total > 0) {
+          const tone = entry.high.success_rate < 0.8 ? 'critical' : '';
+          els.confidence.appendChild(createMetricRow(`${entry.stage}/${entry.intent} · High`, formatPercent(entry.high.success_rate), tone));
         }
-
-        function toggleAutoRefresh() {
-            const checkbox = document.getElementById('autoRefresh');
-            if (checkbox.checked) {
-                autoRefreshInterval = setInterval(fetchMetrics, 5000);
-            } else {
-                clearInterval(autoRefreshInterval);
-            }
+        if (entry.low && entry.low.total > 0) {
+          const tone = entry.low.success_rate > 0.6 ? 'positive' : 'warn';
+          els.confidence.appendChild(createMetricRow(`${entry.stage}/${entry.intent} · Low`, formatPercent(entry.low.success_rate), tone));
         }
+      });
+    }
 
-        document.getElementById('autoRefresh').addEventListener('change', toggleAutoRefresh);
+    function renderSearch(search) {
+      if (!search || !search.total) {
+        renderEmpty(els.search, 'No web search calls yet. Run blended queries to populate metrics.');
+        return;
+      }
+      clearNode(els.search);
+      els.search.appendChild(createMetricRow('Total searches', formatNumber(search.total)));
+      if (search.complex_query_rate !== undefined) {
+        els.search.appendChild(createMetricRow('Complex query rate', formatPercent(search.complex_query_rate), search.complex_query_rate > 0.4 ? 'warn' : ''));
+      }
+      if (search.avg_complexity_confidence !== undefined) {
+        els.search.appendChild(createMetricRow('Avg complexity confidence', Number(search.avg_complexity_confidence).toFixed(2)));
+      }
+      if (search.avg_results_per_search !== undefined) {
+        els.search.appendChild(createMetricRow('Avg results per search', Number(search.avg_results_per_search).toFixed(1)));
+      }
+      if (search.upgrade_rate !== undefined) {
+        els.search.appendChild(createMetricRow('Upgrade rate', formatPercent(Number(search.upgrade_rate)), Number(search.upgrade_rate) > 0.35 ? 'warn' : ''));
+      }
+    }
 
-        // Initial load
-        fetchMetrics();
-        toggleAutoRefresh();
-    </script>
+    function renderExternal(external) {
+      const targets = external && Array.isArray(external.targets) ? external.targets : [];
+      if (!targets.length) {
+        renderEmpty(els.external, 'No partner activity yet. External services are idle.');
+        return;
+      }
+      clearNode(els.external);
+      targets.forEach((target) => {
+        const latency = target.latency && typeof target.latency.avg_ms === 'number' ? target.latency.avg_ms : null;
+        const tone = latency !== null && latency > 5000 ? 'critical' : latency !== null && latency > 2500 ? 'warn' : '';
+        els.external.appendChild(createMetricRow(`${target.target} · avg latency`, formatMilliseconds(latency), tone));
+        if (target.byContext) {
+          const contexts = Object.entries(target.byContext)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3);
+          contexts.forEach(([context, count]) => {
+            els.external.appendChild(createMetricRow(`› ${context}`, formatNumber(count)));
+          });
+        }
+      });
+    }
+
+    function renderPerformance(performance) {
+      const latency = performance && performance.e2e_latency_ms ? performance.e2e_latency_ms : null;
+      if (!latency) {
+        renderEmpty(els.performance, 'No performance telemetry captured yet.');
+        return;
+      }
+      clearNode(els.performance);
+      const avgTone = latency.avg_ms > 5000 ? 'critical' : latency.avg_ms > 3500 ? 'warn' : 'positive';
+      els.performance.appendChild(createMetricRow('Avg response time', formatMilliseconds(latency.avg_ms), avgTone));
+      els.performance.appendChild(createMetricRow('Min response', formatMilliseconds(latency.min_ms)));
+      els.performance.appendChild(createMetricRow('Max response', formatMilliseconds(latency.max_ms)));
+      els.performance.appendChild(createMetricRow('Total requests', formatNumber(latency.count)));
+    }
+
+    function renderSystem(system) {
+      const breaker = system && system.breaker ? system.breaker : {};
+      const rate = system && system.rate_limit ? system.rate_limit : {};
+      const entries = [];
+
+      Object.entries(breaker).forEach(([target, status]) => {
+        const state = status.state || 'unknown';
+        const tone = state === 'closed' ? 'positive' : 'warn';
+        entries.push({ label: `${target} circuit`, value: state === 'closed' ? 'Healthy' : state, tone });
+      });
+
+      Object.entries(rate).forEach(([target, limits]) => {
+        if ((limits.queued_current || 0) > 0) {
+          entries.push({ label: `${target} queued`, value: formatNumber(limits.queued_current), tone: 'warn' });
+        }
+      });
+
+      if (!entries.length) {
+        renderEmpty(els.system, 'All platform controls healthy.');
+        return;
+      }
+
+      clearNode(els.system);
+      entries.forEach((entry) => {
+        els.system.appendChild(createMetricRow(entry.label, entry.value, entry.tone));
+      });
+    }
+
+    async function fetchMetrics() {
+      setStatus('loading', 'Refreshing…');
+      try {
+        const response = await fetch(API_ENDPOINT, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+        let payload = await response.json();
+        payload = adaptLegacyPayload(payload);
+
+        renderSummary(payload);
+        renderAlerts(payload.pipeline && payload.pipeline.alerts);
+        renderPipeline(payload.pipeline && payload.pipeline.stages);
+        renderConversation(payload.quality && payload.quality.conversation);
+        renderConfidence(payload.quality && payload.quality.confidence);
+        renderSearch(payload.search);
+        renderExternal(payload.external);
+        renderPerformance(payload.performance);
+        renderSystem(payload.system);
+
+        setStatus('ok', 'Connected');
+        const now = new Date();
+        els.lastUpdated.textContent = `Last updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      } catch (error) {
+        console.error('Failed to load metrics', error);
+        setStatus('critical', 'Error fetching metrics');
+        els.lastUpdated.textContent = 'Last updated —';
+        renderEmpty(els.summary, 'Unable to load metrics. Check API availability.');
+        renderEmpty(els.alerts, error.message || 'Metrics endpoint unavailable.');
+        [els.pipeline, els.conversation, els.confidence, els.search, els.external, els.performance, els.system].forEach((node) => {
+          renderEmpty(node, '—');
+        });
+      }
+    }
+
+    function handleAutoRefreshToggle() {
+      if (els.autoRefresh.checked) {
+        autoRefreshTimer = setInterval(fetchMetrics, REFRESH_INTERVAL_MS);
+      } else {
+        clearInterval(autoRefreshTimer);
+      }
+    }
+
+    function init() {
+      document.getElementById('footerYear').textContent = new Date().getFullYear();
+      els.refreshBtn.addEventListener('click', fetchMetrics);
+      els.autoRefresh.addEventListener('change', handleAutoRefreshToggle);
+      fetchMetrics();
+      handleAutoRefreshToggle();
+    }
+
+    init();
+  </script>
 </body>
 </html>
