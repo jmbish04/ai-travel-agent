@@ -1,6 +1,6 @@
 import { RouterResult, RouterResultT } from '../schemas/router.js';
 import { getPrompt } from './prompts.js';
-import { callLLM, optimizeSearchQuery } from './llm.js';
+import { callLLM } from './llm.js';
 import {
   getThreadSlots,
   updateThreadSlots,
@@ -100,26 +100,7 @@ function formatContextForRouter(slots: Record<string, string>): string {
   }
 }
 
-// AI-first detection functions using existing prompts
-async function isPronounFollowup(message: string, log?: pino.Logger): Promise<boolean> {
-  // Use consent_detector to identify vague/unclear responses (pronouns typically create unclear responses)
-  const consentPrompt = await getPrompt('consent_detector');
-  const result = await callLLM(
-    consentPrompt + `\n\nUser message: "${message}"`,
-    { responseFormat: 'text' }
-  );
-  return result.trim().toLowerCase() === 'unclear';
-}
-
-async function isQuickAck(message: string, log?: pino.Logger): Promise<boolean> {
-  // Use consent_detector to identify positive acknowledgments
-  const consentPrompt = await getPrompt('consent_detector');
-  const result = await callLLM(
-    consentPrompt + `\n\nUser message: "${message}"`,
-    { responseFormat: 'text' }
-  );
-  return result.trim().toLowerCase() === 'yes';
-}
+// Deprecated probes removed; consent classification handled by classifyConsentResponse.
 
 function normalizeLocationName(name: string): string {
   return name
@@ -168,154 +149,10 @@ function stripSlotKeys(slots: Record<string, string>, keys: Iterable<string>): v
   }
 }
 
-async function maybeResetContextForMessage(params: {
-  threadId?: string;
-  message: string;
-  slots: Record<string, string>;
-  newSlots?: Record<string, string | null | undefined>;
-  logger?: pino.Logger;
-}): Promise<{ slots: Record<string, string>; reset: boolean; reason?: string }> {
-  const { threadId, message, logger } = params;
-  const sanitizedSlots = { ...params.slots };
-  const previousLocation = getPrimaryLocation(sanitizedSlots);
-  let reset = false;
-  let reason: string | undefined;
-  const shouldSkip = await shouldSkipContextDetector(message, params.logger);
-  const lastMessage = threadId ? await getLastUserMessage(threadId) : undefined;
-
-  let freshSlots: Record<string, string> = {};
-  if (params.newSlots) {
-    for (const [key, value] of Object.entries(params.newSlots)) {
-      if (typeof value === 'string' && value.trim()) {
-        freshSlots[key] = value.trim();
-      }
-    }
-  } else {
-    try {
-      freshSlots = await extractSlots(message, sanitizedSlots, logger);
-    } catch (error) {
-      logger?.debug({ err: String(error) }, 'context_slots_extraction_failed');
-    }
-  }
-
-  const fallbackDestination = sanitizedSlots.destinationCity?.trim() || sanitizedSlots.city?.trim();
-  const fallbackOrigin = sanitizedSlots.originCity?.trim() || sanitizedSlots.city?.trim();
-  const fallbackCity = sanitizedSlots.city?.trim() || fallbackDestination || fallbackOrigin;
-
-  // If the current message uses placeholder location terms ("there", "here", etc.),
-  // prefer prior context over any newly inferred concrete city to prevent drift.
-  // This avoids LLM mis-inference like mapping "there" to an unrelated city.
-  const hasPlaceholderRef = /\b(there|here|that\s+(place|city|destination)|same\s*(place|destination|city)|the\s*same\s*(place|destination|city))\b/i.test(message);
-
-  for (const key of ['destinationCity', 'city', 'originCity'] as const) {
-    const value = freshSlots[key];
-    if (typeof value === 'string') {
-      let fallback: string | undefined;
-      if (key === 'destinationCity') {
-        fallback = fallbackDestination || fallbackCity;
-      } else if (key === 'originCity') {
-        fallback = fallbackOrigin || fallbackDestination || fallbackCity;
-      } else {
-        fallback = fallbackCity || fallbackDestination || fallbackOrigin;
-      }
-      // Resolve explicit placeholder tokens first
-      let resolved = resolveLocationPlaceholder(value, fallback || previousLocation);
-      // If message itself contains placeholder reference, force-resolve to prior context
-      if (hasPlaceholderRef && !resolved && (fallback || previousLocation)) {
-        resolved = (fallback || previousLocation)!;
-      }
-      if (resolved) {
-        freshSlots[key] = resolved;
-      } else {
-        delete freshSlots[key];
-      }
-    }
-  }
-
-  const newLocation = getPrimaryLocation(freshSlots);
-  
-  // Check if only origin was added/changed and destination exists in prior context
-  const priorDest = sanitizedSlots.destinationCity || sanitizedSlots.city;
-  const newDest = freshSlots.destinationCity || freshSlots.city;
-  const onlyOriginChanged = freshSlots.originCity && !newDest && !!priorDest;
-
-  if (previousLocation && newLocation) {
-    if (onlyOriginChanged) {
-      // Don't reset if only origin was added and we have a prior destination
-      reset = false;
-    } else if (normalizeLocationName(previousLocation) !== normalizeLocationName(newLocation)) {
-      reset = true;
-      reason = 'new_location';
-    }
-  }
-
-  if (!reset && threadId && previousLocation && !shouldSkip && lastMessage) {
-    const different = await callContextSwitchDetector(lastMessage, message, logger);
-    if (different) {
-      reset = true;
-      reason = 'llm_detector';
-    }
-  }
-
-  if (reset && threadId) {
-    await updateThreadSlots(threadId, {}, [], RESET_SLOT_KEYS);
-    stripSlotKeys(sanitizedSlots, RESET_SLOT_KEYS);
-    logger?.debug({ reason, previousLocation, newLocation }, 'context_switch_reset');
-  } else {
-    const hasTimeSignal = Boolean(
-      freshSlots.month || freshSlots.dates || freshSlots.departureDate || freshSlots.returnDate || freshSlots.travelDates,
-    );
-    if (!hasTimeSignal) {
-      stripSlotKeys(sanitizedSlots, TIME_SLOT_KEYS);
-    }
-
-    const hasProfileSignal = Boolean(
-      freshSlots.travelerProfile ||
-      freshSlots.travelStyle ||
-      freshSlots.groupType ||
-      freshSlots.budgetLevel ||
-      freshSlots.activityType ||
-      freshSlots.tripPurpose,
-    );
-    if (!hasProfileSignal) {
-      stripSlotKeys(sanitizedSlots, PROFILE_SLOT_KEYS);
-    }
-
-    stripSlotKeys(sanitizedSlots, AUX_SLOT_KEYS);
-  }
-
-  return { slots: sanitizedSlots, reset, reason };
-}
+// Context resets moved to slot_memory.normalizeSlots; router no longer mutates context.
 
 // Helper function to clear consent state for unrelated queries
-async function clearConsentState(threadId?: string) {
-  if (!threadId) return;
-  
-  // List of keys to remove - only consent and conflicting travel data
-  const keysToRemove = [
-    // Consent states only (do not clear travel context here)
-    'awaiting_deep_research_consent',
-    'pending_deep_research_query',
-    'awaiting_web_search_consent',
-    'pending_web_search_query',
-    'awaiting_search_consent',
-    'pending_search_query',
-    'deep_research_consent_needed',
-    // Aux reasoning signals
-    'complexity_score',
-    'complexity_reasoning',
-    // Flight clarification-only workflow flags
-    'flight_clarification_needed',
-    'ambiguity_reason',
-    'clarification_options',
-    'awaiting_flight_clarification',
-    'pending_flight_query',
-    'clarification_reasoning',
-  ];
-  
-  // Remove only the specified keys, preserving receipts and session data
-  await updateThreadSlots(threadId, {}, [], keysToRemove);
-}
+// Consent state is managed via slot_memory.writeConsentState
 
 export async function routeIntent({ message, threadId, logger }: {
   message: string; 
@@ -332,9 +169,6 @@ export async function routeIntent({ message, threadId, logger }: {
 
   // Load context
   let ctxSlots = await loadCtxSlots(threadId);
-
-  // Clear stale consent for unrelated queries
-  ctxSlots = await maybeClearStaleConsent(m, threadId, ctxSlots, logger?.log);
 
   // Flight clarification state
   const clarification = await maybeHandleFlightClarification(m, threadId, ctxSlots, logger?.log);
@@ -361,29 +195,7 @@ async function loadCtxSlots(threadId?: string): Promise<Record<string, string>> 
   return await getThreadSlots(threadId);
 }
 
-async function maybeClearStaleConsent(
-  message: string,
-  threadId: string | undefined,
-  ctxSlots: Record<string, string>,
-  log?: pino.Logger,
-): Promise<Record<string, string>> {
-  if (!threadId) return ctxSlots;
-  if (ctxSlots.awaiting_deep_research_consent !== 'true') return ctxSlots;
-
-  const isDebug = (process.env.LOG_LEVEL || '').toLowerCase() === 'debug';
-  if (isDebug) console.debug(`🔍 CONSENT: Found awaiting_deep_research_consent, checking if "${message}" is a consent response`);
-  const verdict = await classifyConsentResponse(message, log);
-  if (isDebug) console.debug(`🔍 CONSENT: Verdict for "${message}": ${verdict}`);
-  if (verdict === 'unclear') {
-    if (isDebug) console.debug('🔍 CONSENT: Clearing consent state due to unclear verdict');
-    await clearConsentState(threadId);
-    const reloaded = await getThreadSlots(threadId);
-    if (isDebug) console.debug('🔍 CONSENT: Slots after clearing:', reloaded);
-    return reloaded;
-  }
-  if (isDebug) console.debug(`🔍 CONSENT: Not clearing consent state, verdict was: ${verdict}`);
-  return ctxSlots;
-}
+// Consent clearing handled in graph guard stage only
 
 function includesAny(haystack: string, needles: string[]): boolean {
   const lower = haystack.toLowerCase();
@@ -437,10 +249,8 @@ async function maybeRouteFlightsFastPath(
   if (!RE.flights.test(message)) return undefined;
   const { isDirect } = isDirectFlightHeuristic(message);
   if (!isDirect) return undefined;
-  await clearConsentState(threadId);
-  const slots = await extractFlightSlotsOnce(message, ctxSlots, log);
-  log?.debug({ isDirect: true, slots }, '✈️ FLIGHTS: direct (heuristic_llm_unified)');
-  const result = RouterResult.parse({ intent: 'flights', needExternal: true, slots, confidence: 0.9 });
+  // Fast-path intent detection only; defer slot extraction to domain node
+  const result = RouterResult.parse({ intent: 'flights', needExternal: true, slots: ctxSlots, confidence: 0.85 });
   incTurn(result.intent);
   try { observeRouterConfidence(result.confidence); } catch {}
   if (threadId) noteTurn(threadId, result.intent);
@@ -455,7 +265,7 @@ async function maybeGateDeepResearch(
   if (process.env.DEEP_RESEARCH_ENABLED !== 'true') return undefined;
   const assessment = await assessQueryComplexity(message, log);
   if (!(assessment.isComplex && assessment.confidence >= 0.75)) return undefined;
-  await clearConsentState(threadId);
+  // Consent state managed elsewhere; do not mutate here
   const complexityScore = assessment.confidence.toFixed(2);
   if (threadId) {
     await updateThreadSlots(threadId, {
@@ -511,124 +321,9 @@ async function runLlmRouteAndPostProcess(
   const llm = RouterResult.parse(JSON.parse(raw));
   logger?.log?.debug({ parsedResult: llm, message }, 'router_llm_parsed_result');
 
-  let currentSlots = ctxSlots;
-  if (threadId) {
-    const resetResult = await maybeResetContextForMessage({
-      threadId,
-      message,
-      slots: currentSlots,
-      newSlots: llm.slots,
-      logger: logger?.log,
-    });
-    currentSlots = resetResult.slots;
-  }
-
-  const normalizedSlots = normalizeSlots(currentSlots, llm.slots, llm.intent);
+  const normalizedSlots = normalizeSlots(ctxSlots, llm.slots, llm.intent);
   let llmNormalized: RouterResultT = { ...llm, slots: normalizedSlots } as RouterResultT;
-
-  // AI-first guard: do not allow LLM to invent a new location when the user
-  // did not explicitly mention any. Use LLM city parser to confirm.
-  try {
-    const priorPrimary = getPrimaryLocation(currentSlots);
-    const cityProbe = await parseCity(message, currentSlots, logger?.log);
-    const hasExplicitCity = Boolean(cityProbe?.success && cityProbe.normalized);
-    if (!hasExplicitCity && !priorPrimary && llmNormalized.slots) {
-      const gated = { ...llmNormalized.slots } as Record<string, string>;
-      for (const key of ['city', 'destinationCity', 'originCity'] as const) {
-        if (!(currentSlots as any)[key] && (llm.slots as any)?.[key]) {
-          delete gated[key];
-        }
-      }
-      llmNormalized = RouterResult.parse({ ...llmNormalized, slots: normalizeSlots(currentSlots, gated, llm.intent) });
-    }
-  } catch (e) {
-    logger?.log?.debug({ error: String(e) }, 'explicit_city_guard_failed');
-  }
-
-  // Flights post-processing
-  // Anchor override: if user explicitly asked about weather, do not route to flights.
-  // Keeps behavior AI-first by respecting user’s intent tokens and avoiding
-  // LLM drift from prior context.
-  if (
-    llmNormalized.intent === 'flights' &&
-    RE.weather.test(message) &&
-    !RE.flights.test(message)
-  ) {
-    llmNormalized = RouterResult.parse({
-      intent: 'weather',
-      needExternal: true,
-      slots: normalizeSlots(currentSlots, llmNormalized.slots || {}, 'weather'),
-      confidence: Math.min(0.9, llmNormalized.confidence),
-    });
-  }
-
-  // Flights post-processing
-  if (llmNormalized.intent === 'flights') {
-    try {
-      const enhancedSlots = await extractFlightSlotsOnce(message, currentSlots, logger?.log);
-      const preservedSlots = { ...enhancedSlots } as Record<string, string>;
-      if (llmNormalized.slots?.dates && isTemporalReference(llmNormalized.slots.dates)) {
-        preservedSlots.dates = llmNormalized.slots.dates;
-        preservedSlots.departureDate = llmNormalized.slots.dates;
-        delete (preservedSlots as any).month;
-      }
-      const mergedSlots = { ...enhancedSlots, ...llmNormalized.slots, ...preservedSlots };
-      const normalizedMerged = normalizeSlots(currentSlots, mergedSlots, 'flights');
-      logger?.log?.debug({ llmSlots: llmNormalized.slots, enhancedSlots, preservedSlots, mergedSlots }, 'flights_slot_enhancement');
-      llmNormalized = RouterResult.parse({ ...llmNormalized, slots: normalizedMerged });
-      logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
-      return llmNormalized;
-    } catch (error) {
-      logger?.log?.debug({ error: String(error) }, 'flights_slot_enhancement_failed');
-    }
-  }
-
-  // Heuristic log
-  if (llmNormalized.intent === 'flights' && !RE.dateish.test(message)) {
-    logger?.log?.debug({ reason: 'missing_date' }, 'flights_missing_date');
-  }
-
-  // (moved earlier, before flight-specific processing)
-
-  // Correction pass
-  if (llmNormalized.confidence < 0.6 || llmNormalized.intent === 'unknown') {
-    try {
-      const { classifyIntent } = await import('./llm.js');
-      const det = await classifyIntent(message, currentSlots, logger?.log);
-      if (det && det.confidence >= 0.75 && det.intent !== 'unknown') {
-        const corrected = RouterResult.parse({
-          intent: det.intent,
-          needExternal: det.needExternal,
-          slots: normalizeSlots(currentSlots, (det.slots as Record<string, string>) || {}, det.intent),
-          confidence: det.confidence,
-        });
-        incTurn(corrected.intent);
-        try { observeRouterConfidence(corrected.confidence); } catch {}
-        if (corrected.confidence < 0.6) incRouterLowConf(corrected.intent);
-        if (threadId) noteTurn(threadId, corrected.intent);
-        logger?.log?.debug({ intent: corrected.intent, confidence: corrected.confidence }, 'router_final_result');
-        return corrected;
-      }
-    } catch (e) {
-      logger?.log?.debug({ error: String(e) }, 'nlp_intent_detection_correction_failed');
-    }
-  }
-
-  logger?.log?.debug({ intent: llmNormalized.intent, confidence: llmNormalized.confidence }, 'router_final_result');
-  if (['system', 'policy'].includes(llmNormalized.intent)) {
-    clearConsentState(threadId);
-  }
-  if (llmNormalized.intent === 'web_search' && !llmNormalized.slots?.search_query) {
-    try {
-      const q = await optimizeSearchQuery(message, currentSlots, 'web_search', logger?.log);
-      if (q && q.trim()) {
-        llmNormalized.slots = { ...llmNormalized.slots, search_query: q } as any;
-      }
-    } catch (error) {
-      logger?.log?.debug({ error: String(error) }, 'search_query_optimization_failed');
-      llmNormalized.slots = { ...llmNormalized.slots, search_query: message } as any;
-    }
-  }
+  logger?.log?.debug({ intent: llmNormalized.intent, confidence: Number(llmNormalized.confidence.toFixed(2)) }, 'router_final_result');
   incTurn(llmNormalized.intent);
   try { observeRouterConfidence(llmNormalized.confidence); } catch {}
   if (llmNormalized.confidence < 0.6) incRouterLowConf(llmNormalized.intent);

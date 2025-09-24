@@ -10,12 +10,8 @@ import { getPrompt } from './prompts.js';
 import { getWeather } from '../tools/weather.js';
 import { getCountryFacts } from '../tools/country.js';
 import { getAttractions } from '../tools/attractions.js';
-import {
-  searchTravelInfo,
-  getSearchCitation,
-  getSearchSource,
-} from '../tools/search.js';
-import type { SearchResult } from '../tools/search.js';
+import { getSearchCitation, getSearchSource } from '../tools/search.js';
+import { performWebSearchUnified } from './search_service.js';
 import { validateNoCitation } from './citations.js';
 import type { Fact } from './receipts.js';
 
@@ -98,67 +94,13 @@ async function performWebSearch(
     }
   }
   
-  // Determine if this needs Crawlee deep research
-  const isComplexQuery = query.length > 50 || isComplexRequest(query);
-  
-  ctx.log.debug({ query, isComplexQuery, queryLength: query.length }, 'complex_query_detection');
-  
+  // Use unified web search pipeline
   ctx.onStatus?.('Searching the web...');
-  
-  const searchResult = await searchTravelInfo(query, ctx.log, isComplexQuery);
-  
-  if (!searchResult.ok) {
-    ctx.log.debug({ reason: searchResult.reason }, 'web_search_failed');
-    return {
-      reply: 'I\'m unable to search the web right now. Could you ask me something about weather, destinations, packing, or attractions instead?',
-      citations: undefined,
-    };
-  }
-  
-  if (searchResult.results.length === 0) {
-    return {
-      reply: 'I couldn\'t find relevant information for your search. Could you try rephrasing your question or ask me about weather, destinations, packing, or attractions?',
-      citations: undefined,
-    };
-  }
-  
-  // Use deep research summary if available, otherwise regular summarization
-  let reply: string;
-  let citations: string[];
-  
-  if (searchResult.deepSummary) {
-    reply = searchResult.deepSummary;
-    citations = [`${getSearchCitation()} + Deep Research`];
-    ctx.log.debug('using_crawlee_deep_research_summary');
-  } else {
-    const useLLM = plan?.summarize_web_with_llm ?? (searchResult.results.length >= 3);
-    const result = await summarizeSearch(searchResult.results, query, useLLM, ctx);
-    reply = result.reply;
-    citations = result.citations || [getSearchCitation()];
-  }
-  
-  // Store search facts for receipts
-  if (threadId) {
-    try {
-      const facts: Fact[] = searchResult.results.slice(0, 3).map(
-        (result: SearchResult, index: number) => ({
-          source: getSearchCitation(),
-          key: `search_result_${index}`,
-          value: `${result.title}: ${result.description}`,
-        }),
-      );
-      const decisions = [createDecision(
-        'Used web search for travel information',
-        'User requested search or question couldn\'t be answered by travel APIs, so performed web search to find relevant information',
-        ['Use travel APIs only', 'Skip search'],
-        0.8
-      )];
-      await setLastReceipts(threadId, facts, decisions, reply);
-    } catch {
-      // ignore
-    }
-  }
-  
+  const { reply, citations } = await performWebSearchUnified(query, {}, {
+    log: ctx.log,
+    threadId,
+    summarizeWithLLM: plan?.summarize_web_with_llm,
+  });
   return { reply, citations };
 }
 
@@ -328,6 +270,10 @@ export async function handleChat(
           slotsSummary: slots,
           lastIntent: intent,
         });
+        if (lastAudit && typeof (lastAudit as any).confidence === 'number') {
+          const c = Number(((lastAudit as any).confidence as number).toFixed(2));
+          ctx.log.debug({ verify_confidence: c }, 'verify_confidence_log');
+        }
         try {
           const { observeStage } = await import('../util/metrics.js');
           observeStage('verify', Date.now() - vStart, lastAudit.verdict !== 'fail', intent);
@@ -474,8 +420,22 @@ export async function blendWithFacts(
   input: { message: string; route: RouterResultT; threadId?: string },
   ctx: { log: pino.Logger; onStatus?: (status: string) => void },
 ) {
-  // Single planner LLM call to drive all decisions
-  const plan = await planBlend(input.message, input.route, ctx.log);
+  // Planner is optional; default to deterministic behavior to avoid style drift
+  const usePlanner = (process.env.BLEND_STYLE_VARIANCE || 'off').toLowerCase() === 'on';
+  const plan: BlendPlan = usePlanner
+    ? await planBlend(input.message, input.route, ctx.log)
+    : {
+        explicit_search: /^\s*(search|google)\b/i.test(input.message),
+        unrelated: false,
+        system_question: false,
+        mixed_languages: false,
+        query_facets: { wants_restaurants: /restaurant|food|dining/i.test(input.message), wants_budget: /budget|cheap|cost/i.test(input.message), wants_flights: /flight|airfare|airline/i.test(input.message) },
+        needs_web: false,
+        style: 'short',
+        summarize_web_with_llm: true,
+        missing_slots: [],
+        safety: { disallowed_topic: false, reason: '' },
+      };
   
   // Early exits based on planner decisions
   if (plan.safety.disallowed_topic) {
