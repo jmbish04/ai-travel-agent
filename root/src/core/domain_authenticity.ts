@@ -18,9 +18,9 @@ const LlmOut = z.object({
   subject_type: z.enum(['brand','country','other']).optional().default('other'),
 });
 
-async function classifyWithLLM(domain: string, airlineName: string, signal?: AbortSignal): Promise<number> {
+async function classifyWithLLM(domain: string, airlineName: string, clause?: string, signal?: AbortSignal): Promise<number> {
   // Bump cache version when prompt guidance changes to avoid stale scores
-  const cacheKey = `v2:${domain}:${airlineName}`;
+  const cacheKey = `v3:${domain}:${airlineName}:${clause ?? ''}`;
   if (domainCache.has(cacheKey)) {
     const cached = domainCache.get(cacheKey)!;
     console.log(`🏆 Using cached score for ${domain}: ${cached}`);
@@ -31,7 +31,8 @@ async function classifyWithLLM(domain: string, airlineName: string, signal?: Abo
     const prompt = await getPrompt('domain_authenticity_classifier');
     const filled = prompt
       .replace('{{domain}}', domain)
-      .replace('{{airlineName}}', airlineName);
+      .replace('{{airlineName}}', airlineName)
+      .replace('{{clause}}', (clause ?? 'other'));
     
     const response = await callLLM(filled, { responseFormat: 'json', log: undefined, timeoutMs: 1800 });
     const parsedUnknown = (() => {
@@ -79,12 +80,13 @@ function preScoreOverride(domain: string, subject: string): number | null {
 }
 
 export async function scoreDomainAuthenticity(
-  domain: string, 
+  domain: string,
   airlineName: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  clause?: string,
 ): Promise<DomainScore> {
   // AI-first with strict JSON, with a minimal regex fallback inside classifyWithLLM
-  const confidence = await classifyWithLLM(domain, airlineName, signal);
+  const confidence = await classifyWithLLM(domain, airlineName, clause, signal);
   return {
     domain,
     confidence,

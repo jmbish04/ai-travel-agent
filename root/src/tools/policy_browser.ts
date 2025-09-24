@@ -20,6 +20,7 @@ export interface SearchResult {
 export interface ScoredResult extends SearchResult {
   domainScore: DomainScore;
   relevanceScore?: number;
+  heuristicScore?: number;
 }
 
 /**
@@ -40,7 +41,7 @@ export async function filterResultsByDomainAuthenticity(
   for (const result of slice) {
     try {
       const domain = new URL(result.url).hostname;
-      const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal);
+      const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal, clause);
       
       scoredResults.push({
         ...result,
@@ -84,18 +85,24 @@ export async function filterResultsByDomainAuthenticity(
         if (appearsLoyalty && (clause === 'change' || clause === 'refund' || clause === 'baggage')) score = 0.2;
         r.relevanceScore = score;
       }
+
+      // Deterministic heuristic: prefer help/legal/policy pages, penalize generic Terms or loyalty
+      r.heuristicScore = policyUrlHeuristicScore(r.url, clause);
     })
   );
 
   // Composite score: clause-aware weighting to prefer page relevance for
   // clause-specific questions (AI-first, reduce reliance on heuristics)
   const clauseSensitive = new Set(['change', 'refund', 'baggage', 'visa']);
-  const wDomain = clauseSensitive.has(clause) ? 0.5 : 0.7;
-  const wRel = 1 - wDomain;
+  const wDomain = clauseSensitive.has(clause) ? 0.45 : 0.65;
+  const wRel = clauseSensitive.has(clause) ? 0.4 : 0.25;
+  const wHeu = 1 - (wDomain + wRel); // small but stabilizing influence
   const ranked = scoredResults
     .map((r) => ({
       ...r,
-      _composite: (wDomain * r.domainScore.confidence) + (wRel * (r.relevanceScore ?? 0.4)),
+      _composite: (wDomain * r.domainScore.confidence)
+                + (wRel * (r.relevanceScore ?? 0.4))
+                + (wHeu * (r.heuristicScore ?? 0.4)),
     }))
     .sort((a, b) => b._composite - a._composite)
     .map(({ _composite, ...rest }) => rest);
@@ -185,6 +192,45 @@ async function classifyPageRelevance(params: {
   }
 }
 
+/**
+ * Deterministic URL heuristic for policy pages. This is clause-aware and
+ * brand-agnostic. It should be used as a stabilizer alongside LLM scoring.
+ */
+export function policyUrlHeuristicScore(url: string, clause: ClauseTypeT): number {
+  const u = url.toLowerCase();
+  const host = (() => { try { return new URL(u).hostname; } catch { return u; } })();
+  const path = (() => { try { return new URL(u).pathname.toLowerCase(); } catch { return u; } })();
+
+  // Disallow obviously irrelevant pages
+  const banned = /(privacy|cookie|accessibility|safety|press|newsroom|investor|blog|media|careers|login|account)/.test(path);
+  if (banned) return 0.05;
+
+  const isLoyalty = /(trueblue|loyalty|rewards|points)/.test(host + path);
+  const isTerms = /(terms|terms-and-conditions|conditions.*use)/.test(path);
+  const isHelp = /(help|support|travel-agents|customersupport)/.test(path) || /(^|\.)help\./.test(host);
+  const isLegalFees = /(legal|fees|charges)/.test(path) || /(^|\.)legal\./.test(host);
+  const hasBaggageHints = /(baggage|carry.?on|checked|allowance|cabin|bag)/.test(path);
+  const hasChangeHints = /(change|changes|modify|rebook|rebook|standby)/.test(path);
+  const hasRefundHints = /(refund|cancel|cancellations|risk[- ]?free)/.test(path);
+  const hasContract = /(contract-of-carriage|conditions.*carriage)/.test(path);
+
+  let s = 0.3; // base
+  if (isHelp) s += 0.35;
+  if (isLegalFees) s += 0.25;
+  if (hasContract) s += 0.25;
+  if (clause === 'baggage' && hasBaggageHints) s += 0.35;
+  if (clause === 'change' && hasChangeHints) s += 0.35;
+  if (clause === 'refund' && hasRefundHints) s += 0.35;
+
+  // Strong penalties for loyalty/terms on clause-specific requests
+  if ((clause === 'baggage' || clause === 'change' || clause === 'refund')) {
+    if (isLoyalty) s -= 0.5;
+    if (isTerms && !hasContract) s -= 0.25;
+  }
+
+  return Math.max(0, Math.min(1, s));
+}
+
 const PNG_MAX = 2_000_000;
 
 export async function extractPolicyClause(params: {
@@ -216,7 +262,7 @@ export async function extractPolicyClause(params: {
     if (params.airlineName) {
       try {
         const signal = AbortSignal.timeout(150);
-        domainScore = await scoreDomainAuthenticity(host, params.airlineName, signal);
+        domainScore = await scoreDomainAuthenticity(host, params.airlineName, signal, params.clause);
         confidence = domainScore.confidence > 0.7 ? 'high' : 
                     domainScore.confidence > 0.4 ? 'medium' : 'low';
         console.log(`🏆 Domain authenticity: ${domainScore.confidence.toFixed(2)} (${domainScore.reasoning})`);

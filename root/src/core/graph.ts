@@ -953,8 +953,8 @@ async function policyNode(
     const { PolicyAgent } = await import('./policy_agent.js');
     const agent = new PolicyAgent();
     
-    // Check if user wants receipts/citations
-    const wantReceipts = /receipt|citation|proof|evidence|source/i.test(ctx.msg);
+    // Check if user wants receipts/citations (accept plural + "official policy" phrasing)
+    const wantReceipts = /\b(receipt|receipts|citation|proof|evidence|source)\b|\bofficial policy\b/i.test(ctx.msg);
     
     const { answer, citations, receipts, needsWebSearch, assessmentReason } = await agent.answer(ctx.msg, undefined, ctx.threadId, logger.log, wantReceipts, slots);
 

@@ -38,7 +38,7 @@ async function routeExtraction(state: typeof PolicyBrowserState.State) {
  * Score domain authenticity before extraction
  */
 async function scoreDomain(state: typeof PolicyBrowserState.State) {
-  const { url, airlineName } = state;
+  const { url, airlineName, clause } = state;
   
   if (!airlineName) {
     // Skip domain scoring if no airline name provided
@@ -48,7 +48,7 @@ async function scoreDomain(state: typeof PolicyBrowserState.State) {
   try {
     const domain = new URL(url).hostname;
     const signal = AbortSignal.timeout(150); // 150ms timeout per requirements
-    const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal);
+    const domainScore = await scoreDomainAuthenticity(domain, airlineName, signal, clause);
     
     return { domainScore };
   } catch (error) {

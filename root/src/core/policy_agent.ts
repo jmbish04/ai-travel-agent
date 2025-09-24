@@ -4,6 +4,9 @@ import { VECTARA } from '../config/vectara.js';
 import { callLLM } from './llm.js';
 import { extractEntities } from './ner.js';
 import { getPrompt } from './prompts.js';
+import { sanitizeSearchQuery } from './search_service.js';
+import { optimizeSearchQuery } from './llm.js';
+import { readConsentState, writeConsentState } from './slot_memory.js';
 
 export type PolicyAnswer = { 
   answer: string; 
@@ -86,10 +89,20 @@ export class PolicyAgent {
       }, '✅ PolicyAgent: Retrieved policy answer with FCS filtering');
     }
 
-    // Try browser mode if receipts wanted and quality is low
+    // Interpret user phrasing as an explicit receipts request (graph guard may miss).
+    const userRequestsReceipts = wantReceipts || /\bofficial policy\b|\breceipts?\b/i.test(question);
+
+    // Try browser mode if receipts are requested OR quality is low.
+    // AI-first: proceed directly to Playwright receipts to avoid unnecessary consent round-trips
+    // for clause-specific official policy lookups.
     let receipts: Array<{ url: string; quote: string; confidence: number; imgPath?: string }> | undefined;
-    if (wantReceipts && (assessment.needsWebSearch || avgScore < 0.7)) {
-      receipts = await this.tryBrowserMode(question, citations, threadId, log, slots);
+    if (userRequestsReceipts || (assessment.needsWebSearch || avgScore < 0.7)) {
+      const mustAsk = (process.env.POLICY_BROWSER_REQUIRE_CONSENT ?? 'false').toLowerCase() === 'true';
+      if (!mustAsk) {
+        receipts = await this.tryBrowserMode(question, citations, threadId, log, slots);
+      } else if (threadId) {
+        await writeConsentState(threadId, { type: 'web_after_rag', pending: question });
+      }
     }
 
     return { 
@@ -97,7 +110,7 @@ export class PolicyAgent {
       citations, 
       needsWebSearch: assessment.needsWebSearch,
       assessmentReason: assessment.reason,
-      wantReceipts,
+      wantReceipts: userRequestsReceipts,
       receipts
     };
   }
@@ -333,8 +346,8 @@ export class PolicyAgent {
       const { savePolicyReceipt } = await import('./policy_receipts.js');
       const { searchTravelInfo } = await import('../tools/search.js');
       
-      // Get company name from router slots
-      const companyName = slots?.company || slots?.city; // fallback to city if company not extracted
+      // Get company name from router slots or extract via LLM (reuse existing intent prompt)
+      const companyName = (slots?.company as string | undefined) || await this.extractAirlineName(question).catch(() => undefined) || slots?.city;
       const clauseType = this.inferClauseType(question);
       const receipts: Array<{ url: string; quote: string; confidence: number; imgPath?: string }> = [];
       
@@ -345,11 +358,17 @@ export class PolicyAgent {
       if (urlsToTry.length === 0) {
         log?.debug({ question }, 'No citation URLs, searching for official policy pages');
         
-        // Create targeted search query with specific policy terms
-        const policySearchQuery = companyName 
-          ? `${companyName} ${clauseType} fee fare rules tariff conditions site:${companyName.toLowerCase().replace(/\s+/g, '')}.com OR site:${companyName.toLowerCase().replace(/\s+/g, '')}.ru -booking -agent -forum`
-          : `${question} official site policy -booking -agent`;
-        
+        // Build targeted, sanitized search query for policy discovery using existing optimizer
+        const optimized = await optimizeSearchQuery(
+          question,
+          { company: companyName ?? '', clause: clauseType },
+          'policy',
+          log
+        ).catch(() => question);
+        const policySearchQuery = sanitizeSearchQuery(
+          buildPolicySearchQuery(optimized, companyName, clauseType)
+        );
+
         const searchResults = await searchTravelInfo(policySearchQuery, { maxResults: 10 });
         
         if (searchResults.ok && searchResults.results.length > 0) {
@@ -377,7 +396,7 @@ export class PolicyAgent {
               scores: scoredResults.slice(0, 3).map(r => ({ url: r.url, score: r.domainScore.confidence }))
             }, 'Found and scored policy URLs');
           } else {
-            // Fallback to basic filtering
+            // Fallback to basic filtering if brand not extracted
             urlsToTry = searchResults.results
               .filter(r => r.url && this.isOfficialPolicyUrl(r.url))
               .map(r => r.url!)
@@ -441,38 +460,37 @@ export class PolicyAgent {
     }
   }
 
+  // seed URL generation removed to keep process lean
+
   private async extractAirlineName(question: string): Promise<string | undefined> {
     try {
       const tpl = await getPrompt('nlp_intent_detection');
-      const prompt = tpl.replace('{question}', question);
-      
-      const response = await callLLM(prompt, { responseFormat: 'text' });
-      const airlineName = response.trim();
-      
-      // Return airline name if it looks valid (not empty, not generic words)
-      if (airlineName && airlineName.length > 2 && !['none', 'unknown', 'n/a'].includes(airlineName.toLowerCase())) {
-        return airlineName;
-      }
-    } catch (error) {
-      // LLM extraction failed, continue without airline name
+      const prompt = tpl
+        .replace('{message}', question)
+        .replace('{context}', JSON.stringify({}))
+        ;
+      const raw = await callLLM(prompt, { responseFormat: 'json' });
+      const parsed = JSON.parse(raw);
+      const name = parsed?.slots?.company as string | undefined;
+      if (name && name.trim().length > 1) return name.trim();
+    } catch {
+      // ignore
     }
-    
     return undefined;
   }
 
   private isOfficialPolicyUrl(url: string): boolean {
-    // Lightweight heuristic for official-looking policy URLs (fallback path only)
     const u = url.toLowerCase();
     const host = (() => { try { return new URL(u).hostname; } catch { return u; } })();
     const isGovTld = /\.gov(\.|$)/.test(host) || /(^|\.)gov\.[a-z]{2,6}$/.test(host) || /(^|\.)gouv\.[a-z]{2,6}$/.test(host) || host.endsWith('.gov.uk') || host.endsWith('.europa.eu');
     const embassyLike = host.includes('embassy') || host.includes('consulate') || host.endsWith('usembassy.gov');
-    const brandPolicyLike = u.includes('/policy') || u.includes('/policies') || u.includes('/terms') || u.includes('/contract-of-carriage') || u.includes('/conditions');
+    const brandPolicyLike = u.includes('/policy') || u.includes('/policies') || u.includes('/contract-of-carriage') || u.includes('/conditions') || u.includes('/help') || u.includes('/legal');
+    const loyaltyOrGenericTerms = /(trueblue|loyalty|rewards|points|terms|terms-and-conditions)/.test(u);
     const visaLike = u.includes('visa') || u.includes('entry') || u.includes('immigration');
     const isJunk = u.includes('blog') || u.includes('forum') || u.includes('reddit') || u.includes('wikipedia');
-
     if (isJunk) return false;
+    if (loyaltyOrGenericTerms) return false;
     if (isGovTld || embassyLike) return true;
-    // Otherwise, accept brand official policy-ish pages
     return brandPolicyLike || visaLike;
   }
 
@@ -482,6 +500,32 @@ export class PolicyAgent {
     if (/refund|cancel|money.?back|reimburs/i.test(q)) return 'refund';
     if (/change|modify|reschedul|reboo/i.test(q)) return 'change';
     if (/visa|passport|entry|immigration/i.test(q)) return 'visa';
-    return 'baggage'; // Default
+    return 'baggage';
   }
+}
+
+function buildPolicySearchQuery(
+  question: string,
+  companyName: string | undefined,
+  clause: 'baggage' | 'refund' | 'change' | 'visa'
+): string {
+  const base = sanitizeSearchQuery(question);
+  const brand = (companyName || '').trim().toLowerCase().replace(/\s+/g, '');
+
+  // Clause-specific focus terms
+  const clauseTerms = clause === 'baggage'
+    ? 'baggage carry-on cabin allowance size weight fees'
+    : clause === 'change'
+      ? 'change changes cancellations standby fare rules'
+      : clause === 'refund'
+        ? 'refund cancellation risk-free 24 hour'
+        : 'visa entry requirements';
+
+  // Penalize loyalty/terms in the query to avoid SERP skew
+  const negatives = '-trueblue -loyalty -rewards -privacy -terms -"terms and conditions" -blog -forum';
+
+  if (brand) {
+    return `${companyName} ${clauseTerms} site:${brand}.com OR site:www.${brand}.com ${negatives}`.trim();
+  }
+  return `${base} official policy ${clauseTerms} ${negatives}`.trim();
 }
