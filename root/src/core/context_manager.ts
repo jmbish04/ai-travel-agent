@@ -62,12 +62,14 @@ export const SLOT_CATEGORIES: SlotCategories = {
  * Intent relationship mapping for context preservation
  */
 export const INTENT_RELATIONSHIPS: Record<string, string[]> = {
+  // Minimal allowlist for proven transitions
   weather: ['packing', 'attractions'],
   packing: ['weather', 'attractions'],
   attractions: ['weather', 'packing'],
   flights: ['irrops'],
   irrops: ['flights'],
-  destinations: ['weather', 'packing', 'attractions'],
+  // Other intents do not imply preservation by default
+  destinations: [],
   policy: [],
   web_search: [],
   system: [],
