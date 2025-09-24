@@ -16,7 +16,7 @@ import { DestinationEngine } from '../../core/destination_engine.js';
 import { processIrrops } from '../../core/irrops_engine.js';
 import { PNRSchema, DisruptionEventSchema, UserPreferencesSchema } from '../../schemas/irrops.js';
 import { parsePNRFromText } from '../../tools/pnr_parser.js';
-import { deepResearchPages } from '../../tools/crawlee_research.js';
+import { deepResearchPages, extractPolicyWithCrawlee as extractPolicyPage } from '../../tools/crawlee_research.js';
 import { assessQueryComplexity } from '../../core/complexity.js';
 import * as metaMetrics from '../../metrics/meta.js';
 
@@ -42,48 +42,45 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 
 export const tools: ToolSpec[] = [
   {
-    name: 'policyDiscover',
-    description: 'Find policy details: try RAG, otherwise web search then Playwright crawl of top sources.',
+    name: 'extractPolicyWithCrawlee',
+    description: 'Crawl a specific URL with Crawlee Playwright and extract an official policy clause with receipts.',
     schema: z.object({
-      query: z.string().min(3),
-      corpus: z.enum(['airlines','hotels','visas']).default('airlines')
-    }),
-    spec: { type: 'function', function: { name: 'policyDiscover', description: 'RAG → Web → Playwright policy finder', parameters: obj({ query: str('Policy question (e.g., baggage policy for XYZ)'), corpus: { type: 'string', enum: ['airlines','hotels','visas'] } }, ['query']) } },
+      clause: z.enum(['baggage','refund','change','visa']),
+      airlineName: z.string().min(2).optional(),
+      timeoutMs: z.number().int().min(2000).max(90000).optional(),
+      url: z.string().url().optional(),
+      urls: z.array(z.string().url()).min(1).max(8).optional(),
+    }).refine(v => !!v.url || (Array.isArray(v.urls) && v.urls.length > 0), { message: 'Provide url or urls[]' }),
+    spec: { type: 'function', function: { name: 'extractPolicyWithCrawlee', description: 'Extract official policy clause from one or more URLs using Crawlee + Playwright', parameters: obj({ clause: { type: 'string', enum: ['baggage','refund','change','visa'] }, airlineName: str('Airline/brand name (optional)'), timeoutMs: { type: 'integer', minimum: 2000, maximum: 90000 }, url: str('Single target URL'), urls: { type: 'array', items: { type: 'string' }, description: 'Candidate URLs (on-brand preferred)' } }, ['clause']) } },
     async call(args: unknown) {
-      const input = this.schema.parse(args) as { query: string; corpus: 'airlines'|'hotels'|'visas' };
+      const input = this.schema.parse(args) as { url?: string; urls?: string[]; clause: 'baggage'|'refund'|'change'|'visa'; airlineName?: string; timeoutMs?: number };
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort('timeout'), 20000);
+      const overallTimeout = Math.min(90000, Math.max(2000, input.timeoutMs ?? 30000));
+      const to = setTimeout(() => controller.abort('timeout'), overallTimeout);
       try {
-        // Step 1: Try Vectara RAG first
-        const client = new VectaraClient();
-        let rag: any | undefined;
-        try { rag = await client.query(input.query, { corpus: input.corpus, maxResults: 6 }); } catch {}
-        const ragHasHit = !!rag && ((rag.hits?.length ?? 0) > 0 || (rag.summary && rag.summary.length > 40));
-        if (ragHasHit) {
-          const citation = rag.citations?.[0]?.url || rag.hits?.[0]?.url || 'Vectara';
-          const summary = rag.summary || rag.hits?.[0]?.snippet || 'Policy details available.';
-          return { ok: true, summary, source: citation, raw: rag };
+        const candidates = input.urls && input.urls.length ? input.urls : (input.url ? [input.url] : []);
+        if (candidates.length === 0) throw new Error('no_urls');
+        const start = Date.now();
+        const perPage = Math.max(5000, Math.floor(overallTimeout / Math.min(5, candidates.length)));
+        let best: any | undefined;
+        for (const url of candidates.slice(0, 5)) {
+          try {
+            const rec = await extractPolicyPage({ url, clause: input.clause, airlineName: input.airlineName, timeoutMs: perPage, signal: controller.signal });
+            if (!best || (rec.confidence ?? 0) > (best.confidence ?? 0)) best = rec;
+            if ((rec.confidence ?? 0) >= 0.6 && rec.quote && rec.quote.length > 20) {
+              return { ok: true, summary: `${rec.title}: ${String(rec.quote).slice(0, 180)}${rec.quote.length > 180 ? '…' : ''}`, source: rec.url, receipt: rec };
+            }
+          } catch (e) {
+            // continue to next candidate
+          }
+          // Respect overall timeout budget
+          if (Date.now() - start > overallTimeout - 750) break;
         }
-        // Step 2: Web search to find candidate official pages
-        const q = input.query;
-        const searchOut: any = await policy.execute(() => limiter.schedule(() => searchTravelInfo(q, undefined, false)));
-        if (!searchOut?.ok || !Array.isArray(searchOut.results) || searchOut.results.length === 0) {
-          return { ok: false, reason: 'no_search_results' };
+        if (best) {
+          return { ok: true, summary: `${best.title}: ${String(best.quote || '').slice(0, 180)}${(best.quote || '').length > 180 ? '…' : ''}`, source: best.url, receipt: best };
         }
-        // Choose top URLs; prefer official-looking or .com/.gov domains
-        const urls = searchOut.results
-          .map((r: any) => r.url)
-          .filter((u: string) => typeof u === 'string' && u.startsWith('http'))
-          .slice(0, 6);
-        // Step 3: Playwright crawl those pages
-        const crawl = await deepResearchPages(urls, input.query, { engine: 'playwright', maxPages: 6 });
-        if (crawl.ok && crawl.summary) {
-          return { ok: true, summary: crawl.summary, source: urls[0] || 'web', citations: crawl.results?.slice(0,3)?.map((r: any) => r.url) };
-        }
-        // Fallback to search summary
-        const summary = searchOut.deepSummary || `Found ${searchOut.results.length} policy-related sources.`;
-        return { ok: true, summary, source: searchOut.results?.[0]?.url || 'web' };
-      } finally { clearTimeout(timeout); }
+        return { ok: false, reason: 'no_receipt' };
+      } finally { clearTimeout(to); }
     }
   },
   {
@@ -138,13 +135,17 @@ export const tools: ToolSpec[] = [
     async call(args: unknown) {
       const input = this.schema.parse(args) as { query: string; corpus: 'airlines'|'hotels'|'visas'; maxResults?: number; filter?: string };
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort('timeout'), 9000);
+      const timeout = setTimeout(() => controller.abort('timeout'), 12000);
       try {
         const client = new VectaraClient();
         const out = await client.query(input.query, { corpus: input.corpus, maxResults: input.maxResults, filter: input.filter });
         const summary = out.summary || (out.hits?.[0]?.snippet ? out.hits[0].snippet : '');
-        const citation = out.citations?.[0]?.url || out.hits?.[0]?.url || 'Vectara';
-        return { ok: true, summary, source: citation, raw: out };
+        const citeUrls = [
+          ...(Array.isArray(out.citations) ? out.citations : []).map((c: any) => c?.url).filter((u: any) => typeof u === 'string'),
+          ...(Array.isArray(out.hits) ? out.hits : []).map((h: any) => h?.url).filter((u: any) => typeof u === 'string')
+        ].filter(Boolean);
+        const source = citeUrls[0] || (out.hits?.[0]?.title ? `vectara:doc:${out.hits?.[0]?.title}` : 'vectara');
+        return { ok: true, summary, source, citations: citeUrls.slice(0, 5), raw: out };
       } finally { clearTimeout(timeout); }
     }
   },
@@ -316,6 +317,7 @@ export async function callChatWithTools(args: {
   }, '🔧 CHAT_TOOLS: Starting callChatWithTools');
   
   const controller = new AbortController();
+  const tStart = Date.now();
   const timeout = setTimeout(() => {
     log?.error?.('🔧 CHAT_TOOLS: Timeout reached, aborting');
     controller.abort('meta_timeout');
@@ -355,8 +357,8 @@ export async function callChatWithTools(args: {
         'If the user asks for attractions but the destination is unknown (e.g., says "there"), set missing=["destination"] and avoid calling tools until clarified.',
         // Complexity routing
         'If Complexity.isComplex=true (confidence>=0.6), prefer deepResearch over search for the first call; otherwise prefer search.',
-        // Policy RAG → Web → Playwright
-        'For airline/hotel/visa policy queries: first call vectaraQuery. If summary/hits are insufficient in subsequent turns, plan a call to policyDiscover (web search + Playwright crawl) to retrieve the official policy pages and summarize with citations.',
+        // Policy RAG → Web → Crawlee receipts (AI-first)
+        'For airline/hotel/visa policy queries: plan calls in this order: (1) vectaraQuery with required corpus (airlines|hotels|visas); (2) search with site:<brand-domain> and deep=false; (3) extractPolicyWithCrawlee with { url, clause, airlineName }. Only answer from on-brand receipts.',
         'Be concise; omit empty fields.',
       ].join(' ');
       planMessages.push({ role: 'system', content: PLANNING_SYS_PROMPT });
@@ -458,10 +460,15 @@ export async function callChatWithTools(args: {
         decisionsCount: decisions.length
       }, '🔧 CHAT_TOOLS: Loop iteration start');
       
+      // Allocate dynamic per-step time budget
+      const elapsed = Date.now() - tStart;
+      const remaining = Math.max(0, (args.timeoutMs ?? 20000) - elapsed);
+      const stepTimeoutMs = Math.max(1500, Math.min(15000, remaining - 500));
+
       const res = await chatWithToolsLLM({ 
         messages: msgs, 
         tools: toolSpecs, 
-        timeoutMs: Math.max(1500, (args.timeoutMs ?? 20000) - 500), 
+        timeoutMs: Math.max(3000, stepTimeoutMs), 
         log, 
         signal: controller.signal 
       });
@@ -502,13 +509,9 @@ export async function callChatWithTools(args: {
               log?.error?.({ toolName, error: String(e) }, '🔧 CHAT_TOOLS: Planned call failed');
             }
           }
-          // If we gained facts, synthesize a minimal grounded reply
-          if (facts.length > 0) {
-            const reply = facts.map(f => `• ${f.value}${f.source ? ` (Source: ${f.source})` : ''}`).join('\n');
-            return { result: reply, facts, decisions, citations: Array.from(new Set(citations)).slice(0, 8) };
-          }
+          // Do not prematurely reply; continue to policy fallback below if needed
         }
-        // No plan or no facts; break to fallback
+        // If still here, break and let outer fallback handle minimal response
         break;
       }
 
@@ -570,6 +573,11 @@ export async function callChatWithTools(args: {
                 if (o.ok && o.summary) {
                   facts.push({ key: tool.name, value: String(o.summary), source: o.source });
                   if (o.source) citations.push(String(o.source));
+                  if (Array.isArray(o.citations)) {
+                    for (const c of o.citations) {
+                      if (typeof c === 'string') citations.push(c);
+                    }
+                  }
                   log?.debug?.({ 
                     toolName, 
                     factAdded: true, 

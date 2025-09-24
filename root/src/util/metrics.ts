@@ -92,6 +92,14 @@ let metaTokensOut = 0;
 const metaTurnLatency: { count: number; sum: number; min: number; max: number } = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
 const metaRoutingDecision: Record<string, number> = {};
 
+// Crawler metrics (Crawlee-only consolidation)
+const crawlerEngineUsage: Record<string, number> = {};
+let crawlerPagesCrawled = 0;
+let crawlerPageFailures = 0;
+const crawlerRenderLatency = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+let crawlerBytesDownloaded = 0;
+let crawlerScreenshotBytes = 0;
+
 // Quality correlation tracking - connects confidence with outcomes
 const confidenceOutcomes = new Map<string, {
   high_conf_success: number,
@@ -193,6 +201,13 @@ let counterMetaCitations: CounterT | undefined;
 let histMetaTurnLatencyMs: HistogramT | undefined;
 let counterMetaTokensIn: CounterT | undefined;
 let counterMetaTokensOut: CounterT | undefined;
+// Crawler (Prometheus)
+let counterCrawlerEngineUsage: CounterT | undefined;
+let counterCrawlerPagesCrawled: CounterT | undefined;
+let counterCrawlerPageFailures: CounterT | undefined;
+let histCrawlerRenderMs: HistogramT | undefined;
+let counterCrawlerBytesDownloaded: CounterT | undefined;
+let counterCrawlerScreenshotBytes: CounterT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -358,6 +373,40 @@ async function ensureProm(): Promise<void> {
       help: 'Estimated output tokens produced by meta agent',
       registers: [register],
     }) as CounterT;
+
+    // Crawler metrics
+    counterCrawlerEngineUsage = new Counter({
+      name: 'crawler_engine_usage_total',
+      help: 'Crawler engine usage count',
+      labelNames: ['engine'],
+      registers: [register],
+    }) as CounterT;
+    counterCrawlerPagesCrawled = new Counter({
+      name: 'crawler_pages_crawled_total',
+      help: 'Total pages crawled',
+      registers: [register],
+    }) as unknown as CounterT;
+    counterCrawlerPageFailures = new Counter({
+      name: 'crawler_page_failures_total',
+      help: 'Total crawler page failures',
+      registers: [register],
+    }) as unknown as CounterT;
+    histCrawlerRenderMs = new Histogram({
+      name: 'crawler_page_render_time_ms',
+      help: 'Crawler page render time (ms)',
+      buckets: [100, 300, 600, 1000, 2000, 5000, 8000],
+      registers: [register],
+    }) as HistogramT;
+    counterCrawlerBytesDownloaded = new Counter({
+      name: 'crawler_bytes_downloaded_total',
+      help: 'Crawler bytes downloaded (approx)',
+      registers: [register],
+    }) as unknown as CounterT;
+    counterCrawlerScreenshotBytes = new Counter({
+      name: 'crawler_screenshot_bytes_total',
+      help: 'Crawler screenshot bytes (approx)',
+      registers: [register],
+    }) as unknown as CounterT;
   })();
   return initPromise;
 }
@@ -637,6 +686,36 @@ export function observeExternal(labels: Labels, durationMs: number) {
   toolCallsTotal += 1;
 }
 
+/**
+ * Record Crawlee crawler metrics in a unified way.
+ * Use engine labels of 'cheerio' or 'playwright'.
+ */
+export function observeCrawler(
+  engine: 'cheerio' | 'playwright',
+  durationMs: number,
+  ok: boolean,
+  extra?: { bytes?: number; screenshotBytes?: number }
+) {
+  // External-style aggregate for JSON snapshot
+  observeExternal(
+    { target: 'crawler', status: ok ? 'ok' : 'error', domain: engine },
+    durationMs,
+  );
+  // Local counters
+  const key = engine || 'unknown';
+  crawlerEngineUsage[key] = (crawlerEngineUsage[key] ?? 0) + 1;
+  if (ok) crawlerPagesCrawled += 1; else crawlerPageFailures += 1;
+  addLatency(crawlerRenderLatency as any, Math.max(0, Math.floor(durationMs)));
+  if (extra?.bytes) crawlerBytesDownloaded += Math.max(0, Math.floor(extra.bytes));
+  if (extra?.screenshotBytes) crawlerScreenshotBytes += Math.max(0, Math.floor(extra.screenshotBytes));
+  // Prometheus
+  counterCrawlerEngineUsage?.inc({ engine: key });
+  if (ok) counterCrawlerPagesCrawled?.inc(); else counterCrawlerPageFailures?.inc();
+  histCrawlerRenderMs?.observe({ engine: key } as any, Math.max(0, durationMs));
+  for (let i = 0; i < Math.max(0, Math.floor(extra?.bytes || 0)); i += 65536) counterCrawlerBytesDownloaded?.inc();
+  for (let i = 0; i < Math.max(0, Math.floor(extra?.screenshotBytes || 0)); i += 65536) counterCrawlerScreenshotBytes?.inc();
+}
+
 export function updateBreakerMetrics() {
   if (!gaugeBreakerState || !counterBreakerEvents) return;
   
@@ -679,15 +758,8 @@ export function observePolicyBrowser(
   success: boolean = true,
   confidence?: number
 ) {
-  observeExternal(
-    {
-      target: 'policy_browser',
-      status: success ? 'ok' : 'error',
-    },
-    durationMs
-  );
-  
-  // Log confidence for monitoring extraction quality
+  // Backwards-compatible wrapper: forward to observeCrawler
+  observeCrawler(engine, durationMs, success);
   if (confidence !== undefined) {
     console.log(`policy_browser_confidence: ${confidence.toFixed(2)} (${engine})`);
   }

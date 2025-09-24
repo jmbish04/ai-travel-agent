@@ -1,5 +1,9 @@
+import crypto from 'node:crypto';
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
+import { scoreDomainAuthenticity } from '../core/domain_authenticity.js';
+import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt, type DomainScore } from '../schemas/policy.js';
+import { observeCrawler } from '../util/metrics.js';
 
 const DEBUG = process.env.LOG_LEVEL === 'debug';
 
@@ -119,18 +123,22 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
             title,
             content: content.slice(0, 2000)
           });
+          observeCrawler('cheerio', 0, true); // latency not precisely measured per page here
           console.log(`✅ Added to results (${results.length}/${maxPages})`);
         } else {
           console.log(`❌ Content too short, skipping`);
+          observeCrawler('cheerio', 0, false);
         }
       } catch (e) {
         console.warn(`❌ Failed to process ${request.url}:`, e);
         failedUrls.push(request.url);
+        observeCrawler('cheerio', 0, false);
       }
     },
     failedRequestHandler({ request }) {
       console.warn(`Failed to crawl: ${request.url}`);
       failedUrls.push(request.url);
+      observeCrawler('cheerio', 0, false);
     },
   });
 
@@ -175,12 +183,33 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
     navigationTimeoutSecs: 10,
     launchContext: {
       launchOptions: {
-        headless: true,
-        timeout: 10000
+        headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
+        timeout: 10000,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+          '--disable-web-security',
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-ipc-flooding-protection',
+        ],
       }
     },
     async requestHandler({ page, request }) {
       try {
+        // Block heavy resources
+        await page.route('**/*', route => {
+          const type = route.request().resourceType();
+          const block = (process.env.PLAYWRIGHT_BLOCK_RESOURCES || 'image,font,media')
+            .split(',').map(s => s.trim());
+        
+          if (block.includes(type)) return route.abort();
+          return route.continue();
+        });
+        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9', DNT: '1' as any });
         // Wait for main content selectors with timeout
         const contentSelectors = ['main', 'article', '.content', 'body'];
         let content = '';
@@ -232,16 +261,20 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
             title,
             content: content.slice(0, 2000)
           });
+          observeCrawler('playwright', 0, true);
           console.log(`✅ Added to results (${results.length}/${maxPages})`);
         } else {
           console.log(`❌ Content too short, skipping`);
+          observeCrawler('playwright', 0, false);
         }
       } catch (e) {
         console.warn(`❌ Failed to process ${request.url}:`, e);
+        observeCrawler('playwright', 0, false);
       }
     },
     failedRequestHandler({ request }) {
       console.warn(`Failed to crawl: ${request.url}`);
+      observeCrawler('playwright', 0, false);
     },
   });
 
@@ -299,4 +332,179 @@ async function createOverallSummary(results: CrawlResult[], query: string): Prom
   } catch {
     return 'Overall summary unavailable';
   }
+}
+
+// --- Crawlee-only policy extraction (single URL) ---
+const PNG_MAX = 2_000_000;
+async function persistPng(url: string, buf: Buffer): Promise<string> {
+  const dir = process.env.POLICY_RECEIPTS_DIR || 'assets/receipts';
+  const fs = await import('node:fs/promises');
+  const name = `${Date.now()}-${Buffer.from(url).toString('base64').slice(0, 12)}.png`;
+  const p = `${dir}/${name}`;
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(p, buf);
+  return p;
+}
+
+export async function extractPolicyWithCrawlee(params: {
+  url: string;
+  clause: ClauseTypeT;
+  airlineName?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<PolicyReceipt> {
+  const t0 = Date.now();
+  const { url, clause } = params;
+  let title = '';
+  let textContent = '';
+  const engine: 'playwright' = 'playwright';
+  const duration = () => Date.now() - t0;
+  const { PlaywrightCrawler, Configuration } = await import('crawlee');
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const os = await import('os');
+
+  const runStorageDir = path.join(
+    os.tmpdir(),
+    'navan-crawlee',
+    `policy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  await fs.mkdir(runStorageDir, { recursive: true });
+
+  const configuration = new Configuration({ storageDir: runStorageDir, persistStorage: false } as any);
+
+  let ok = false;
+  let screenshotBytes = 0;
+  let screenshotPath: string | undefined;
+  const crawler = new PlaywrightCrawler({
+    maxRequestsPerCrawl: 1,
+    requestHandlerTimeoutSecs: Math.ceil((params.timeoutMs ?? 20000) / 1000),
+    navigationTimeoutSecs: 10,
+    launchContext: {
+      launchOptions: {
+        headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
+        timeout: 10000,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+          '--disable-web-security',
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-ipc-flooding-protection',
+        ],
+      },
+    },
+    async requestHandler({ page, request }) {
+      // Block heavy resources
+      await page.route('**/*', route => {
+        const type = route.request().resourceType();
+        const block = (process.env.PLAYWRIGHT_BLOCK_RESOURCES || 'image,font,media')
+          .split(',').map(s => s.trim());
+        if (block.includes(type)) return route.abort();
+        return route.continue();
+      });
+      await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9', DNT: '1' as any });
+
+      // Navigate
+      await page.goto(request.url, { timeout: params.timeoutMs ?? 20000, waitUntil: 'domcontentloaded' });
+
+      // Extract main content first; fallback to body text
+      title = await page.title();
+      const contentSelectors = ['main', 'article', '.content', '[role="main"]'];
+      for (const selector of contentSelectors) {
+        try {
+          await page.waitForSelector(selector, { timeout: 3000 });
+          const el = await page.$(selector);
+          if (el) {
+            const txt = await el.innerText();
+            if (txt && txt.trim().length > 200) { textContent = txt.trim(); break; }
+          }
+        } catch {}
+      }
+      if (!textContent || textContent.length < 100) {
+        const html = await page.content();
+        textContent = html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+
+      // Optional screenshot
+      if (process.env.CRAWLEE_SCREENSHOT === 'true') {
+        try {
+          const buf = await page.screenshot({ type: 'png', timeout: 5000, fullPage: true });
+          screenshotBytes = buf?.byteLength || 0;
+          if (buf && buf.byteLength <= PNG_MAX) {
+            try { screenshotPath = await persistPng(url, buf); } catch {}
+          }
+        } catch {}
+      }
+      ok = textContent.length > 0;
+    },
+    failedRequestHandler({ request }) {
+      ok = false;
+    },
+  });
+
+  try {
+    await crawler.run([url]);
+  } finally {
+    observeCrawler(engine, duration(), ok, { screenshotBytes });
+    await fs.rm(runStorageDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  // Extract clause with LLM
+  const extractorPrompt = await getPrompt('policy_extractor');
+  const extractPrompt = extractorPrompt
+    .replace('{{clauseType}}', clause)
+    .replace('{{sourceText}}', textContent.slice(0, 80000));
+  const extractedText = await callLLM(extractPrompt, { responseFormat: 'text' });
+  const cleaned = extractedText
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .trim();
+
+  // Confidence scoring
+  const confTpl = await getPrompt('policy_confidence');
+  const confPrompt = confTpl.replace('{{clauseType}}', clause).replace('{{extractedText}}', cleaned.slice(0, 800)).replace('{{sourceUrl}}', url);
+  let confidence = 0;
+  try {
+    const raw = await callLLM(confPrompt, { responseFormat: 'text' });
+    const m = raw.match(/(\d+(?:\.\d+)?)/);
+    confidence = Math.max(0, Math.min(1, (m && parseFloat(m[1])) > 1 ? parseFloat(m![1]) / 100 : (m ? parseFloat(m[1]) : 0)));
+  } catch { confidence = 0; }
+
+  // Domain authenticity score
+  let domainAuthenticity: DomainScore | undefined;
+  if (params.airlineName) {
+    try { domainAuthenticity = await scoreDomainAuthenticity(new URL(url).hostname, params.airlineName, undefined, clause); } catch {}
+  }
+
+  const hash = crypto.createHash('sha256').update(`${url}\n${cleaned}`).digest('hex');
+  const receipt: PolicyReceipt = PolicyReceiptSchema.parse({
+    url,
+    title: title || new URL(url).hostname,
+    hash,
+    capturedAt: new Date().toISOString(),
+    quote: cleaned.slice(0, 1000),
+    imgPath: screenshotPath,
+    confidence,
+    source: ((): 'airline'|'hotel'|'visa'|'generic' => {
+      const h = new URL(url).hostname;
+      if (/air|airline|jetblue|delta|united|lufthansa|qatar|emirates|britishairways/.test(h)) return 'airline';
+      if (/hotel|marriott|hyatt|hilton|ihg/.test(h)) return 'hotel';
+      if (/visa|embassy|consulate|gov/.test(h)) return 'visa';
+      return 'generic';
+    })(),
+    domainAuthenticity,
+  });
+  return receipt;
 }

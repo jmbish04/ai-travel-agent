@@ -39,7 +39,7 @@ export async function runMetaAgentTurn(
     slotsCount: Object.keys(ctxSlots).length
   }, '🔧 META_AGENT: Context slots retrieved');
 
-  // Persist last user message for deictic resolution and heuristics
+  // Persist last user message for deictic resolution and context
   try {
     await setLastUserMessage(threadId, message);
   } catch {}
@@ -60,7 +60,7 @@ export async function runMetaAgentTurn(
     user: message,
     context: ctxSlots,
     maxSteps: 8,
-    timeoutMs: 20000,
+    timeoutMs: 35000,
     log,
   });
 

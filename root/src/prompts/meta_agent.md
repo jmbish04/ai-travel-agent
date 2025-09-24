@@ -139,15 +139,17 @@ Flights
 Policy
 - Required: policy topic plus organization (airline, hotel, program).
 - Official‑only with receipts — REQUIRED sequence:
-  1) RAG hint: call vectaraQuery (corpus: airlines|hotels|visas). Treat RAG as
+  1) RAG hint: call vectaraQuery (corpus must be airlines|hotels|visas). Treat RAG as
      a locator only. Do NOT answer from RAG unless the top citation is on the
      brand’s official domain and covers the exact topic.
   2) Web filter: call search with a site‑scoped query that prefers the brand’s
-     official domain (e.g., `site:jetblue.com change fees policy`). Keep deep=false
-     for this discovery step.
-  3) Crawl and extract: call deepResearch to visit the top candidate URLs with a
-     headless browser (Playwright when available). Extract exact clauses and
-     section titles relevant to the question. Save short quotes in receipts.
+     official domain (e.g., `site:jetblue.com change fees policy`). Use deep=false.
+  3) Crawl and extract: prefer batching candidates. If multiple on‑brand URLs
+     are available, either:
+     - schedule several extractPolicyWithCrawlee calls (one per URL), or
+     - pass urls:[...] to extractPolicyWithCrawlee to iterate up to 3–5 pages.
+     Always pass clause from the enum mapping below. Store short quotes in
+     receipts with url + confidence.
   4) Compose using only supported facts; include concise citations to official
      pages (prefer stable policy URLs). If coverage is insufficient, ask for
      consent to expand scope or clarify the brand.
@@ -155,7 +157,19 @@ Policy
   (e.g., JetBlue → jetblue.com). If mismatched (e.g., Delta), discard and re‑query
   with a stricter site filter.
 - Do not use aggregator tools for this flow. Orchestrate with vectaraQuery,
-  search, and deepResearch directly to ensure official‑domain provenance.
+  search, and extractPolicyWithCrawlee directly to ensure official‑domain
+  provenance. Aggregators are forbidden.
+ - Do not use deterministic URL/path heuristics; use AI‑based domain
+   authenticity classification and page‑level relevance checks to decide which
+   pages to cite. If uncertainty remains, ask for consent to expand search or
+   clarify the brand/topic.
+
+Clause mapping (normalize user phrasing → enum)
+- “change fee(s)”, “change/cancel”, “modification” → clause: "change"
+- “refund”, “cancellation refund”, “risk‑free cancellation” → clause: "refund"
+- “baggage”, “carry‑on”, “checked bag” → clause: "baggage"
+- “visa” or visa‑related topics → clause: "visa"
+Use exactly one of these values; do not append words like “fees”.
 Web/System
 - Use web search for simple facts; use deep research for complex discovery or
   when asked to "search better".
@@ -259,9 +273,9 @@ Control Guidance
 - Always use the key "tool" (not "name") and pass a single "args" object.
 - Official policy + receipts requested:
   - Plan calls in this order:
-    1) { tool: "vectaraQuery", args: { query: "<brand> <policy topic>", corpus: "airlines" } }
+    1) { tool: "vectaraQuery", args: { query: "<brand> <policy topic>", corpus: "airlines|hotels|visas" } }
     2) { tool: "search", args: { query: "site:<brand-domain> <policy topic>", deep: false } }
-    3) { tool: "deepResearch", args: { query: "<brand> <policy topic> official" } }
+    3) { tool: "extractPolicyWithCrawlee", args: { url: "<top-brand-url>", clause: "change|refund|baggage|visa", airlineName: "<brand>" } }
   - Do not answer from RAG alone unless the citation domain matches the brand
     and the snippet covers the asked topic.
 - "search better" instruction: on the next turn, upgrade a prior `search` plan
