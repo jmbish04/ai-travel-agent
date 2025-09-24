@@ -150,33 +150,51 @@ export async function callChatWithTools(args: {
     if (args.context && Object.keys(args.context).length > 0) {
       msgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
     }
-    // Optional planning step: request control JSON (no tools)
+    // Optional planning step: request control JSON (best-effort)
     try {
-      const planMsgs: ChatToolMsg[] = [];
-      if (sys) planMsgs.push({ role: 'system', content: sys });
+      const planMessages: ChatToolMsg[] = [];
+      if (sys) planMessages.push({ role: 'system', content: sys });
       for (const a of (args.attachments || [])) {
-        if (a.content?.trim()) planMsgs.push({ role: 'system', content: `Attachment: ${a.name}\n\n${a.content}` });
+        if (a.content?.trim()) {
+          planMessages.push({ role: 'system', content: `Attachment: ${a.name}\n\n${a.content}` });
+        }
       }
       if (args.context && Object.keys(args.context).length > 0) {
-        planMsgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
+        planMessages.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
       }
-      planMsgs.push({ role: 'user', content: `CONTROL_REQUEST: Return STRICT JSON control block only for this user request. No tool calls. User: ${args.user}` });
-      const planRes = await chatWithToolsLLM({ messages: planMsgs, tools: tools.map(t => t.spec), tool_choice: 'none', timeoutMs: Math.max(1200, (args.timeoutMs ?? 20000) - 1000), log, signal: controller.signal });
+      planMessages.push({
+        role: 'user',
+        content: `CONTROL_REQUEST: Return STRICT JSON control block only for this user request. Do NOT call tools. User: ${args.user}`,
+      });
+
+      const planRes = await chatWithToolsLLM({
+        messages: planMessages,
+        tools: [],
+        timeoutMs: Math.min(5000, Math.max(1500, (args.timeoutMs ?? 20000) - 5000)),
+        log,
+      });
+
       const planMsg = planRes.choices?.[0]?.message?.content;
       if (typeof planMsg === 'string' && planMsg.trim()) {
         let plan: any | undefined;
-        try { plan = JSON.parse(planMsg.trim()); } catch { try { plan = JSON.parse((planMsg.match(/\{[\s\S]*\}/)?.[0] || '{}')); } catch {} }
+        try {
+          plan = JSON.parse(planMsg.trim());
+        } catch {
+          const match = planMsg.match(/\{[\s\S]*\}/);
+          if (match) {
+            try { plan = JSON.parse(match[0]); } catch {}
+          }
+        }
         if (plan && typeof plan === 'object') {
           if (typeof plan.confidence === 'number' && typeof plan.route === 'string') {
             setMetaRouteConfidence(plan.confidence, plan.route);
             noteMetaRoutingDecision(plan.route);
           }
-          // Keep the plan visible to the model for subsequent actions
           msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
         }
       }
-    } catch {
-      // planning is best-effort; proceed silently on failure
+    } catch (error) {
+      log?.debug?.({ error: String(error) }, 'meta_plan_failed');
     }
 
     // Add the actual user message for action
