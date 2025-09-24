@@ -8,7 +8,7 @@ import { getAttractions } from '../../tools/attractions.js';
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
-import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens } from '../../util/metrics.js';
+import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision } from '../../util/metrics.js';
 import * as metaMetrics from '../../metrics/meta.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
@@ -150,6 +150,36 @@ export async function callChatWithTools(args: {
     if (args.context && Object.keys(args.context).length > 0) {
       msgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
     }
+    // Optional planning step: request control JSON (no tools)
+    try {
+      const planMsgs: ChatToolMsg[] = [];
+      if (sys) planMsgs.push({ role: 'system', content: sys });
+      for (const a of (args.attachments || [])) {
+        if (a.content?.trim()) planMsgs.push({ role: 'system', content: `Attachment: ${a.name}\n\n${a.content}` });
+      }
+      if (args.context && Object.keys(args.context).length > 0) {
+        planMsgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
+      }
+      planMsgs.push({ role: 'user', content: `CONTROL_REQUEST: Return STRICT JSON control block only for this user request. No tool calls. User: ${args.user}` });
+      const planRes = await chatWithToolsLLM({ messages: planMsgs, tools: tools.map(t => t.spec), tool_choice: 'none', timeoutMs: Math.max(1200, (args.timeoutMs ?? 20000) - 1000), log, signal: controller.signal });
+      const planMsg = planRes.choices?.[0]?.message?.content;
+      if (typeof planMsg === 'string' && planMsg.trim()) {
+        let plan: any | undefined;
+        try { plan = JSON.parse(planMsg.trim()); } catch { try { plan = JSON.parse((planMsg.match(/\{[\s\S]*\}/)?.[0] || '{}')); } catch {} }
+        if (plan && typeof plan === 'object') {
+          if (typeof plan.confidence === 'number' && typeof plan.route === 'string') {
+            setMetaRouteConfidence(plan.confidence, plan.route);
+            noteMetaRoutingDecision(plan.route);
+          }
+          // Keep the plan visible to the model for subsequent actions
+          msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
+        }
+      }
+    } catch {
+      // planning is best-effort; proceed silently on failure
+    }
+
+    // Add the actual user message for action
     msgs.push({ role: 'user', content: args.user });
 
     const toolSpecs = tools.map(t => t.spec);
