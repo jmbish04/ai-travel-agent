@@ -6,7 +6,7 @@ export interface ConsentMessageOptions {
 
 const deepResearchMessage = [
   'This request has several constraints and would benefit from a deeper web research pass.',
-  'I haven\'t searched yet; if you\'re okay with it, reply "yes" and I\'ll gather tailored options.',
+  'If you\'re okay with it, reply "yes" and I\'ll gather tailored options.',
   'Otherwise, feel free to refine the details.'
 ].join(' ');
 

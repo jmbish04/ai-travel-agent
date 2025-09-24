@@ -24,7 +24,9 @@ export const SLOT_CATEGORIES: SlotCategories = {
   userPreferences: [
     'passengers',
     'cabinClass', 
-    'travelerProfile'
+    'travelerProfile',
+    'user_preferences',
+    'preference_theme'
   ],
   
   intentSpecific: [

@@ -529,6 +529,12 @@ async function destinationsNode(
     logger.log?.debug('destinations_engine_import_success');
     
     logger.log?.debug({ mergedSlots }, 'destinations_engine_call_start');
+    // Ensure user preferences are available in slots
+    try {
+      const { ensureUserPreferences } = await import('../core/preferences.js');
+      await ensureUserPreferences(ctx.threadId, ctx.msg, mergedSlots, logger.log);
+    } catch {}
+
     const destinations = await DestinationEngine.getRecommendations(mergedSlots);
     logger.log?.debug({ 
       destinationsCount: destinations.length, 
@@ -541,12 +547,17 @@ async function destinationsNode(
         const capital = d.capital ? d.capital[0] : 'N/A';
         const subregion = d.subregion || d.region;
         const population = d.population ? `${Math.round(d.population / 1000000)}M people` : '';
-        return `${d.name.common}, ${capital} (${subregion}${population ? `, ${population}` : ''})`;
+        // Pass through factual attribute from source data; no heuristics
+        const landlocked = typeof d.landlocked === 'boolean' ? `landlocked: ${d.landlocked}` : '';
+        return `${d.name.common}, ${capital} (${subregion}${population ? `, ${population}` : ''})${landlocked ? ` ${landlocked}` : ''}`;
       }).join('\n');
       
       // Get the summarizer prompt
       const summarizerPrompt = await getPrompt('destination_summarizer');
-      const prompt = summarizerPrompt.replace('{destinations}', destinationList);
+      const preferencesJson = (await getThreadSlots(ctx.threadId)).user_preferences || '{}';
+      const prompt = summarizerPrompt
+        .replace('{destinations}', destinationList)
+        .replace('{preferences}', preferencesJson);
       
       // Debug: log the full prompt being sent to LLM
       logger.log?.debug({ 
