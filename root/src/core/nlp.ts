@@ -1,8 +1,6 @@
 import type pino from 'pino';
 import { z } from 'zod';
-import { getPrompt } from './prompts.js';
-import { callLLM, classifyContent } from './llm.js';
-import { parseCity, parseDate, parseIntent } from './parsers.js';
+import { classifyContent } from './llm.js';
 
 export type Intent = 'weather'|'packing'|'attractions'|'destinations'|'unknown'|'web_search'|'system';
 export type ContentType = 'system'|'travel'|'unrelated'|'budget'|'restaurant'|'flight'|'gibberish'|'emoji_only';
@@ -19,13 +17,7 @@ export type Slots = {
   pending_search_query?: string;
 };
 
-export type RouteResult = {
-  intent: Intent;
-  needExternal: boolean;
-  slots: Slots;
-  confidence: number;   // 0..1
-  missingSlots: string[];
-};
+// Intentionally trimmed: routing handled elsewhere
 
 const ContentClassification = z.object({
   content_type: z.union([
@@ -52,141 +44,4 @@ export const classifyContentLLM = classifyContent;
  * Detect intent and slots for a user message using an LLM-first cascade.
  * Falls back to deterministic parsers when the LLM path is unavailable.
  */
-export async function detectIntentAndSlots(
-  message: string,
-  context: Slots,
-  log: pino.Logger,
-  _opts: { timeoutMs?: number; minConfidence?: number } = {}
-): Promise<RouteResult> {
-  // LLM-first routing
-  const llmResult = await tryLlmRoute(message, log);
-  if (llmResult) return llmResult;
-
-  // Fallback: classical intent + best-effort slot extraction
-  const intentRes = await parseIntent(message, context, log).catch(() => ({
-    success: false,
-    confidence: 0,
-  }));
-
-  const slots = await buildFallbackSlots(message, context, log, intentRes);
-  const inferred: Intent =
-    intentRes?.success && 'data' in intentRes && intentRes.data
-      ? (intentRes.data.intent as Intent)
-      : 'unknown';
-
-  const missing = computeMissingSlots(inferred, slots);
-  return {
-    intent: inferred,
-    needExternal: inferred !== 'unknown' && missing.length === 0,
-    slots,
-    confidence: intentRes?.confidence ?? 0.4,
-    missingSlots: missing,
-  };
-}
-
-async function tryLlmRoute(
-  message: string,
-  log: pino.Logger,
-): Promise<RouteResult | undefined> {
-  try {
-    const prompt = await getPrompt('router_llm');
-    const finalPrompt = prompt.replace('{message}', message);
-    const response = await callLLM(finalPrompt, { responseFormat: 'json', log });
-    const parsed = JSON.parse(response);
-    return {
-      intent: parsed.intent as Intent,
-      needExternal: parsed.needExternal || false,
-      slots: (parsed.slots as Slots) || {},
-      confidence: parsed.confidence || 0.5,
-      missingSlots: parsed.missingSlots || [],
-    };
-  } catch (error) {
-    log.debug({ error: String(error) }, 'LLM routing failed');
-    return undefined;
-  }
-}
-
-async function buildFallbackSlots(
-  message: string,
-  context: Slots,
-  log: pino.Logger,
-  intentRes: unknown,
-): Promise<Slots> {
-  const base: Slots = { ...context };
-  const hasIntentData = Boolean(
-    intentRes && (intentRes as any).success && (intentRes as any).data,
-  );
-  if (hasIntentData) {
-    const data = (intentRes as any).data;
-    return { ...base, ...(data.slots as Slots) };
-  }
-  // best-effort slot extraction
-  const city = await parseCity(message, context, log).catch(() => ({
-    success: false as const,
-  }));
-  if (city?.success && city.data?.normalized) base.city = city.data.normalized;
-
-  const date = await parseDate(message, context, log).catch(() => ({
-    success: false as const,
-  }));
-  if (date?.success && date.data?.dates) {
-    base.dates = date.data.dates;
-    if (date.data.month) base.month = date.data.month;
-  }
-  return base;
-}
-
-function computeMissingSlots(intent: Intent, slots: Slots): string[] {
-  if (
-    intent !== 'destinations' &&
-    intent !== 'packing' &&
-    intent !== 'weather' &&
-    intent !== 'attractions'
-  )
-    return [];
-
-  const missing: string[] = [];
-  if (!slots.city) missing.push('city');
-
-  const needsDates = intent === 'destinations' || intent === 'packing';
-  if (needsDates && !slots.dates && !slots.month) missing.push('dates');
-
-  return missing;
-}
-
-export async function extractCityLLM(message: string, context: Slots, log: pino.Logger): Promise<string | undefined> {
-  const r = await parseCity(message, context, log).catch(() => ({ success: false } as const));
-  return r?.success && r.data?.normalized ? r.data.normalized : undefined;
-}
-
-export async function parseDatesLLM(message: string, context: Slots, log: pino.Logger): Promise<{ dates?: string; month?: string } | undefined> {
-  const r = await parseDate(message, context, log).catch(() => ({ success: false } as const));
-  if (r?.success && r.data) return { dates: r.data.dates, month: r.data.month };
-  return undefined;
-}
-
-export async function clarifierLLM(missing: string[], context: Slots, log: pino.Logger): Promise<string> {
-  try {
-    const tmpl = await getPrompt('nlp_clarifier');
-    const prompt = tmpl
-      .replace('{missing_slots}', JSON.stringify(missing))
-      .replace('{context}', JSON.stringify(context));
-    const raw = await callLLM(prompt, { log });
-    const q = raw.trim();
-    // If response is empty or does not reference missing slots clearly, use deterministic fallback
-    const lower = q.toLowerCase();
-    const slotsCovered = missing.every((m) => lower.includes(m.toLowerCase()));
-    const isProviderError = /technical difficulties|try again|error/i.test(lower);
-    return q.length > 0 && slotsCovered && !isProviderError ? q : fallbackClarifier(missing);
-  } catch {
-    return fallbackClarifier(missing);
-  }
-}
-
-function fallbackClarifier(missing: string[]): string {
-  const miss = new Set(missing.map((m) => m.toLowerCase()));
-  if (miss.has('dates') && miss.has('city')) return 'Could you share the city and month/dates?';
-  if (miss.has('dates')) return 'Which month or travel dates?';
-  if (miss.has('city')) return 'Which city are you asking about?';
-  return 'Could you provide more details about your travel plans?';
-}
+// Removed overlapping intent/slot detection to avoid duplication with router/parsers.

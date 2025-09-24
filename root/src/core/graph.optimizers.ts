@@ -47,11 +47,4 @@ export async function maybeFastWeather(_ctx: RuleContext): Promise<NodeOut | nul
   return null; // Weather fast-path now handled via router and prompts.
 }
 
-export async function routeToDomain(ctx: RuleContext): Promise<NodeOut | null> {
-  const intent = ctx.forced || ctx.C.route?.intent || 'unknown';
-  return { next: intent as any, slots: ctx.C.route?.slots ?? {} };
-}
-
-export function incrementCounter(_name: string, _labels?: Record<string, string>) {
-  // placeholder for metrics integration
-}
+// Removed unused helpers (routeToDomain, incrementCounter) to reduce surface area.

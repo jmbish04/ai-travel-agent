@@ -400,9 +400,8 @@ async function tryRouteViaTransformers(message: string, threadId?: string, log?:
 
     // Get thread context for slot merging
     const ctxSlots = threadId ? await getThreadSlots(threadId) : {};
-    
-    // Extract slots using our parsers
-    const extractedSlots = await extractSlots(message, ctxSlots, log);
+    // Avoid additional LLM calls in transformers path; rely on ctxSlots only
+    const extractedSlots: Record<string, string> = {};
     
     // Enhanced intent classification based on transformers results (NO LLM)
     const intent = await classifyIntentFromTransformers(message, intentResult, entityResult, extractedSlots, log);

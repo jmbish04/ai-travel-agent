@@ -109,7 +109,8 @@ export async function runGraphTurn(
         if (consentState.type === 'deep') {
           return await performDeepResearchNode(consentState.pending, ctx, threadId);
         }
-        return await performWebSearchNode(consentState.pending, ctx, threadId);
+        const web = await performWebSearchUnified(consentState.pending, {}, { log: ctx.log, threadId });
+        return { done: true, reply: web.reply, citations: web.citations };
       }
       observeStage('guard', Date.now() - guardStart, true);
       return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
@@ -300,7 +301,8 @@ export async function runGraphTurn(
           if (currentConsentState.type === 'deep') {
             return await performDeepResearchNode(currentConsentState.pending, ctx, threadId);
           }
-          return await performWebSearchNode(currentConsentState.pending, ctx, threadId);
+          const web = await performWebSearchUnified(currentConsentState.pending, {}, { log: ctx.log, threadId });
+          return { done: true, reply: web.reply, citations: web.citations };
         }
         return { done: true, reply: 'No problem! Is there something else about travel planning I can help with?' };
       }

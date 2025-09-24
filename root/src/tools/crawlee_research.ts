@@ -95,7 +95,7 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
   const configuration = new Configuration({
     storageDir: runStorageDir,
     persistStorage: false,
-  });
+  } as any);
 
   const crawler = new CheerioCrawler({
     maxRequestsPerCrawl: maxPages,
@@ -163,7 +163,7 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
   const configuration = new Configuration({
     storageDir: runStorageDir,
     persistStorage: false,
-  });
+  } as any);
 
   const crawler = new PlaywrightCrawler({
     maxRequestsPerCrawl: maxPages,
