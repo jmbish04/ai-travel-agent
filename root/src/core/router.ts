@@ -249,8 +249,10 @@ async function maybeRouteFlightsFastPath(
   if (!RE.flights.test(message)) return undefined;
   const { isDirect } = isDirectFlightHeuristic(message);
   if (!isDirect) return undefined;
-  // Fast-path intent detection only; defer slot extraction to domain node
-  const result = RouterResult.parse({ intent: 'flights', needExternal: true, slots: ctxSlots, confidence: 0.85 });
+  // Fast-path with minimal slot extraction to avoid stale ctx slots
+  const extracted = await extractFlightSlotsOnce(message, ctxSlots, log);
+  const merged = normalizeSlots(ctxSlots, extracted, 'flights');
+  const result = RouterResult.parse({ intent: 'flights', needExternal: true, slots: merged, confidence: 0.85 });
   incTurn(result.intent);
   try { observeRouterConfidence(result.confidence); } catch {}
   if (threadId) noteTurn(threadId, result.intent);
