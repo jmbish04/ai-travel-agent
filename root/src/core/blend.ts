@@ -40,6 +40,13 @@ export async function handleChat(
   const threadId = getThreadId(input.threadId);
   const trimmed = input.message.trim();
 
+  ctx.log.debug({ 
+    threadId, 
+    messageLength: trimmed.length,
+    message: trimmed.substring(0, 200),
+    isWhy: /^\s*\/why\b/i.test(trimmed)
+  }, '🔧 BLEND: Starting handleChat');
+
   if (!trimmed) {
     return ChatOutput.parse({
       reply: "I'm a travel assistant. Please share a travel question (weather, destinations, packing, attractions, flights, or policies).",
@@ -50,7 +57,7 @@ export async function handleChat(
   const isWhy = /^\s*\/why\b/i.test(trimmed);
 
   if (isWhy) {
-    ctx.log.debug({ threadId }, 'why_command_requested');
+    ctx.log.debug({ threadId }, '🔧 BLEND: Processing /why command');
     const stored = (await getLastReceipts(threadId)) || {};
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
@@ -93,8 +100,25 @@ export async function handleChat(
   await pushMessage(threadId, { role: 'user', content: trimmed });
   await setLastUserMessage(threadId, trimmed);
 
+  ctx.log.debug({ threadId }, '🔧 BLEND: Getting slots before meta agent');
   const slotsBefore = await getThreadSlots(threadId);
+  
+  ctx.log.debug({ 
+    threadId, 
+    slotsBefore,
+    slotsCount: Object.keys(slotsBefore).length
+  }, '🔧 BLEND: Calling meta agent');
+  
   const out = await runMetaAgentTurn(trimmed, threadId, { log: ctx.log });
+  
+  ctx.log.debug({ 
+    threadId,
+    replyLength: out.reply?.length || 0,
+    reply: out.reply?.substring(0, 200),
+    citationsCount: out.citations?.length || 0,
+    citations: out.citations
+  }, '🔧 BLEND: Meta agent completed');
+  
   await pushMessage(threadId, { role: 'assistant', content: out.reply });
   incGeneratedAnswer();
   if (out.citations?.length) {
@@ -106,28 +130,54 @@ export async function handleChat(
   const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
   let finalReply = out.reply;
   if (autoVerify) {
+    ctx.log.debug({ threadId }, '🔧 BLEND: Starting auto-verification');
     try {
       const receiptsData = (await getLastReceipts(threadId)) || {};
       let facts = (receiptsData.facts || []) as Fact[];
       const intent = await getLastIntent(threadId);
+      
+      ctx.log.debug({ 
+        threadId,
+        factsCount: facts.length,
+        intent,
+        receiptsDataKeys: Object.keys(receiptsData)
+      }, '🔧 BLEND: Auto-verify - initial facts check');
+      
       if (facts.length === 0 && ['flights', 'destinations'].includes(intent || '')) {
+        ctx.log.debug({ threadId, intent }, '🔧 BLEND: Auto-verify - waiting for facts to be written');
         for (let i = 0; i < 3; i++) {
           await new Promise((resolve) => setTimeout(resolve, 250));
           const refreshed = await getLastReceipts(threadId);
           if ((refreshed?.facts?.length || 0) > 0) {
             facts = refreshed.facts as Fact[];
+            ctx.log.debug({ 
+              threadId, 
+              attempt: i + 1, 
+              factsCount: facts.length 
+            }, '🔧 BLEND: Auto-verify - facts found after wait');
             break;
           }
         }
       }
       if ((!facts || facts.length === 0) && Array.isArray(out.citations) && out.citations.length > 0) {
         facts = out.citations.map((src, idx) => ({ source: String(src), key: `citation_${idx}`, value: 'source_only' }));
+        ctx.log.debug({ 
+          threadId, 
+          factsFromCitations: facts.length 
+        }, '🔧 BLEND: Auto-verify - created facts from citations');
       }
 
       const msgs = await getContext(threadId);
       const users = msgs.filter((m) => m.role === 'user').map((m) => m.content);
       const latestUser = users[users.length - 1] || trimmed;
       const previousUsers = users.slice(0, -1).slice(-2);
+
+      ctx.log.debug({ 
+        threadId,
+        factsForVerification: facts.length,
+        latestUser: latestUser.substring(0, 100),
+        previousUsersCount: previousUsers.length
+      }, '🔧 BLEND: Auto-verify - calling verifyAnswer');
 
       const audit = await verifyAnswer({
         reply: out.reply,
@@ -139,6 +189,13 @@ export async function handleChat(
         lastIntent: intent,
       });
 
+      ctx.log.debug({ 
+        threadId,
+        verdict: audit.verdict,
+        notesCount: audit.notes?.length || 0,
+        hasRevisedAnswer: !!audit.revisedAnswer
+      }, '🔧 BLEND: Auto-verify - verification completed');
+
       await setLastVerification(threadId, {
         verdict: audit.verdict,
         notes: audit.notes,
@@ -149,12 +206,21 @@ export async function handleChat(
       if (audit.verdict === 'fail' && audit.revisedAnswer) {
         finalReply = audit.revisedAnswer;
         await pushMessage(threadId, { role: 'assistant', content: finalReply });
+        ctx.log.debug({ threadId }, '🔧 BLEND: Auto-verify - using revised answer');
       }
     } catch (error) {
-      ctx.log.warn({ error: String(error), threadId }, 'auto_verify_failed');
+      ctx.log.error({ error: String(error), threadId }, '🔧 BLEND: Auto-verify failed');
     }
   }
 
   observeE2E(Date.now() - t0);
+  
+  ctx.log.debug({ 
+    threadId,
+    finalReplyLength: finalReply?.length || 0,
+    citationsCount: out.citations?.length || 0,
+    totalLatency: Date.now() - t0
+  }, '🔧 BLEND: handleChat completed');
+  
   return ChatOutput.parse({ reply: finalReply, threadId, citations: out.citations });
 }

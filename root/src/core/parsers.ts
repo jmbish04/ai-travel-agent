@@ -103,16 +103,45 @@ export async function detectIntentAndSlots(
   logger?: pino.Logger,
 ): Promise<IntentDetection | null> {
   try {
+    logger?.debug?.({ 
+      text: text.substring(0, 200),
+      contextKeys: Object.keys(context || {}),
+      contextValues: context
+    }, '🔧 PARSERS: Starting intent detection');
+    
     const template = await getPrompt('nlp_intent_detection');
     const prompt = template
       .replace('{message}', escapeForPrompt(text))
       .replace('{context}', stringifyContext(context));
 
+    logger?.debug?.({ 
+      promptLength: prompt.length,
+      promptSample: prompt.substring(0, 300)
+    }, '🔧 PARSERS: Calling LLM for intent detection');
+
     const raw = await callLLM(prompt, { responseFormat: 'json', log: logger });
+    
+    logger?.debug?.({ 
+      rawResponse: raw.substring(0, 500),
+      rawLength: raw.length
+    }, '🔧 PARSERS: LLM response received for intent detection');
+    
     const parsed = IntentDetectionSchema.parse(JSON.parse(raw));
+    
+    logger?.debug?.({ 
+      intent: parsed.intent,
+      confidence: parsed.confidence,
+      needExternal: parsed.needExternal,
+      slotsCount: Object.keys(parsed.slots || {}).length,
+      slots: parsed.slots
+    }, '🔧 PARSERS: Intent detection completed successfully');
+    
     return parsed;
   } catch (error) {
-    logger?.debug?.({ error: String(error) }, 'intent_detection_failed');
+    logger?.error?.({ 
+      error: String(error),
+      text: text.substring(0, 100)
+    }, '🔧 PARSERS: Intent detection failed');
     return null;
   }
 }
@@ -219,51 +248,118 @@ export async function extractSlots(
   context?: Record<string, any>,
   logger?: pino.Logger,
 ): Promise<Record<string, string>> {
+  logger?.debug?.({ 
+    text: text.substring(0, 200),
+    contextKeys: Object.keys(context || {}),
+    contextValues: context
+  }, '🔧 PARSERS: Starting slot extraction');
+  
   const slots: Record<string, string> = {};
   const detection = await detectIntentAndSlots(text, context, logger);
 
   if (detection) {
+    logger?.debug?.({ 
+      detectionSlots: detection.slots,
+      detectionSlotsCount: Object.keys(detection.slots || {}).length
+    }, '🔧 PARSERS: Processing detection slots');
+    
     mergeSlots(slots, Object.entries(detection.slots || {}).reduce<Record<string, string>>((acc, [key, value]) => {
       const normalized = normalizeSlotValue(value);
-      if (normalized) acc[key] = normalized;
+      if (normalized) {
+        acc[key] = normalized;
+        logger?.debug?.({ key, originalValue: value, normalizedValue: normalized }, '🔧 PARSERS: Normalized slot value');
+      }
       return acc;
     }, {}));
+  } else {
+    logger?.debug?.('🔧 PARSERS: No detection result, proceeding with individual parsers');
   }
 
   if (!slots.city) {
+    logger?.debug?.('🔧 PARSERS: No city in slots, attempting city parsing');
     const city = await parseCity(text, context, logger);
     if (city.success && city.data?.normalized) {
       slots.city = city.data.normalized;
+      logger?.debug?.({ city: city.data.normalized, confidence: city.confidence }, '🔧 PARSERS: City extracted successfully');
       if (city.data.country && !slots.country) {
         slots.country = city.data.country;
+        logger?.debug?.({ country: city.data.country }, '🔧 PARSERS: Country extracted from city parsing');
       }
+    } else {
+      logger?.debug?.({ 
+        success: city.success, 
+        confidence: city.confidence,
+        cityData: city.data
+      }, '🔧 PARSERS: City parsing failed or low confidence');
     }
   }
 
   if (!slots.originCity || !slots.destinationCity) {
+    logger?.debug?.({ 
+      hasOrigin: !!slots.originCity, 
+      hasDestination: !!slots.destinationCity 
+    }, '🔧 PARSERS: Missing origin/destination, attempting OD parsing');
+    
     const od = await parseOriginDestination(text, context, logger);
     if (od.success && od.data) {
-      if (od.data.originCity && !slots.originCity) slots.originCity = od.data.originCity;
-      if (od.data.destinationCity && !slots.destinationCity) slots.destinationCity = od.data.destinationCity;
+      if (od.data.originCity && !slots.originCity) {
+        slots.originCity = od.data.originCity;
+        logger?.debug?.({ originCity: od.data.originCity }, '🔧 PARSERS: Origin city extracted');
+      }
+      if (od.data.destinationCity && !slots.destinationCity) {
+        slots.destinationCity = od.data.destinationCity;
+        logger?.debug?.({ destinationCity: od.data.destinationCity }, '🔧 PARSERS: Destination city extracted');
+      }
+    } else {
+      logger?.debug?.({ 
+        success: od.success, 
+        confidence: od.confidence,
+        odData: od.data
+      }, '🔧 PARSERS: Origin/destination parsing failed or low confidence');
     }
   }
 
   if (!slots.dates && !slots.month) {
+    logger?.debug?.({ 
+      hasDates: !!slots.dates, 
+      hasMonth: !!slots.month 
+    }, '🔧 PARSERS: Missing dates/month, attempting date parsing');
+    
     const date = await parseDate(text, context, logger);
     if (date.success && date.data) {
-      if (date.data.dates) slots.dates = date.data.dates;
-      if (date.data.month) slots.month = date.data.month;
+      if (date.data.dates) {
+        slots.dates = date.data.dates;
+        logger?.debug?.({ dates: date.data.dates }, '🔧 PARSERS: Dates extracted');
+      }
+      if (date.data.month) {
+        slots.month = date.data.month;
+        logger?.debug?.({ month: date.data.month }, '🔧 PARSERS: Month extracted');
+      }
+    } else {
+      logger?.debug?.({ 
+        success: date.success, 
+        confidence: date.confidence,
+        dateData: date.data
+      }, '🔧 PARSERS: Date parsing failed or low confidence');
     }
   }
 
   if (slots.passengers && !/^[0-9]+$/.test(slots.passengers)) {
+    logger?.debug?.({ originalPassengers: slots.passengers }, '🔧 PARSERS: Normalizing passengers count');
     const parsedPassengers = parseInt(slots.passengers, 10);
     if (Number.isFinite(parsedPassengers) && parsedPassengers > 0) {
       slots.passengers = String(parsedPassengers);
+      logger?.debug?.({ normalizedPassengers: slots.passengers }, '🔧 PARSERS: Passengers normalized');
     } else {
       delete slots.passengers;
+      logger?.debug?.('🔧 PARSERS: Invalid passengers count, removed from slots');
     }
   }
+
+  logger?.debug?.({ 
+    finalSlots: slots,
+    slotsCount: Object.keys(slots).length
+  }, '🔧 PARSERS: Slot extraction completed');
 
   return slots;
 }

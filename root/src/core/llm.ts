@@ -248,43 +248,105 @@ export async function chatWithToolsLLM(opts: {
   const baseUrl = process.env.LLM_PROVIDER_BASEURL;
   const apiKey = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
   const model = process.env.LLM_MODEL || 'x-ai/grok-4-fast:free';
+  
+  opts.log?.debug?.({ 
+    baseUrl: !!baseUrl,
+    hasApiKey: !!apiKey,
+    model,
+    messagesCount: opts.messages?.length || 0,
+    toolsCount: opts.tools?.length || 0,
+    timeoutMs: opts.timeoutMs,
+    hasSignal: !!opts.signal
+  }, '🔧 LLM: Starting chatWithToolsLLM');
+  
   if (!baseUrl || !apiKey) {
+    opts.log?.error?.({ baseUrl: !!baseUrl, hasApiKey: !!apiKey }, '🔧 LLM: Missing baseUrl or apiKey');
     // Return empty response to trigger local fallback
     return { choices: [{ message: { role: 'assistant', content: '' } }] };
   }
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(new Error('llm_tools_timeout')), Math.max(1000, opts.timeoutMs ?? 15000));
+  const timeoutMs = Math.max(1000, opts.timeoutMs ?? 15000);
+  const t = setTimeout(() => {
+    opts.log?.error?.({ timeoutMs }, '🔧 LLM: Timeout reached, aborting request');
+    controller.abort(new Error('llm_tools_timeout'));
+  }, timeoutMs);
   const signal = opts.signal;
+  
+  const requestBody = {
+    model,
+    messages: opts.messages,
+    tools: opts.tools,
+    tool_choice: opts.tool_choice || 'auto',
+    temperature: 0.2,
+    max_tokens: 1200,
+  };
+  
+  opts.log?.debug?.({ 
+    url,
+    model,
+    messagesLength: JSON.stringify(opts.messages).length,
+    toolsLength: JSON.stringify(opts.tools).length,
+    requestBodySize: JSON.stringify(requestBody).length
+  }, '🔧 LLM: Making request to LLM API');
+  
   try {
+    const requestStart = Date.now();
     const res = await undiciFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: opts.messages,
-        tools: opts.tools,
-        tool_choice: opts.tool_choice || 'auto',
-        temperature: 0.2,
-        max_tokens: 1200,
-      }),
+      body: JSON.stringify(requestBody),
       signal: signal ?? controller.signal,
     });
+    const requestLatency = Date.now() - requestStart;
     clearTimeout(t);
+    
+    opts.log?.debug?.({ 
+      status: res.status,
+      ok: res.ok,
+      requestLatency,
+      hasResponse: !!res
+    }, '🔧 LLM: Received response from LLM API');
+    
     if (!res.ok) {
       const errorText = await res.text();
-      opts.log?.debug?.(`❌ chatWithToolsLLM failed: ${res.status} - ${errorText.substring(0, 200)}`);
-      // empty message to enable fallback
-      return { choices: [{ message: { role: 'assistant', content: '' } }] };
+      opts.log?.error?.({ 
+        status: res.status,
+        errorText: errorText.substring(0, 500),
+        requestLatency
+      }, '🔧 LLM: chatWithToolsLLM failed with non-OK status');
+      // Return explicit error envelope so callers can branch correctly
+      return { error: { status: res.status, body: errorText }, choices: [] };
     }
     const data = await res.json();
+    
+    opts.log?.debug?.({ 
+      choicesCount: data.choices?.length || 0,
+      hasMessage: !!data.choices?.[0]?.message,
+      messageContent: data.choices?.[0]?.message?.content?.substring(0, 200),
+      hasToolCalls: !!data.choices?.[0]?.message?.tool_calls,
+      toolCallsCount: data.choices?.[0]?.message?.tool_calls?.length || 0,
+      requestLatency
+    }, '🔧 LLM: Successfully parsed LLM response');
+    
     return data;
   } catch (e) {
-    opts.log?.debug?.(`❌ chatWithToolsLLM error: ${String(e)}`);
-    return { choices: [{ message: { role: 'assistant', content: '' } }] };
+    const isAbortError = e instanceof Error && (e.name === 'AbortError' || e.message.includes('abort'));
+    const isTimeoutError = e instanceof Error && e.message.includes('timeout');
+    
+    opts.log?.error?.({ 
+      error: String(e),
+      errorName: e instanceof Error ? e.name : 'unknown',
+      isAbortError,
+      isTimeoutError,
+      timeoutMs
+    }, '🔧 LLM: chatWithToolsLLM error occurred');
+    
+    // Return explicit error envelope instead of empty content
+    return { error: { message: String(e) }, choices: [] };
   } finally {
     clearTimeout(t);
   }
