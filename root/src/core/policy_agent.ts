@@ -92,11 +92,10 @@ export class PolicyAgent {
     // Interpret user phrasing as an explicit receipts request (graph guard may miss).
     const userRequestsReceipts = wantReceipts || /\bofficial policy\b|\breceipts?\b/i.test(question);
 
-    // Try browser mode if receipts are requested OR quality is low.
-    // AI-first: proceed directly to Playwright receipts to avoid unnecessary consent round-trips
-    // for clause-specific official policy lookups.
+    // Try browser mode only if receipts are explicitly requested.
+    // Otherwise, let the graph handle regular web search (e.g., visa/government info).
     let receipts: Array<{ url: string; quote: string; confidence: number; imgPath?: string }> | undefined;
-    if (userRequestsReceipts || (assessment.needsWebSearch || avgScore < 0.7)) {
+    if (userRequestsReceipts) {
       const mustAsk = (process.env.POLICY_BROWSER_REQUIRE_CONSENT ?? 'false').toLowerCase() === 'true';
       if (!mustAsk) {
         receipts = await this.tryBrowserMode(question, citations, threadId, log, slots);
