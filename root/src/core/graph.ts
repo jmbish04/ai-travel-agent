@@ -35,16 +35,7 @@ import {
 import { createDecision } from './receipts.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
 import { getPrompt } from './prompts.js';
-import { detectLanguage } from './transformers-detector.js';
-import { extractEntitiesEnhanced } from './ner-enhanced.js';
-import { searchTravelInfo, getSearchCitation } from '../tools/search.js';
-import { summarizeSearch } from './searchSummarizer.js';
-import type { SearchResult } from '../tools/search.js';
-import {
-  buildConstraintGraph,
-  getCombinationKey,
-  ConstraintType,
-} from './constraintGraph.js';
+import { getSearchCitation } from '../tools/search.js';
 import { classifyConsentResponse } from './consent.js';
 import { getConsentMessage } from './consent_text.js';
 import { parseCity } from './parsers.js';
@@ -74,15 +65,7 @@ function sanitizeSlotsView(all: Record<string, string>): Record<string, string> 
   );
 }
 
-function sanitizeSearchQuery(input: string): string {
-  const stripped = input
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/(?:system:|assistant:|user:)\s*/gi, '')
-    .replace(/[<>]/g, '')
-    .trim();
-  return stripped.slice(0, 512);
-}
+import { performWebSearchUnified, sanitizeSearchQuery } from './search_service.js';
 
 /**
  * Main graph execution with G-E-R-A pattern
@@ -491,20 +474,7 @@ async function weatherNode(
   }
   
   // Fallback slot extraction if month/dates not already extracted
-  let finalSlots = mergedSlots;
-  if (!mergedSlots.month && !mergedSlots.dates) {
-    try {
-      const { extractSlots } = await import('./parsers.js');
-      const lastMessage = await getLastUserMessage(ctx.threadId);
-      if (lastMessage) {
-        const extractedSlots = await extractSlots(lastMessage, mergedSlots, logger.log);
-        finalSlots = { ...mergedSlots, ...extractedSlots };
-        console.log(`🌍 WEATHER: Extracted additional slots:`, extractedSlots);
-      }
-    } catch (error) {
-      logger.log?.debug({ error: String(error) }, 'weather_slot_extraction_failed');
-    }
-  }
+  const finalSlots = mergedSlots;
   
   try {
     const { getWeather } = await import('../tools/weather.js');
@@ -1106,11 +1076,9 @@ async function webSearchNode(
   slots: Record<string, string>,
   logger: { log: Logger; onStatus?: (status: string) => void }
 ): Promise<NodeOut> {
-  // Always optimize the current message for web search, don't reuse old search_query
-  const searchQuery = sanitizeSearchQuery(ctx.msg);
-  const optimizedQuery = await optimizeSearchQuery(searchQuery, slots, 'web_search', logger.log);
-  
-  return await performWebSearchNode(optimizedQuery, logger, ctx.threadId);
+  // Always use unified search pipeline for consistent receipts and citations
+  const { reply, citations } = await performWebSearchUnified(ctx.msg, slots, { log: logger.log, threadId: ctx.threadId });
+  return { done: true, reply, citations };
 }
 
 async function unknownNode(
@@ -1135,74 +1103,7 @@ async function unknownNode(
 
 // === SEARCH NODES ===
 
-async function performWebSearchNode(
-  query: string,
-  ctx: { log: Logger },
-  threadId: string,
-): Promise<NodeOut> {
-  ctx.log.debug({ query }, 'performing_web_search_node');
-  try { const { incFallback } = await import('../util/metrics.js'); incFallback('web'); } catch {}
-  
-  // Store the search query for potential upgrade requests
-  await updateThreadSlots(threadId, { last_search_query: query }, []);
-  
-  const searchResult = await searchTravelInfo(query, ctx.log);
-  
-  // Save search confidence for later correlation with verify outcomes
-  if (searchResult.confidence !== undefined) {
-    await setLastSearchConfidence(threadId, searchResult.confidence);
-  }
-  
-  if (!searchResult.ok) {
-    ctx.log.debug({ reason: searchResult.reason }, 'web_search_failed');
-    return {
-      done: true,
-      reply: 'I\'m unable to search the web right now. Could you ask me something about weather, destinations, packing, or attractions instead?',
-    };
-  }
-  
-  if (searchResult.results.length === 0) {
-    return {
-      done: true,
-      reply: 'I couldn\'t find relevant information for your search. Could you try rephrasing your question or ask me about weather, destinations, packing, or attractions?',
-    };
-  }
-  
-  // Use unified summarizer (LLM optional based on count)
-  const useLLM = process.env.SEARCH_SUMMARY !== 'off' && searchResult.results.length >= 3;
-  const { reply, citations } = await summarizeSearch(searchResult.results, query, useLLM, { log: ctx.log });
-  
-  // Store search receipts
-  if (threadId) {
-    try {
-      const { setLastReceipts } = await import('./slot_memory.js');
-      const { createDecision } = await import('./receipts.js');
-      // Store same number of facts as LLM sees (up to 7) to avoid verification mismatches
-      const facts = searchResult.results.slice(0, 7).map(
-        (result: SearchResult, index: number) => ({
-          source: getSearchCitation(),
-          key: `search_result_${index}`,
-          value: `${result.title}: ${result.description.slice(0, 100)}...`,
-        }),
-      );
-      const decisions = [createDecision(
-        `Performed web search for: "${query}"`,
-        `User query required external web search as it couldn't be answered by travel APIs or internal knowledge`,
-        ['Use travel APIs only', 'Skip search'],
-        0.85
-      )];
-      await setLastReceipts(threadId, facts, decisions, reply);
-    } catch {
-      // ignore receipt storage errors
-    }
-  }
-  
-  return {
-    done: true,
-    reply,
-    citations,
-  };
-}
+// NOTE: performWebSearchNode removed in favor of performWebSearchUnified
 
 async function performDeepResearchNode(
   query: string,
