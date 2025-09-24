@@ -34,6 +34,7 @@
     "dashboard": "open http://localhost:3001",
     "prepublishOnly": "npm run build",
     "test": "jest --runInBand --config jest.config.cjs",
+    "test:coverage": "COVERAGE=true jest --runInBand --config jest.config.cjs",
     "test:transcripts": "RECORD_TRANSCRIPTS=true jest --runInBand --config jest.config.cjs",
     "test:weather": "jest --runInBand --config jest.config.cjs --testNamePattern=\"weather|misspelled|abbreviation\"",
     "test:packing": "jest --runInBand --config jest.config.cjs --testNamePattern=\"packing\"",
