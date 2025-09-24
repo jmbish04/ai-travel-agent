@@ -8,6 +8,8 @@ import { getAttractions } from '../../tools/attractions.js';
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
+import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens } from '../../util/metrics.js';
+import * as metaMetrics from '../../metrics/meta.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
 
@@ -174,8 +176,13 @@ export async function callChatWithTools(args: {
             continue;
           }
           let parsed: unknown;
-          try { parsed = JSON.parse(tc.function.arguments || '{}'); } catch { parsed = {}; }
+          try { parsed = JSON.parse(tc.function.arguments || '{}'); } catch { parsed = {}; incMetaParseFailure(); }
+          const inTok = Math.ceil(JSON.stringify(msgs).length / 4);
+          const t0 = Date.now();
+          incMetaToolCall(tool.name);
           const out = await tool.call(parsed, { signal: controller.signal });
+          observeMetaToolLatency(tool.name, Date.now() - t0);
+          addMetaTokens(inTok, 0);
           try {
             // Best-effort receipts from tool outputs
             const o: any = out;
@@ -194,6 +201,7 @@ export async function callChatWithTools(args: {
 
       // No tool calls; return final content
       const content = typeof message.content === 'string' ? message.content : '';
+      addMetaTokens(0, Math.ceil((content || '').length / 4));
       return { result: content || '', facts, decisions, citations: Array.from(new Set(citations)).slice(0, 8) };
     }
 

@@ -79,6 +79,18 @@ type ExtAgg = {
 };
 const externalAgg = new Map<string, ExtAgg>(); // key = target
 let toolCallsTotal = 0;
+// META aggregates
+const metaToolCalls: Record<string, number> = {};
+const metaToolLatency: Map<string, { count: number; sum: number; min: number; max: number }> = new Map();
+let metaRouteConfidence = 0;
+let metaParseFailures = 0;
+const metaConsentGates: Record<string, number> = {};
+let receiptsWritten = 0;
+let metaCitations = 0;
+let metaTokensIn = 0;
+let metaTokensOut = 0;
+const metaTurnLatency: { count: number; sum: number; min: number; max: number } = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+const metaRoutingDecision: Record<string, number> = {};
 
 // Quality correlation tracking - connects confidence with outcomes
 const confidenceOutcomes = new Map<string, {
@@ -169,6 +181,18 @@ let counterAnswersWithCitations: CounterT | undefined;
 let counterVerifyFail: CounterT | undefined;
 let histE2ESeconds: HistogramT | undefined;
 let counterSessionResolved: CounterT | undefined;
+
+// --- META-AGENT metrics (Prometheus) ---
+let counterMetaToolCalls: CounterT | undefined;
+let histMetaToolLatencyMs: HistogramT | undefined;
+let gaugeMetaRouteConfidence: GaugeT | undefined;
+let counterMetaParseFailures: CounterT | undefined;
+let counterMetaConsentGates: CounterT | undefined;
+let counterReceiptsWritten: CounterT | undefined;
+let counterMetaCitations: CounterT | undefined;
+let histMetaTurnLatencyMs: HistogramT | undefined;
+let counterMetaTokensIn: CounterT | undefined;
+let counterMetaTokensOut: CounterT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -274,6 +298,64 @@ async function ensureProm(): Promise<void> {
       name: 'session_resolved_total',
       help: 'Sessions resolved by mode',
       labelNames: ['mode'],
+      registers: [register],
+    }) as CounterT;
+
+    // META-AGENT specific
+    counterMetaToolCalls = new Counter({
+      name: 'meta_tool_calls_total',
+      help: 'Meta agent tool calls',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    histMetaToolLatencyMs = new Histogram({
+      name: 'meta_tool_latency_ms',
+      help: 'Meta agent tool latency (ms)',
+      labelNames: ['tool'],
+      buckets: [50, 100, 200, 400, 800, 2000, 4000],
+      registers: [register],
+    }) as HistogramT;
+    gaugeMetaRouteConfidence = new Gauge({
+      name: 'meta_route_confidence',
+      help: 'Meta agent routing confidence (0..1)',
+      labelNames: ['intent'],
+      registers: [register],
+    }) as GaugeT;
+    counterMetaParseFailures = new Counter({
+      name: 'meta_parse_failures_total',
+      help: 'Meta agent parse failures (e.g., JSON args)',
+      registers: [register],
+    }) as CounterT;
+    counterMetaConsentGates = new Counter({
+      name: 'meta_consent_gates_total',
+      help: 'Consent gates triggered by type',
+      labelNames: ['type'],
+      registers: [register],
+    }) as CounterT;
+    counterReceiptsWritten = new Counter({
+      name: 'receipts_written_total',
+      help: 'Receipts persisted before verification',
+      registers: [register],
+    }) as CounterT;
+    counterMetaCitations = new Counter({
+      name: 'meta_citations_total',
+      help: 'Citations recorded by meta agent',
+      registers: [register],
+    }) as CounterT;
+    histMetaTurnLatencyMs = new Histogram({
+      name: 'meta_turn_latency_ms',
+      help: 'Meta agent turn latency (ms)',
+      buckets: [100, 300, 600, 1000, 2000, 5000, 8000],
+      registers: [register],
+    }) as HistogramT;
+    counterMetaTokensIn = new Counter({
+      name: 'meta_tokens_in_total',
+      help: 'Estimated input tokens processed by meta agent',
+      registers: [register],
+    }) as CounterT;
+    counterMetaTokensOut = new Counter({
+      name: 'meta_tokens_out_total',
+      help: 'Estimated output tokens produced by meta agent',
       registers: [register],
     }) as CounterT;
   })();
@@ -403,6 +485,68 @@ export function observeE2E(durationMs: number) {
   }
   histE2ESeconds?.observe({}, durationMs / 1000);
   void pushIngest('e2e_latency_ms', {}, durationMs);
+}
+
+// --- META-AGENT public helpers ---
+export function incMetaToolCall(tool: string) {
+  const key = tool || 'unknown';
+  metaToolCalls[key] = (metaToolCalls[key] ?? 0) + 1;
+  toolCallsTotal += 1; // contribute to overall tool call count
+  counterMetaToolCalls?.inc({ tool: key });
+}
+
+export function observeMetaToolLatency(tool: string, ms: number) {
+  const key = tool || 'unknown';
+  const agg = metaToolLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+  addLatency(agg as any, Math.max(0, Math.floor(ms)));
+  metaToolLatency.set(key, agg);
+  histMetaToolLatencyMs?.observe({ tool: key }, Math.max(0, ms));
+}
+
+export function setMetaRouteConfidence(v: number, intent?: string) {
+  const val = Math.max(0, Math.min(1, isFinite(v) ? v : 0));
+  metaRouteConfidence = val;
+  if (gaugeMetaRouteConfidence) gaugeMetaRouteConfidence.set({ intent: intent || 'unknown' }, val);
+}
+
+export function incMetaParseFailure() {
+  metaParseFailures += 1;
+  counterMetaParseFailures?.inc();
+}
+
+export function incMetaConsentGate(type: 'web' | 'deep' | 'web_after_rag') {
+  const t = type || 'web';
+  metaConsentGates[t] = (metaConsentGates[t] ?? 0) + 1;
+  counterMetaConsentGates?.inc({ type: t });
+}
+
+export function incReceiptsWrittenTotal() {
+  receiptsWritten += 1;
+  counterReceiptsWritten?.inc();
+}
+
+export function addMetaCitationsCount(n: number) {
+  const v = Math.max(0, Math.floor(n || 0));
+  metaCitations += v;
+  for (let i = 0; i < v; i++) counterMetaCitations?.inc();
+}
+
+export function addMetaTokens(inTok: number, outTok: number) {
+  const i = Math.max(0, Math.floor(inTok || 0));
+  const o = Math.max(0, Math.floor(outTok || 0));
+  metaTokensIn += i; metaTokensOut += o;
+  for (let k = 0; k < i; k++) counterMetaTokensIn?.inc();
+  for (let k = 0; k < o; k++) counterMetaTokensOut?.inc();
+}
+
+export function observeMetaTurnLatency(ms: number) {
+  addLatency(metaTurnLatency as any, Math.max(0, Math.floor(ms)));
+  histMetaTurnLatencyMs?.observe({}, Math.max(0, ms));
+}
+
+export function noteMetaRoutingDecision(intent: string) {
+  const key = intent || 'unknown';
+  metaRoutingDecision[key] = (metaRoutingDecision[key] ?? 0) + 1;
 }
 
 // Session helpers (best-effort, dev-only)
@@ -700,6 +844,18 @@ export function snapshot() {
       })(),
       total_tool_calls: toolCallsTotal,
     },
+    meta: {
+      route_confidence: metaRouteConfidence,
+      tool_calls: metaToolCalls,
+      tool_latency_ms: Object.fromEntries(Array.from(metaToolLatency.entries()).map(([k, a]) => [k, { count: a.count, avg: a.count>0?Number((a.sum/a.count).toFixed(1)):0, max: a.max } ])),
+      parse_failures: metaParseFailures,
+      consent_gates: metaConsentGates,
+      receipts_written_total: receiptsWritten,
+      citations_count: metaCitations,
+      tokens: { in: metaTokensIn, out: metaTokensOut },
+      turn_latency_ms: { count: metaTurnLatency.count, avg: metaTurnLatency.count>0?Number((metaTurnLatency.sum/metaTurnLatency.count).toFixed(1)):0, max: metaTurnLatency.max },
+      routing_decision: metaRoutingDecision,
+    },
     business: {
       total_sessions: totalSessions,
       resolved_sessions: resolvedSessions,
@@ -797,6 +953,57 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'generated_answers_total':
       incGeneratedAnswer();
       break;
+    // Meta-agent events
+    case 'meta_tool_call_total': {
+      const tool = labels?.tool || 'unknown';
+      incMetaToolCall(tool);
+      break;
+    }
+    case 'meta_tool_latency_ms': {
+      const tool = labels?.tool || 'unknown';
+      if (typeof value === 'number') observeMetaToolLatency(tool, value);
+      break;
+    }
+    case 'meta_route_confidence': {
+      const intent = labels?.intent || 'unknown';
+      if (typeof value === 'number') setMetaRouteConfidence(value, intent);
+      break;
+    }
+    case 'meta_parse_failures_total':
+      incMetaParseFailure();
+      break;
+    case 'meta_consent_gates_total': {
+      const type = (labels?.type as any) || 'web';
+      incMetaConsentGate(type);
+      break;
+    }
+    case 'receipts_written_total':
+      incReceiptsWrittenTotal();
+      break;
+    case 'meta_citations_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaCitationsCount(n);
+      break;
+    }
+    case 'meta_tokens_in_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaTokens(n, 0);
+      break;
+    }
+    case 'meta_tokens_out_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaTokens(0, n);
+      break;
+    }
+    case 'meta_turn_latency_ms': {
+      if (typeof value === 'number') observeMetaTurnLatency(value);
+      break;
+    }
+    case 'meta_routing_decision': {
+      const intent = labels?.intent || 'unknown';
+      noteMetaRoutingDecision(intent);
+      break;
+    }
     case 'search_upgrade_request_total':
       // allow external processes to record upgrade requests
       searchUpgradeRequests += typeof value === 'number' ? Math.max(1, Math.floor(value)) : 1;

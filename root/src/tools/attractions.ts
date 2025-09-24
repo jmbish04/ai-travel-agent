@@ -5,7 +5,7 @@ import {
 } from './search.js';
 import { fetchJSON, ExternalFetchError } from '../util/fetch.js';
 import { searchPOIs, getPOIDetail } from './opentripmap.js';
-import { classifyAttractions, type AttractionItem } from '../core/transformers-attractions-classifier.js';
+type AttractionItem = { name: string; description?: string };
 import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
 import { observeExternal } from '../util/metrics.js';
@@ -166,11 +166,10 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
       }
       
       if (attractions.length >= 1) {
-        // Use NLP classification instead of hardcoded regex
-        const classified = await classifyAttractions(attractions, profile);
-        
-        // For default profile, return all attractions; for kid_friendly, return filtered
-        const finalAttractions = profile === 'default' ? attractions : classified;
+        // For kid_friendly, apply lightweight LLM-based classification; otherwise keep all
+        const finalAttractions = profile === 'kid_friendly'
+          ? await filterKidFriendly(attractions)
+          : attractions;
         
         if (finalAttractions.length >= 1) {
           const summary = await summarizeAttractions(finalAttractions.slice(0, limit), city, profile);
@@ -199,8 +198,9 @@ async function tryOpenTripMap(city: string, limit = 7, profile: 'default' | 'kid
           .filter(a => isValidAttraction(a.name));
           
         if (attractions.length > 0) {
-          const classified = await classifyAttractions(attractions, profile);
-          const finalAttractions = profile === 'default' ? attractions : classified;
+          const finalAttractions = profile === 'kid_friendly'
+            ? await filterKidFriendly(attractions)
+            : attractions;
           
           if (finalAttractions.length > 0) {
             const summary = await summarizeAttractions(finalAttractions, city, profile);
@@ -282,4 +282,25 @@ async function summarizeAttractions(
     // Fallback to simple list if LLM fails
     return `Popular attractions in ${city} include: ${attractions.map(a => a.name).join(', ')}`;
   }
+}
+
+/**
+ * Lightweight kid‑friendly filter using LLM prompt; no Transformers.
+ */
+async function filterKidFriendly(items: AttractionItem[]): Promise<AttractionItem[]> {
+  const tpl = await getPrompt('attractions_kid_friendly');
+  const out: AttractionItem[] = [];
+  for (const a of items) {
+    try {
+      const text = `${a.name} ${a.description || ''}`.slice(0, 400);
+      const prompt = tpl.replace('{text}', text);
+      const raw = await callLLM(prompt, { responseFormat: 'json' });
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.isKidFriendly === true) out.push(a);
+    } catch {
+      // best-effort; if classification fails, skip the item for safety
+    }
+  }
+  // If everything was filtered out, fall back to top 3 to avoid empty answer
+  return out.length > 0 ? out : items.slice(0, Math.min(3, items.length));
 }
