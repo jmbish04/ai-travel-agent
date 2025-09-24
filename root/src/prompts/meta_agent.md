@@ -156,13 +156,9 @@ Policy
 - Brand/domain guard: verify that the cited domain matches the requested brand
   (e.g., JetBlue → jetblue.com). If mismatched (e.g., Delta), discard and re‑query
   with a stricter site filter.
-- Do not use aggregator tools for this flow. Orchestrate with vectaraQuery,
-  search, and extractPolicyWithCrawlee directly to ensure official‑domain
-  provenance. Aggregators are forbidden.
- - Do not use deterministic URL/path heuristics; use AI‑based domain
-   authenticity classification and page‑level relevance checks to decide which
-   pages to cite. If uncertainty remains, ask for consent to expand search or
-   clarify the brand/topic.
+- Compose answers only from pages on the brand’s official domain discovered via
+  the steps above. Do not rely on third‑party summaries. If uncertainty
+  remains, ask consent to expand search or clarify the brand/topic.
 
 Clause mapping (normalize user phrasing → enum)
 - “change fee(s)”, “change/cancel”, “modification” → clause: "change"
@@ -193,7 +189,7 @@ vectaraQuery
 - Input: { query: string; corpus: 'airlines'|'hotels'|'visas'; maxResults?: number; filter?: string }.
 - Use for policy/KB answers with citations. Provide concise summary grounded in
   hits; cite the top URL or doc ID.
-NOTE: Do not call any aggregator for policies; follow the Policy sequence above.
+NOTE: Use only the tools listed here in the specified sequence for policy tasks.
 amadeusResolveCity
 - Input: { query: string; countryHint?: string }. Returns { cityCode, cityName,
   confidence }. If confidence <0.6, confirm with the user.
