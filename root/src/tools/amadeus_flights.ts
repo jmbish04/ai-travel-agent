@@ -1,14 +1,12 @@
 import { getAmadeusClient } from '../vendors/amadeus_client.js';
 import { withPolicies } from './_sdk_policies.js';
 import { toStdError } from './errors.js';
-import { callLLM } from '../core/llm.js';
-import { getPrompt } from '../core/prompts.js';
-import { parseDate } from '../core/parsers.js';
+// Removed micro-prompt parsers; date and IATA resolution handled via
+// deterministic logic and Amadeus reference endpoints.
 
 const IATA_REGEX = /^[A-Z]{3}$/;
 
 const iataCache = new Map<string, string>();
-const llmCache = new Map<string, string>();
 
 const MONTHS = new Map<string, number>([
   ['january', 0],
@@ -127,32 +125,6 @@ export interface FlightSearchQuery {
   currencyCode?: string;
 }
 
-async function resolveIataViaLLM(input: string): Promise<string | null> {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  const cacheKey = trimmed.toLowerCase();
-  const cached = llmCache.get(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const template = await getPrompt('iata_code_generator');
-    const prompt = template.replace('{city_or_airport}', trimmed);
-    const raw = await callLLM(prompt, { responseFormat: 'text' });
-    const candidate = raw.trim().toUpperCase();
-    if (candidate === 'XXX') return null;
-    if (IATA_REGEX.test(candidate)) {
-      llmCache.set(cacheKey, candidate);
-      return candidate;
-    }
-  } catch (error) {
-    console.warn('⚠️ LLM IATA fallback failed', {
-      input: trimmed,
-      error: String(error),
-    });
-  }
-  return null;
-}
 
 async function ensureIataCode(
   value: string,
@@ -186,12 +158,6 @@ async function ensureIataCode(
       value: trimmed,
       error: String(error),
     });
-  }
-
-  const fallback = await resolveIataViaLLM(trimmed);
-  if (fallback) {
-    iataCache.set(cacheKey, fallback);
-    return { code: fallback, source: 'llm' };
   }
 
   console.warn('⚠️ Unable to resolve location to IATA code', {
@@ -464,19 +430,8 @@ export async function convertToAmadeusDate(dateStr?: string): Promise<string> {
 
   const candidates = new Set<string>([trimmed]);
 
-  try {
-    const parsed = await parseDate(trimmed);
-    if (parsed.success && parsed.data) {
-      if (parsed.data.start) candidates.add(parsed.data.start);
-      if (parsed.data.dates) candidates.add(parsed.data.dates);
-      if (parsed.data.month) candidates.add(parsed.data.month);
-    }
-  } catch (error) {
-    console.warn('⚠️ LLM date extraction failed', {
-      input: trimmed,
-      error: String(error),
-    });
-  }
+  // No LLM date extraction; rely on relative terms, numeric formats, and
+  // native parsing as a last resort.
 
   for (const candidate of candidates) {
     for (const part of splitCandidates(candidate)) {

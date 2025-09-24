@@ -10,19 +10,23 @@ type CrawlResult = {
   summary?: string;
 };
 
-export async function deepResearchPages(urls: string[], query: string): Promise<{
+export async function deepResearchPages(
+  urls: string[],
+  query: string,
+  opts: { engine?: 'cheerio'|'playwright'; maxPages?: number } = {}
+): Promise<{
   ok: boolean;
   results: CrawlResult[];
   summary?: string;
 }> {
   if (urls.length === 0) return { ok: false, results: [] };
   
-  const engine = process.env.CRAWLEE_ENGINE || 'cheerio';
+  const engine = opts.engine || process.env.CRAWLEE_ENGINE || 'cheerio';
   if (DEBUG) console.debug(`🔍 Crawlee engine: ${engine}`);
   
   try {
     const results: CrawlResult[] = [];
-    const maxPages = Math.min(urls.length, parseInt(process.env.CRAWLEE_MAX_PAGES || '4'));
+    const maxPages = Math.min(urls.length, opts.maxPages || parseInt(process.env.CRAWLEE_MAX_PAGES || '4'));
     
     if (DEBUG) console.debug(`🔍 Crawlee config: CRAWLEE_ENGINE=${engine}, CRAWLEE_MAX_PAGES=${process.env.CRAWLEE_MAX_PAGES}, maxPages=${maxPages}, urls.length=${urls.length}`);
     
