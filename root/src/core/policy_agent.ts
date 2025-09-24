@@ -333,7 +333,7 @@ export class PolicyAgent {
       : 'No policy summary available.';
   }
 
-  private async tryBrowserMode(
+  async tryBrowserMode(
     question: string,
     citations: Array<{ url?: string; title?: string; snippet?: string }>,
     threadId?: string,

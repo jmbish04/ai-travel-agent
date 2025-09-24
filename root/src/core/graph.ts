@@ -970,8 +970,57 @@ async function policyNode(
     // If we have successful receipts, use them even if needsWebSearch is true
     const hasSuccessfulReceipts = receipts && receipts.length > 0 && receipts.some(r => r.confidence >= 0.6);
 
-    // Route to web search if needed (but not if we have good receipts)
+    // Route to receipts via Playwright before any consent when explicitly requested
     if ((noRelevantInfo || needsWebSearch) && !hasSuccessfulReceipts) {
+      if (wantReceipts) {
+        try {
+          const receipts2 = await agent.tryBrowserMode(ctx.msg, citations, ctx.threadId, logger.log, slots);
+          const ok = Array.isArray(receipts2) && receipts2.some(r => r.confidence >= 0.6);
+          if (ok) {
+            // Summarize receipts
+            let receiptsAnswer = answer;
+            try {
+              const summarizer = await getPrompt('policy_summarizer');
+              const ctxText = (receipts2 || [])
+                .map((r, i) => `[${i + 1}] Source: ${r.url}\n${r.quote}`)
+                .join('\n\n');
+              const prompt = summarizer
+                .replace('{question}', ctx.msg)
+                .replace('{context}', ctxText);
+              const out = await callLLM(prompt, { log: logger.log });
+              const cleaned = out?.trim?.() ?? '';
+              if (cleaned.length > 0) receiptsAnswer = cleaned;
+            } catch {}
+
+            const displayCitations2 = (receipts2 || []).map(r => ({ url: r.url, title: new URL(r.url).hostname + ' policy', snippet: r.quote, score: r.confidence }));
+            let formattedAnswer = `${receiptsAnswer}\n\nSources:\n${displayCitations2.map((c, i) => `${i + 1}. ${c.title}${c.url ? ` — ${c.url}` : ''}`).join('\n')}`;
+            const receiptText = (receipts2 || []).map((r, i) => `${i + 1}. ${r.url} (confidence: ${(r.confidence * 100).toFixed(0)}%)\n   "${r.quote.slice(0, 150)}..."`).join('\n');
+            formattedAnswer += `\n\nPolicy Receipts:\n${receiptText}`;
+
+            // Store facts/decisions
+            try {
+              const { setLastReceipts } = await import('./slot_memory.js');
+              const { createDecision } = await import('./receipts.js');
+              const facts = displayCitations2.map((c, i) => ({
+                key: `policy_citation_${i}`,
+                value: c.snippet || c.title || 'Policy information',
+                source: c.title || c.url || 'Policy Browser'
+              }));
+              const decisions = [createDecision(
+                'Retrieved policy receipts via Playwright',
+                'User requested official policy with receipts; performed browser extraction',
+                ['Skip receipts', 'Ask for consent'],
+                0.95
+              )];
+              await setLastReceipts(ctx.threadId, facts, decisions, formattedAnswer);
+            } catch {}
+
+            return { done: true, reply: formattedAnswer, citations: displayCitations2.map(c => c.title || c.url || 'Policy Browser') };
+          }
+        } catch (e) {
+          logger.log?.debug({ error: String(e) }, 'policy_browser_receipts_attempt_failed');
+        }
+      }
       // For visa questions, auto-fallback to web search
       if (/\b(visa|passport|entry requirements?|immigration)\b/i.test(ctx.msg)) {
         const webResult = await webSearchNode(ctx, { ...slots, search_query: ctx.msg }, logger);
