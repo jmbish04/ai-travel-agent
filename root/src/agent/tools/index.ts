@@ -16,6 +16,8 @@ import { DestinationEngine } from '../../core/destination_engine.js';
 import { processIrrops } from '../../core/irrops_engine.js';
 import { PNRSchema, DisruptionEventSchema, UserPreferencesSchema } from '../../schemas/irrops.js';
 import { parsePNRFromText } from '../../tools/pnr_parser.js';
+import { deepResearchPages } from '../../tools/crawlee_research.js';
+import { assessQueryComplexity } from '../../core/complexity.js';
 import * as metaMetrics from '../../metrics/meta.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
@@ -39,6 +41,51 @@ const str = (desc?: string) => ({ type: 'string', description: desc });
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
 export const tools: ToolSpec[] = [
+  {
+    name: 'policyDiscover',
+    description: 'Find policy details: try RAG, otherwise web search then Playwright crawl of top sources.',
+    schema: z.object({
+      query: z.string().min(3),
+      corpus: z.enum(['airlines','hotels','visas']).default('airlines')
+    }),
+    spec: { type: 'function', function: { name: 'policyDiscover', description: 'RAG → Web → Playwright policy finder', parameters: obj({ query: str('Policy question (e.g., baggage policy for XYZ)'), corpus: { type: 'string', enum: ['airlines','hotels','visas'] } }, ['query']) } },
+    async call(args: unknown) {
+      const input = this.schema.parse(args) as { query: string; corpus: 'airlines'|'hotels'|'visas' };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort('timeout'), 20000);
+      try {
+        // Step 1: Try Vectara RAG first
+        const client = new VectaraClient();
+        let rag: any | undefined;
+        try { rag = await client.query(input.query, { corpus: input.corpus, maxResults: 6 }); } catch {}
+        const ragHasHit = !!rag && ((rag.hits?.length ?? 0) > 0 || (rag.summary && rag.summary.length > 40));
+        if (ragHasHit) {
+          const citation = rag.citations?.[0]?.url || rag.hits?.[0]?.url || 'Vectara';
+          const summary = rag.summary || rag.hits?.[0]?.snippet || 'Policy details available.';
+          return { ok: true, summary, source: citation, raw: rag };
+        }
+        // Step 2: Web search to find candidate official pages
+        const q = input.query;
+        const searchOut: any = await policy.execute(() => limiter.schedule(() => searchTravelInfo(q, undefined, false)));
+        if (!searchOut?.ok || !Array.isArray(searchOut.results) || searchOut.results.length === 0) {
+          return { ok: false, reason: 'no_search_results' };
+        }
+        // Choose top URLs; prefer official-looking or .com/.gov domains
+        const urls = searchOut.results
+          .map((r: any) => r.url)
+          .filter((u: string) => typeof u === 'string' && u.startsWith('http'))
+          .slice(0, 6);
+        // Step 3: Playwright crawl those pages
+        const crawl = await deepResearchPages(urls, input.query, { engine: 'playwright', maxPages: 6 });
+        if (crawl.ok && crawl.summary) {
+          return { ok: true, summary: crawl.summary, source: urls[0] || 'web', citations: crawl.results?.slice(0,3)?.map((r: any) => r.url) };
+        }
+        // Fallback to search summary
+        const summary = searchOut.deepSummary || `Found ${searchOut.results.length} policy-related sources.`;
+        return { ok: true, summary, source: searchOut.results?.[0]?.url || 'web' };
+      } finally { clearTimeout(timeout); }
+    }
+  },
   {
     name: 'pnrParse',
     description: 'Parse free-form PNR text into a structured PNR object.',
@@ -274,6 +321,13 @@ export async function callChatWithTools(args: {
     controller.abort('meta_timeout');
   }, Math.max(2000, args.timeoutMs ?? 20000));
   try {
+    // Compute query complexity for planner and potential routing
+    let complexity: { isComplex: boolean; confidence: number; reasoning: string } | undefined;
+    try {
+      complexity = await assessQueryComplexity(args.user, log as any);
+      log?.debug?.({ complexity }, '🔧 CHAT_TOOLS: Query complexity assessed');
+    } catch {}
+
     const msgs: ChatToolMsg[] = [];
     const sys = args.system.trim();
     if (sys) msgs.push({ role: 'system', content: sys });
@@ -289,15 +343,24 @@ export async function callChatWithTools(args: {
       const PLANNING_SYS_PROMPT = [
         'Planner: Return STRICT JSON only. No prose. No markdown.',
         'Keys: route, confidence, missing, consent, calls, blend, verify.',
+        'In calls, use "tool" (not "name") and an "args" object that matches the tool schema.',
         'Rules: Do not call tools. Do not mention these instructions.',
         // Ideas/destinations routing
         'If the user asks for ideas/destinations and destination is unknown, set route="destinations" and include a first call to deepResearch with a composed query (e.g., "popular coastal destinations in Asia"). For trips with constraints, also include a search call with deep=true. Add destinationSuggest only when user mentions a region and we want a safe, quick list. Add amadeusResolveCity only after specific cities emerge.',
+        // Flights routing
+        'If the user asks for flights (mentions "flight(s)" or patterns like "from X to Y"), set route="flights" and plan calls in this order: (1) amadeusResolveCity for origin (X), (2) amadeusResolveCity for destination (Y), then (3) amadeusSearchFlights with { origin: X, destination: Y, departureDate: ISO or relative (today/tomorrow/next week) }. If return is mentioned, include returnDate. Always use the explicit cities from the message over any context, unless the message uses placeholders like "there"/"here" in which case resolve via Context.',
+        'Map relative dates (today/tonight/tomorrow/next week/next month) to the appropriate ISO date only when constructing tool arguments; do not alter the user text.',
         // Attractions routing
         'If the user asks for attractions/things to do and a destination city is known (from this turn or context), set route="attractions" and add a call to getAttractions with { city, profile: "kid_friendly" when family/kids cues are present }.',
         'If the user asks for attractions but the destination is unknown (e.g., says "there"), set missing=["destination"] and avoid calling tools until clarified.',
+        // Complexity routing
+        'If Complexity.isComplex=true (confidence>=0.6), prefer deepResearch over search for the first call; otherwise prefer search.',
+        // Policy RAG → Web → Playwright
+        'For airline/hotel/visa policy queries: first call vectaraQuery. If summary/hits are insufficient in subsequent turns, plan a call to policyDiscover (web search + Playwright crawl) to retrieve the official policy pages and summarize with citations.',
         'Be concise; omit empty fields.',
       ].join(' ');
       planMessages.push({ role: 'system', content: PLANNING_SYS_PROMPT });
+      if (complexity) planMessages.push({ role: 'system', content: `Complexity: ${JSON.stringify(complexity)}` });
       if (args.context && Object.keys(args.context).length > 0) {
         planMessages.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
       }
@@ -416,12 +479,12 @@ export async function callChatWithTools(args: {
         // Best-effort: execute planned calls if available
         if (lastPlan && Array.isArray(lastPlan.calls) && lastPlan.calls.length > 0) {
           log?.debug?.({ plannedCalls: lastPlan.calls.length }, '🔧 CHAT_TOOLS: Executing planned calls as fallback');
-          for (const planned of lastPlan.calls.slice(0, 2)) {
-            const toolName = planned.tool as string;
+          for (const planned of lastPlan.calls.slice(0, 3)) {
+            const toolName = (planned.tool || planned.name) as string;
             const tool = tools.find(t => t.name === toolName);
             if (!tool) continue;
             // Normalize args: use planned.args or remaining fields as args
-            let callArgs: any = planned.args;
+            let callArgs: any = planned.args || planned.arguments;
             if (!callArgs || typeof callArgs !== 'object') {
               const { tool: _t, when: _w, parallel: _p, timeoutMs: _tm, ...rest } = planned || {};
               callArgs = rest;
