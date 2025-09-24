@@ -137,12 +137,20 @@ Flights
    amadeusSearchFlights arguments. If a specific numeric date is mentioned,
    pass it unmodified in ISO form.
 Policy
-- Required: policy topic plus organization (airline, hotel, program). Use
-  vectaraQuery with the appropriate corpus to retrieve policy sections and
-  citations. Cite exact clauses where possible and include confidence in
-  receipts.
+- Required: policy topic plus organization (airline, hotel, program).
+- Retrieval pipeline:
+  1) RAG first: call vectaraQuery with the appropriate corpus; if the top
+     citation is an official domain for the requested brand and it covers the
+     asked topic, you may answer with those citations.
+  2) If the user requests "official policy" or "receipts", or if RAG evidence
+     is thin or from non‑official domains, call search with a query that
+     prefers the brand domain (e.g., "site:jetblue.com change fees policy").
+  3) Then call deepResearch to crawl the top candidate URLs in a headless
+     browser (Playwright when available) and extract exact clauses/sections.
+  4) Answer only with supported facts; include citations to official pages.
 Web/System
-- Use web search or system actions only when other data is insufficient or stale.
+- Use web search for simple facts; use deep research for complex discovery or
+  when asked to "search better".
 
 Tool Catalog & Data Requirements
 weather
@@ -234,13 +242,21 @@ Control Schema (for CONTROL_REQUEST only)
   "missing": ["city|origin|destination|dates|month|profile|…"],
   "consent": { "required": true|false, "type": "web|deep|web_after_rag" },
   "calls": [
-    { "tool": "weather|getCountry|getAttractions|vectaraQuery|amadeusResolveCity|amadeusSearchFlights|search|deepResearch|policyDiscover",
-      "args": { "…": "…" }, "when": "slot condition",
-      "parallel": true|false, "timeoutMs": 3000 }
+    { "tool": "weather|getCountry|getAttractions|vectaraQuery|amadeusResolveCity|amadeusSearchFlights|search|deepResearch",
+      "args": { "…": "…" },
+      "when": "slot condition",
+      "parallel": true|false,
+      "timeoutMs": 3000 }
   ],
   "blend": { "style": "bullet|short|narrative", "cite": true|false },
   "verify": { "mode": "citations|policy|none" }
 }
+
+Control Guidance
+- Use the key "tool" (not "name") and pass a single "args" object.
+- Policy official-only path: if the user requests "official policy" or
+  "receipts", plan vectaraQuery → search (prefer brand domain) → deepResearch.
+- "search better": on the next turn, upgrade prior search to deepResearch.
 
 Rules for calls:
 - Use the key "tool" (not "name"). Include an "args" object matching the tool's
