@@ -5,7 +5,6 @@ import { ChatInputT, ChatOutput } from '../schemas/chat.js';
 import { getThreadId, pushMessage, getContext } from './memory.js';
 import { runGraphTurn } from './graph.js';
 import { callLLM, callLLMBatch, optimizeSearchQuery } from './llm.js';
-import { classifyContentLLM } from './nlp.js';
 import { getPrompt } from './prompts.js';
 import { getWeather } from '../tools/weather.js';
 import { getCountryFacts } from '../tools/country.js';

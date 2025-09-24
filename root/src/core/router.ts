@@ -218,12 +218,12 @@ async function maybeHandleFlightClarification(
   ]);
 
   if (includesAny(message, ['direct', 'search', 'booking'])) {
-    const flightSlots = await extractFlightSlotsOnce(pendingQuery, ctxSlots, log);
-    log?.debug({ choice: 'direct_search', slots: flightSlots }, 'flight_clarification_resolved');
+    // Avoid additional LLM slot extraction here; domain node will clarify if needed
+    log?.debug({ choice: 'direct_search' }, 'flight_clarification_resolved');
     return RouterResult.parse({
       intent: 'flights',
       needExternal: true,
-      slots: { ...ctxSlots, ...flightSlots },
+      slots: { ...ctxSlots },
       confidence: 0.9,
     });
   }

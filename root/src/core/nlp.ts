@@ -1,6 +1,8 @@
 import type pino from 'pino';
 import { z } from 'zod';
 import { classifyContent } from './llm.js';
+import { buildClarifyingQuestion } from './clarifier.js';
+import { parseCity, parseDate } from './parsers.js';
 
 export type Intent = 'weather'|'packing'|'attractions'|'destinations'|'unknown'|'web_search'|'system';
 export type ContentType = 'system'|'travel'|'unrelated'|'budget'|'restaurant'|'flight'|'gibberish'|'emoji_only';
@@ -45,3 +47,32 @@ export const classifyContentLLM = classifyContent;
  * Falls back to deterministic parsers when the LLM path is unavailable.
  */
 // Removed overlapping intent/slot detection to avoid duplication with router/parsers.
+
+// Thin wrappers kept for tests and compatibility. These delegate to the
+// consolidated clarifier and parser modules and do not add new behavior.
+export async function clarifierLLM(
+  missing: string[],
+  context: Slots,
+  log: pino.Logger,
+): Promise<string> {
+  return buildClarifyingQuestion(missing, context as Record<string, string>, log);
+}
+
+export async function extractCityLLM(
+  message: string,
+  context: Slots,
+  log: pino.Logger,
+): Promise<string | undefined> {
+  const r = await parseCity(message, context, log).catch(() => ({ success: false } as const));
+  return r?.success && r.data?.normalized ? r.data.normalized : undefined;
+}
+
+export async function parseDatesLLM(
+  message: string,
+  context: Slots,
+  log: pino.Logger,
+): Promise<{ dates?: string; month?: string } | undefined> {
+  const r = await parseDate(message, context, log).catch(() => ({ success: false } as const));
+  if (r?.success && r.data) return { dates: r.data.dates, month: r.data.month };
+  return undefined;
+}
