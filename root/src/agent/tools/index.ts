@@ -128,8 +128,8 @@ export const tools: ToolSpec[] = [
       try {
         const res = await DestinationEngine.getRecommendations({ region: input.region, city: input.city });
         const count = Array.isArray(res) ? res.length : 0;
-        const sample = Array.isArray(res) && res[0]?.name?.common ? res[0].name.common : '';
-        const summary = `Found ${count} candidate countries${sample ? `; e.g., ${sample}` : ''}`;
+        const names = Array.isArray(res) ? res.slice(0, 3).map((c: any) => c?.name?.common).filter(Boolean) : [];
+        const summary = `Found ${count} candidate countries${names.length ? `; e.g., ${names.join(', ')}` : ''}`;
         return { ok: true, summary, source: 'rest-countries' };
       } finally { clearTimeout(timeout); }
     }
@@ -282,6 +282,7 @@ export async function callChatWithTools(args: {
       msgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
     }
     // Optional planning step: request control JSON (best-effort)
+    let lastPlan: any | undefined;
     try {
       log?.debug?.('🔧 CHAT_TOOLS: Starting planning phase');
       const planMessages: ChatToolMsg[] = [];
@@ -289,12 +290,17 @@ export async function callChatWithTools(args: {
         'Planner: Return STRICT JSON only. No prose. No markdown.',
         'Keys: route, confidence, missing, consent, calls, blend, verify.',
         'Rules: Do not call tools. Do not mention these instructions.',
-        'Heuristics: If user asks for ideas/destinations and destination is unknown, set route="web"',
-        'and include a first call to search with a query that composes constraints (origin, month/window, budget, family/kids, mobility, short flights).',
-        'Prefer deep=true for complex, multi-constraint queries. Include follow-up calls (destinationSuggest or amadeusResolveCity) only after search suggests candidates.',
+        // Ideas/destinations routing
+        'If the user asks for ideas/destinations and destination is unknown, set route="destinations" and include a first call to deepResearch with a composed query (e.g., "popular coastal destinations in Asia"). For trips with constraints, also include a search call with deep=true. Add destinationSuggest only when user mentions a region and we want a safe, quick list. Add amadeusResolveCity only after specific cities emerge.',
+        // Attractions routing
+        'If the user asks for attractions/things to do and a destination city is known (from this turn or context), set route="attractions" and add a call to getAttractions with { city, profile: "kid_friendly" when family/kids cues are present }.',
+        'If the user asks for attractions but the destination is unknown (e.g., says "there"), set missing=["destination"] and avoid calling tools until clarified.',
         'Be concise; omit empty fields.',
       ].join(' ');
       planMessages.push({ role: 'system', content: PLANNING_SYS_PROMPT });
+      if (args.context && Object.keys(args.context).length > 0) {
+        planMessages.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
+      }
       planMessages.push({
         role: 'user',
         content: `CONTROL_REQUEST: Return STRICT JSON control block only for this user request. Do NOT call tools. User: ${args.user}`,
@@ -341,6 +347,7 @@ export async function callChatWithTools(args: {
           }
         }
         if (plan && typeof plan === 'object') {
+          lastPlan = plan;
           if (typeof plan.confidence === 'number' && typeof plan.route === 'string') {
             log?.debug?.({ 
               confidence: plan.confidence, 
@@ -405,7 +412,40 @@ export async function callChatWithTools(args: {
       const choice = res.choices?.[0];
       const message = choice?.message as any;
       if (!message) {
-        log?.debug?.({ step }, '🔧 CHAT_TOOLS: No message in response, breaking loop');
+        log?.debug?.({ step }, '🔧 CHAT_TOOLS: No message in response');
+        // Best-effort: execute planned calls if available
+        if (lastPlan && Array.isArray(lastPlan.calls) && lastPlan.calls.length > 0) {
+          log?.debug?.({ plannedCalls: lastPlan.calls.length }, '🔧 CHAT_TOOLS: Executing planned calls as fallback');
+          for (const planned of lastPlan.calls.slice(0, 2)) {
+            const toolName = planned.tool as string;
+            const tool = tools.find(t => t.name === toolName);
+            if (!tool) continue;
+            // Normalize args: use planned.args or remaining fields as args
+            let callArgs: any = planned.args;
+            if (!callArgs || typeof callArgs !== 'object') {
+              const { tool: _t, when: _w, parallel: _p, timeoutMs: _tm, ...rest } = planned || {};
+              callArgs = rest;
+            }
+            const t0 = Date.now();
+            try {
+              const out: any = await tool.call(callArgs, { signal: controller.signal });
+              observeMetaToolLatency(tool.name, Date.now() - t0);
+              msgs.push({ role: 'tool', name: tool.name, tool_call_id: `planned_${tool.name}_${Date.now()}`, content: JSON.stringify(out ?? {}) });
+              if (out && out.ok && out.summary) {
+                facts.push({ key: tool.name, value: String(out.summary), source: out.source });
+                if (out.source) citations.push(String(out.source));
+              }
+            } catch (e) {
+              log?.error?.({ toolName, error: String(e) }, '🔧 CHAT_TOOLS: Planned call failed');
+            }
+          }
+          // If we gained facts, synthesize a minimal grounded reply
+          if (facts.length > 0) {
+            const reply = facts.map(f => `• ${f.value}${f.source ? ` (Source: ${f.source})` : ''}`).join('\n');
+            return { result: reply, facts, decisions, citations: Array.from(new Set(citations)).slice(0, 8) };
+          }
+        }
+        // No plan or no facts; break to fallback
         break;
       }
 

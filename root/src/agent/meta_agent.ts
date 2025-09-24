@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { getPrompt } from '../core/prompts.js';
-import { setLastReceipts, getThreadSlots } from '../core/slot_memory.js';
+import { setLastReceipts, getThreadSlots, setLastUserMessage, updateThreadSlots, normalizeSlots } from '../core/slot_memory.js';
+import { extractCityWithLLM } from '../core/llm.js';
 import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount } from '../util/metrics.js';
 import { callChatWithTools } from './tools/index.js';
 
@@ -32,12 +33,39 @@ export async function runMetaAgentTurn(
     metaPromptSample: meta.substring(0, 300)
   }, '🔧 META_AGENT: Meta prompt loaded');
   
-  const ctxSlots = await getThreadSlots(threadId);
+  let ctxSlots = await getThreadSlots(threadId);
   log.debug({ 
     threadId,
     ctxSlots,
     slotsCount: Object.keys(ctxSlots).length
   }, '🔧 META_AGENT: Context slots retrieved');
+
+  // Persist last user message for deictic resolution and heuristics
+  try {
+    await setLastUserMessage(threadId, message);
+  } catch {}
+
+  // Lightweight slot inference to improve context continuity (e.g., "there")
+  try {
+    const extracted: Record<string, string | null> = {};
+    if (/\bthere\b|\bhere\b/i.test(message)) {
+      extracted.destinationCity = 'there';
+    }
+    // Best-effort city extraction
+    const maybeCity = await extractCityWithLLM(message, log);
+    if (maybeCity && maybeCity.trim()) {
+      extracted.city = maybeCity.trim();
+    }
+    if (Object.keys(extracted).length > 0) {
+      const merged = normalizeSlots(ctxSlots as Record<string, string>, extracted);
+      await updateThreadSlots(threadId, merged);
+      log.debug({ extracted, merged }, '🔧 META_AGENT: Updated slots from message');
+      // Refresh in-memory slots for this turn's context
+      ctxSlots = await getThreadSlots(threadId);
+    }
+  } catch (e) {
+    log.debug({ error: String(e) }, '🔧 META_AGENT: Slot inference skipped');
+  }
 
   const turnStart = Date.now();
   
@@ -69,25 +97,17 @@ export async function runMetaAgentTurn(
   }, '🔧 META_AGENT: callChatWithTools completed');
 
   try {
-    if (facts?.length || decisions?.length) {
-      log.debug({ 
-        threadId,
-        factsToStore: facts?.length || 0,
-        decisionsToStore: decisions?.length || 0,
-        result: result?.substring(0, 100)
-      }, '🔧 META_AGENT: Storing receipts');
-      
-      await setLastReceipts(threadId, facts || [], decisions || [], result);
-      incReceiptsWrittenTotal();
-      
-      log.debug({ threadId }, '🔧 META_AGENT: Receipts stored successfully');
-    } else {
-      log.debug({ 
-        threadId,
-        factsLength: facts?.length || 0,
-        decisionsLength: decisions?.length || 0
-      }, '🔧 META_AGENT: No facts or decisions to store');
-    }
+    log.debug({ 
+      threadId,
+      factsToStore: facts?.length || 0,
+      decisionsToStore: decisions?.length || 0,
+      result: result?.substring(0, 100)
+    }, '🔧 META_AGENT: Storing receipts');
+
+    await setLastReceipts(threadId, facts || [], decisions || [], result);
+    incReceiptsWrittenTotal();
+
+    log.debug({ threadId }, '🔧 META_AGENT: Receipts stored successfully');
   } catch (error) {
     log.error({ 
       threadId,
