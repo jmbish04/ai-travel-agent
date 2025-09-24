@@ -48,6 +48,7 @@ import { verifyAnswer } from './verify.js';
 import { planBlend, type BlendPlan } from './blend.planner.js';
 import { summarizeSearch } from './searchSummarizer.js';
 import { composeWeatherReply, composePackingReply, composeAttractionsReply } from './composers.js';
+import { getConsentMessage } from './consent_text.js';
 import { incAnswersWithCitations, incFallback, incGeneratedAnswer, incMessages, startSession } from '../util/metrics.js';
 
 function formatSearchResultsFallback(
@@ -367,7 +368,7 @@ export async function handleChat(
           } else if (lastAudit.revisedAnswer) {
             verifiedReply = lastAudit.revisedAnswer;
           } else {
-            verifiedReply = "I couldn't find sufficiently reliable sources to support this. Would you like me to search the web or clarify details?";
+            verifiedReply = getConsentMessage('verify_fail');
           }
         } else if (lastAudit && lastAudit.verdict === 'warn') {
           const warnInline = (process.env.VERIFY_WARN_INLINE ?? 'true') === 'true';
@@ -514,8 +515,13 @@ export async function blendWithFacts(
   }
   
   // Handle missing slots
-  if (plan.missing_slots.length > 0) {
-    const missing = plan.missing_slots[0];
+  let planMissingSlots = plan.missing_slots;
+  if (input.route.intent === 'packing') {
+    planMissingSlots = planMissingSlots.filter((slot) => slot !== 'dates');
+  }
+
+  if (planMissingSlots.length > 0) {
+    const missing = planMissingSlots[0];
     if (missing === 'city') {
       return { reply: "Which city are you interested in?", citations: undefined };
     }
@@ -582,14 +588,14 @@ export async function blendWithFacts(
       return { reply: 'Which city?', citations: undefined };
     }
   }
+  let effectiveWhen = whenHint;
   if (input.route.intent === 'packing') {
     if (!cityHint) {
       return { reply: 'Which city?', citations: undefined };
     }
-    // Ask for dates if no time context and no immediate context
     const hasImmediateContext = hasTemporalContext(input.message);
-    if (!whenHint && !hasImmediateContext && !hasTravelContext(input.message)) {
-      return { reply: 'Which month or travel dates?', citations: undefined };
+    if (!effectiveWhen && !hasImmediateContext && !hasTravelContext(input.message)) {
+      effectiveWhen = 'today';
     }
   }
   if (input.route.intent === 'destinations') {
@@ -617,7 +623,7 @@ export async function blendWithFacts(
       ctx.onStatus?.('Checking weather data...');
       const wx = await getWeather({
         city: cityHint || 'Unknown',
-        datesOrMonth: whenHint || 'today',
+        datesOrMonth: effectiveWhen || 'today',
       });
       if (wx.ok) {
         const source = wx.source === getSearchSource() ? getSearchCitation() : 'Open-Meteo';
@@ -659,11 +665,15 @@ export async function blendWithFacts(
         await loadPackingOnce();
         if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Weather data - maxC: ${wx.maxC}, minC: ${wx.minC}`);
         const band = chooseBandFromTemps(wx.maxC, wx.minC);
-        const items = band ? PACKING[band] : [];
+        let items = band ? PACKING[band] : PACKING.mild;
+        const needsFlexibleNote = !band;
         if (process.env.LOG_LEVEL === 'debug') console.debug(`🌡️ PACKING: Selected band: ${band}, items count: ${items.length}`);
         
         // Use deterministic composer for packing
-        const reply = composePackingReply(cityHint, whenHint, wx.summary, items, source);
+        let reply = composePackingReply(cityHint, effectiveWhen, wx.summary, items, source);
+        if (needsFlexibleNote) {
+          reply += '\n\nI do not have detailed temperatures yet, so here\'s a flexible moderate-weather list.';
+        }
         
         // Store facts for receipts
         if (input.threadId) {

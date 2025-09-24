@@ -78,21 +78,25 @@ export async function deepResearchPages(urls: string[], query: string): Promise<
 }
 
 async function runCheerioCrawler(urls: string[], maxPages: number, results: CrawlResult[]): Promise<void> {
-  // Dynamic import to handle missing dependency gracefully
-  const { CheerioCrawler } = await import('crawlee');
-  
+  const { CheerioCrawler, Configuration } = await import('crawlee');
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const os = await import('os');
+
   const failedUrls: string[] = [];
-  
-  // Clean up storage before starting
-  try {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-    const storageDir = path.join(process.cwd(), 'storage');
-    await fs.rm(storageDir, { recursive: true, force: true });
-  } catch (e) {
-    // Ignore cleanup errors
-  }
-  
+
+  const runStorageDir = path.join(
+    os.tmpdir(),
+    'navan-crawlee',
+    `cheerio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  await fs.mkdir(runStorageDir, { recursive: true });
+
+  const configuration = new Configuration({
+    storageDir: runStorageDir,
+    persistStorage: false,
+  });
+
   const crawler = new CheerioCrawler({
     maxRequestsPerCrawl: maxPages,
     requestHandlerTimeoutSecs: 15,
@@ -126,7 +130,11 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
     },
   });
 
-  await crawler.run(urls.slice(0, maxPages));
+  try {
+    await crawler.run(urls.slice(0, maxPages));
+  } finally {
+    await fs.rm(runStorageDir, { recursive: true, force: true }).catch(() => undefined);
+  }
   
   // Retry failed URLs with Playwright if available
   if (failedUrls.length > 0) {
@@ -140,9 +148,23 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
 }
 
 async function runPlaywrightCrawler(urls: string[], maxPages: number, results: CrawlResult[]): Promise<void> {
-  // Dynamic import to handle missing dependency gracefully
-  const { PlaywrightCrawler } = await import('crawlee');
-  
+  const { PlaywrightCrawler, Configuration } = await import('crawlee');
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const os = await import('os');
+
+  const runStorageDir = path.join(
+    os.tmpdir(),
+    'navan-crawlee',
+    `playwright-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  await fs.mkdir(runStorageDir, { recursive: true });
+
+  const configuration = new Configuration({
+    storageDir: runStorageDir,
+    persistStorage: false,
+  });
+
   const crawler = new PlaywrightCrawler({
     maxRequestsPerCrawl: maxPages,
     requestHandlerTimeoutSecs: 15,
@@ -219,7 +241,11 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
     },
   });
 
-  await crawler.run(urls.slice(0, maxPages));
+  try {
+    await crawler.run(urls.slice(0, maxPages));
+  } finally {
+    await fs.rm(runStorageDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 function extractMainContent($: any): string {

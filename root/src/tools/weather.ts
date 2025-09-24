@@ -6,6 +6,8 @@ import Bottleneck from 'bottleneck';
 import { ForecastWeatherProvider } from './weather/forecast.js';
 import { HistoricalWeatherProvider } from './weather/historical.js';
 import { observeExternal } from '../util/metrics.js';
+import { parseDate } from '../core/parsers.js';
+import { isTemporalReference } from '../core/slot_memory.js';
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
@@ -34,6 +36,21 @@ const GeocodeSchema = z.object({
 // Initialize providers
 const forecastProvider = new ForecastWeatherProvider();
 const historicalProvider = new HistoricalWeatherProvider();
+
+const RELATIVE_TIME_TOKENS = new Set([
+  'today',
+  'tonight',
+  'tomorrow',
+  'now',
+  'currently',
+  'right now',
+  'this moment',
+  'present',
+  'this week',
+  'this weekend',
+  'this evening',
+  'this morning'
+]);
 
 async function getGeocode(city: string): Promise<{ lat: string; lon: string } | null> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}`;
@@ -77,8 +94,14 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
   
   // Use pre-extracted slots from NLP pipeline
   const city = input.city;
-  const month = input.month || input.datesOrMonth;
-  const dates = input.dates;
+  let month = input.month || input.datesOrMonth;
+  let dates = input.dates;
+
+  const monthToken = month?.toLowerCase().trim();
+  if (monthToken && (RELATIVE_TIME_TOKENS.has(monthToken) || isTemporalReference(monthToken))) {
+    dates = month;
+    month = undefined;
+  }
   
   // Determine query type for metrics
   const queryType = dates ? 'forecast' : month ? 'climate' : 'current';
@@ -123,7 +146,7 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
     let weatherResult;
     if (isFutureMonth) {
       // Use historical provider for month-based climate queries
-      const monthNumber = parseMonthName(month);
+      const monthNumber = await resolveMonthNumber(month);
       weatherResult = await historicalProvider.getWeather(geocode.lat, geocode.lon, {
         month: monthNumber,
       });
@@ -177,15 +200,27 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
   }
 }
 
-function parseMonthName(monthStr: string): number | undefined {
-  const monthMap: Record<string, number> = {
-    january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3,
-    april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7,
-    august: 8, aug: 8, september: 9, sep: 9, october: 10, oct: 10,
-    november: 11, nov: 11, december: 12, dec: 12,
-    // Seasons (Northern Hemisphere)
-    winter: 1, spring: 4, summer: 7, fall: 10, autumn: 10
-  };
-  return monthMap[monthStr.toLowerCase()];
+// Month resolver without regex or hardcoded maps.
+// Uses existing LLM date parser and JS Date to infer month number.
+async function resolveMonthNumber(monthStr?: string): Promise<number | undefined> {
+  const text = (monthStr || '').trim();
+  if (!text) return undefined;
+  try {
+    const parsed = await parseDate(text);
+    // Prefer exact normalized date if available
+    const candidate = (parsed.data?.dates || parsed.data?.month || '').trim();
+    if (!candidate) return undefined;
+    // Try to construct a date object safely
+    const tryVals = [candidate, `${candidate} 1`, `${candidate} 1, 2025`];
+    for (const val of tryVals) {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) {
+        const month = d.getMonth() + 1;
+        if (month >= 1 && month <= 12) return month;
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
-

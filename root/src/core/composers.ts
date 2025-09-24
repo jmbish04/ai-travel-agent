@@ -3,11 +3,30 @@ export function composeWeatherReply(city?: string, when?: string, summary?: stri
   return ctx ? `Weather for ${ctx}: ${summary} (${source})` : `Weather: ${summary} (${source})`;
 }
 
-export function composePackingReply(city?: string, when?: string, summary?: string, items: string[] = [], source?: string): string {
-  const head = [city, when].filter(Boolean).join(' in ');
-  const wxLine = summary ? `Weather: ${summary}${source ? ` (${source})` : ''}` : '';
-  const list = items.length ? `\nPack: ${items.join(', ')}` : '';
-  return `${head ? head + ': ' : ''}${wxLine}${list}`.trim();
+export function composePackingReply(
+  city?: string,
+  when?: string,
+  summary?: string,
+  items: string[] = [],
+  source?: string,
+): string {
+  const heading = [city, when].filter(Boolean).join(' — ');
+  const weatherLine = summary ? `Weather: ${summary}${source ? ` (${source})` : ''}` : '';
+
+  const lines: string[] = [];
+  if (heading && weatherLine) {
+    lines.push(`${heading}: ${weatherLine}`);
+  } else if (heading) {
+    lines.push(heading);
+  } else if (weatherLine) {
+    lines.push(weatherLine);
+  }
+
+  if (items.length > 0) {
+    lines.push(`Pack: ${items.join(', ')}`);
+  }
+
+  return lines.join('\n').trim();
 }
 
 export function composeAttractionsReply(city: string, attractions: string[], source = 'OpenTripMap'): string {

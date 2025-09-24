@@ -1,5 +1,8 @@
 Task: Classify intent and extract slots. Return strict JSON only.
 
+Conversation context (slots JSON; may be empty):
+{context}
+
 Objective: Accurately determine user intent and extract relevant information slots to enable appropriate routing and response generation.
 
 Hard requirements:
@@ -21,6 +24,7 @@ Guidelines:
   - `company`: airline or travel provider; prefer full name (e.g., "United Airlines", "Delta Air Lines")
 - `needExternal` is true when the user asks for current facts (weather now/forecast, prices, live events, visa rules, flight searches); false for evergreen advice (packing lists, generic attractions without live data)
 - Set `confidence` in [0,1]; use ≤0.5 if intent is ambiguous
+- Resolve pronouns such as "there", "that week", "them" using the context slots above when possible (e.g., use `destinationCity`, `city`, `last_search_query`). If no context resolves the reference, keep intent but leave slots blank rather than guessing.
 
 Intent Classification Rules:
 - `flights`: ANY flight-related query including "flights", "fly", "book flight", "airline", flight prices, flight schedules, flight booking, travel from X to Y with dates

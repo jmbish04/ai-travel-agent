@@ -10,7 +10,7 @@ import {
   resolveLocationPlaceholder,
   isTemporalReference,
 } from './slot_memory.js';
-import { extractSlots, extractFlightSlotsOnce } from './parsers.js';
+import { extractSlots, extractFlightSlotsOnce, parseCity } from './parsers.js';
 import { transformersEnabled } from '../config/transformers.js';
 import { RE, isDirectFlightHeuristic } from './router.optimizers.js';
 import type pino from 'pino';
@@ -74,6 +74,31 @@ const RESET_SLOT_KEYS = Array.from(new Set([
   ...CONSENT_SLOT_KEYS,
   ...AUX_SLOT_KEYS,
 ]));
+
+const PROMPT_CONTEXT_OMIT_PREFIXES = ['awaiting_', 'pending_'];
+const PROMPT_CONTEXT_BLOCKLIST = new Set([
+  'complexity_reasoning',
+  'complexity_score'
+]);
+
+function formatContextForRouter(slots: Record<string, string>): string {
+  if (!slots || Object.keys(slots).length === 0) return '{}';
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(slots)) {
+    if (!value || !value.trim()) continue;
+    if (PROMPT_CONTEXT_BLOCKLIST.has(key)) continue;
+    if (PROMPT_CONTEXT_OMIT_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    filtered[key] = value.trim();
+  }
+  const entries = Object.entries(filtered)
+    .slice(0, 10); // safeguard prompt length
+  if (entries.length === 0) return '{}';
+  try {
+    return JSON.stringify(Object.fromEntries(entries));
+  } catch {
+    return '{}';
+  }
+}
 
 // AI-first detection functions using existing prompts
 async function isPronounFollowup(message: string, log?: pino.Logger): Promise<boolean> {
@@ -268,37 +293,24 @@ async function clearConsentState(threadId?: string) {
   
   // List of keys to remove - only consent and conflicting travel data
   const keysToRemove = [
-    // Consent states
+    // Consent states only (do not clear travel context here)
     'awaiting_deep_research_consent',
-    'pending_deep_research_query', 
+    'pending_deep_research_query',
     'awaiting_web_search_consent',
     'pending_web_search_query',
     'awaiting_search_consent',
     'pending_search_query',
     'deep_research_consent_needed',
-    
-    // Travel data that can conflict between queries
-    'originCity',
-    'destinationCity', 
-    'city',
-    'departureDate',
-    'returnDate',
-    'dates',
-    'month',
-    'passengers',
-    'search_query', // Clear old search queries to prevent error message persistence
-    'cabinClass',
-    'travelerProfile',
+    // Aux reasoning signals
     'complexity_score',
     'complexity_reasoning',
-    
-    // Flight-specific slots
+    // Flight clarification-only workflow flags
     'flight_clarification_needed',
     'ambiguity_reason',
     'clarification_options',
     'awaiting_flight_clarification',
     'pending_flight_query',
-    'clarification_reasoning'
+    'clarification_reasoning',
   ];
   
   // Remove only the specified keys, preserving receipts and session data
@@ -488,7 +500,11 @@ async function runLlmRouteAndPostProcess(
   ctxSlots: Record<string, string>,
   logger?: { log: pino.Logger },
 ): Promise<RouterResultT> {
-  const prompt = (await getPrompt('router_llm')).replace('{message}', message).replace('{instructions}', '');
+  const promptTemplate = await getPrompt('router_llm');
+  const prompt = promptTemplate
+    .replace('{message}', message)
+    .replace('{context}', formatContextForRouter(ctxSlots))
+    .replace('{instructions}', '');
   logger?.log?.debug({ message, promptLength: prompt.length }, 'router_llm_call_start');
   const raw = await callLLM(prompt, { responseFormat: 'json', log: logger?.log });
   logger?.log?.debug({ rawResponse: raw, message }, 'router_llm_raw_response');
@@ -509,6 +525,42 @@ async function runLlmRouteAndPostProcess(
 
   const normalizedSlots = normalizeSlots(currentSlots, llm.slots, llm.intent);
   let llmNormalized: RouterResultT = { ...llm, slots: normalizedSlots } as RouterResultT;
+
+  // AI-first guard: do not allow LLM to invent a new location when the user
+  // did not explicitly mention any. Use LLM city parser to confirm.
+  try {
+    const priorPrimary = getPrimaryLocation(currentSlots);
+    const cityProbe = await parseCity(message, currentSlots, logger?.log);
+    const hasExplicitCity = Boolean(cityProbe?.success && cityProbe.normalized);
+    if (!hasExplicitCity && !priorPrimary && llmNormalized.slots) {
+      const gated = { ...llmNormalized.slots } as Record<string, string>;
+      for (const key of ['city', 'destinationCity', 'originCity'] as const) {
+        if (!(currentSlots as any)[key] && (llm.slots as any)?.[key]) {
+          delete gated[key];
+        }
+      }
+      llmNormalized = RouterResult.parse({ ...llmNormalized, slots: normalizeSlots(currentSlots, gated, llm.intent) });
+    }
+  } catch (e) {
+    logger?.log?.debug({ error: String(e) }, 'explicit_city_guard_failed');
+  }
+
+  // Flights post-processing
+  // Anchor override: if user explicitly asked about weather, do not route to flights.
+  // Keeps behavior AI-first by respecting user’s intent tokens and avoiding
+  // LLM drift from prior context.
+  if (
+    llmNormalized.intent === 'flights' &&
+    RE.weather.test(message) &&
+    !RE.flights.test(message)
+  ) {
+    llmNormalized = RouterResult.parse({
+      intent: 'weather',
+      needExternal: true,
+      slots: normalizeSlots(currentSlots, llmNormalized.slots || {}, 'weather'),
+      confidence: Math.min(0.9, llmNormalized.confidence),
+    });
+  }
 
   // Flights post-processing
   if (llmNormalized.intent === 'flights') {
@@ -535,6 +587,8 @@ async function runLlmRouteAndPostProcess(
   if (llmNormalized.intent === 'flights' && !RE.dateish.test(message)) {
     logger?.log?.debug({ reason: 'missing_date' }, 'flights_missing_date');
   }
+
+  // (moved earlier, before flight-specific processing)
 
   // Correction pass
   if (llmNormalized.confidence < 0.6 || llmNormalized.intent === 'unknown') {

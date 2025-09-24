@@ -46,6 +46,7 @@ import {
   ConstraintType,
 } from './constraintGraph.js';
 import { classifyConsentResponse } from './consent.js';
+import { getConsentMessage } from './consent_text.js';
 import { parseCity } from './parsers.js';
 
 // Types
@@ -363,8 +364,12 @@ export async function runGraphTurn(
   }
 
   // Update slots and set intent
-  await updateThreadSlots(threadId, slots, [], [], intent);
-  await setLastIntent(threadId, intent as any);
+  if (intent === 'system') {
+    await updateThreadSlots(threadId, slots, [], []);
+  } else {
+    await updateThreadSlots(threadId, slots, [], [], intent);
+    await setLastIntent(threadId, intent as any);
+  }
   
   observeStage('route', Date.now() - routeStart, true, intent);
   
@@ -420,8 +425,6 @@ function checkMissingSlots(intent: string, slots: Record<string, string>, messag
   } else if (needsLocation && !hasLocation) {
     missing.push('location');
   }
-  if (intent === 'packing' && !hasWhen && !hasImmediateContext && !hasSpecialContext) missing.push('dates');
-  
   return missing;
 }
 
@@ -613,9 +616,9 @@ async function destinationsNode(
     } else {
       logger.log?.debug('destinations_engine_returned_empty');
       writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
-      return { 
-        done: true, 
-        reply: `I couldn't find any destinations based on your preferences. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+      return {
+        done: true,
+        reply: getConsentMessage('deep'),
         citations: ['Internal Knowledge Base (Insufficient Results)']
       };
     }
@@ -626,9 +629,9 @@ async function destinationsNode(
       mergedSlots 
     }, 'destinations_tool_failed');
     writeConsentState(ctx.threadId, { type: 'web_after_rag', pending: ctx.msg });
-    return { 
-      done: true, 
-      reply: `I'm sorry, I'm having trouble searching for destinations right now. Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+    return {
+      done: true,
+      reply: getConsentMessage('deep'),
       citations: ['Internal Knowledge Base (Insufficient Results)']
     };
   }
@@ -1012,7 +1015,7 @@ async function policyNode(
       const reason = needsWebSearch ? `Quality assessment: ${assessmentReason}` : 'No relevant information found';
       return { 
         done: true, 
-        reply: `I couldn't find sufficient information about this in our internal knowledge base (${reason}). Would you like me to search the web for current information? Type 'yes' to proceed with web search, or ask me something else.`,
+        reply: getConsentMessage('web_after_rag', { reason }),
         citations: ['Internal Knowledge Base (Insufficient Results)']
       };
     }
@@ -1088,7 +1091,7 @@ async function systemNode(ctx: NodeCtx): Promise<NodeOut> {
   if (consentState.awaiting && consentState.type === 'deep' && consentState.pending) {
     return {
       done: true,
-      reply: 'This looks like a complex travel planning request that would benefit from deeper research. Would you like me to search for comprehensive information to help with your trip planning?'
+      reply: getConsentMessage('deep')
     };
   }
   

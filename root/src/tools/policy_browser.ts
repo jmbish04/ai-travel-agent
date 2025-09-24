@@ -87,11 +87,15 @@ export async function filterResultsByDomainAuthenticity(
     })
   );
 
-  // Composite score: domain authenticity (70%) + page relevance (30%)
+  // Composite score: clause-aware weighting to prefer page relevance for
+  // clause-specific questions (AI-first, reduce reliance on heuristics)
+  const clauseSensitive = new Set(['change', 'refund', 'baggage', 'visa']);
+  const wDomain = clauseSensitive.has(clause) ? 0.5 : 0.7;
+  const wRel = 1 - wDomain;
   const ranked = scoredResults
     .map((r) => ({
       ...r,
-      _composite: (0.7 * r.domainScore.confidence) + (0.3 * (r.relevanceScore ?? 0.4)),
+      _composite: (wDomain * r.domainScore.confidence) + (wRel * (r.relevanceScore ?? 0.4)),
     }))
     .sort((a, b) => b._composite - a._composite)
     .map(({ _composite, ...rest }) => rest);
@@ -159,20 +163,24 @@ async function classifyPageRelevance(params: {
   clause: ClauseTypeT;
   signal?: AbortSignal;
 }): Promise<number> {
-  try {
-    const tpl = await getPrompt('policy_page_relevance');
-    const prompt = tpl
-      .replace('{{url}}', params.url)
-      .replace('{{title}}', params.title)
-      .replace('{{snippet}}', params.snippet)
-      .replace('{{airlineName}}', params.airlineName)
-      .replace('{{clause}}', params.clause);
+  const tpl = await getPrompt('policy_page_relevance');
+  const prompt = tpl
+    .replace('{{url}}', params.url)
+    .replace('{{title}}', params.title)
+    .replace('{{snippet}}', params.snippet)
+    .replace('{{airlineName}}', params.airlineName)
+    .replace('{{clause}}', params.clause);
+  const attempt = async (): Promise<number> => {
     const raw = await callLLM(prompt, { responseFormat: 'json', timeoutMs: 1800 });
     const parsed = JSON.parse(raw) as { relevance: number };
     const score = Math.max(0, Math.min(1, Number(parsed.relevance)));
     return Number.isFinite(score) ? score : 0.4;
+  };
+  try {
+    return await attempt();
   } catch (error) {
-    console.warn('policy_page_relevance_failed', error instanceof Error ? error.message : String(error));
+    console.warn('policy_page_relevance_failed_once', error instanceof Error ? error.message : String(error));
+    try { return await attempt(); } catch {}
     return 0.4;
   }
 }
