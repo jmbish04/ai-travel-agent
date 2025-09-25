@@ -5,8 +5,9 @@ import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
 import { getPrometheusText, metricsMode, snapshot, snapshotV2, observeE2E, ingestEvent, incVerifyFail, incVerifyPass, incVerificationRun } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
-import { getLastReceipts, getLastVerification } from '../core/slot_memory.js';
+import { getLastReceipts, getLastVerification, getThreadSlots, getLastIntent } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
+import { getContext } from '../core/memory.js';
 
 export const router = (log: pino.Logger): Router => {
   const r = express.Router();
@@ -59,10 +60,26 @@ export const router = (log: pino.Logger): Router => {
       }
       // Self-check second pass (fallback when no artifact)
       try {
+        const [contextMsgs, slots, intent] = await Promise.all([
+          getContext(out.threadId),
+          getThreadSlots(out.threadId),
+          getLastIntent(out.threadId)
+        ]);
+        const userTurns = contextMsgs.filter((m) => m.role === 'user').map((m) => m.content);
+        const latestUser = userTurns[userTurns.length - 1] || parsed.data.message;
+        const previousUsers = userTurns.slice(0, -1).slice(-2);
+        const slotsSummary = Object.keys(slots || {}).length > 0
+          ? { current: JSON.stringify(slots) }
+          : undefined;
+
         const audit = await verifyAnswer({
           reply: lastReply ?? out.reply,
           facts: facts as Array<{ key: string; value: unknown; source: string }>,
-          log
+          log,
+          latestUser,
+          previousUsers,
+          slotsSummary,
+          lastIntent: intent
         });
         // verification metrics
         if (audit.verdict === 'fail') {
