@@ -63,7 +63,7 @@ export const tools: ToolSpec[] = [
           const countSpecial = Object.values(out.items.special).reduce((a, b) => a + b.length, 0);
           return { ok: true, summary: `${out.summary} (${out.band}) — ${countBase}+${countSpecial} items`, source: out.source, items: out.items, band: out.band };
         }
-        return { ok: false, reason: out.reason };
+        return { ok: false, reason: (out as any).reason };
       } finally { clearTimeout(timeout); }
     }
   },
@@ -430,6 +430,7 @@ export async function callChatWithTools(args: {
     }
     // Optional planning step: request control JSON (best-effort)
     let lastPlan: any | undefined;
+    let planEchoCount = 0;
     let planStart = Date.now();
     try {
       log?.debug?.('🔧 CHAT_TOOLS: Starting planning phase');
@@ -533,7 +534,15 @@ export async function callChatWithTools(args: {
               }
             } catch {}
           }
+          // Persist planner output in the conversation so the model can reference it.
           msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
+          // Nudge the model to transition from planning to execution. Some providers
+          // may echo the planning JSON; make it explicit that tools should be called now.
+          msgs.push({
+            role: 'system',
+            content:
+              'NOTE: The previous assistant message is an internal planning control JSON. Do not return it to the user. Now execute the listed calls by issuing tool_calls with the exact arguments, in order. After executing, synthesize a concise, grounded answer with citations. If required information is missing, ask one brief clarification instead.',
+          });
         } else {
           log?.debug?.({ planMsg }, '🔧 CHAT_TOOLS: Planning response not a valid object');
           try {
@@ -781,9 +790,36 @@ export async function callChatWithTools(args: {
         continue;
       }
 
-      // No tool calls; return final content
+      // No tool calls detected. Check if the model returned planning JSON again; if so,
+      // instruct to proceed with execution instead of treating it as final content.
       const content = typeof message.content === 'string' ? message.content : '';
       addMetaTokens(0, Math.ceil((content || '').length / 4));
+      // Helper: detect planning/control JSON shape
+      let isPlanEcho = false;
+      try {
+        const maybe = content && content.trim().startsWith('{') ? JSON.parse(content) : undefined;
+        if (maybe && typeof maybe === 'object') {
+          const hasCalls = Array.isArray((maybe as any).calls);
+          const hasRouteOrConfidence = typeof (maybe as any).route === 'string' || typeof (maybe as any).confidence === 'number';
+          if (hasCalls && hasRouteOrConfidence) {
+            isPlanEcho = true;
+            lastPlan = lastPlan || maybe;
+          }
+        }
+      } catch {}
+
+      if (isPlanEcho) {
+        planEchoCount += 1;
+        log?.debug?.({ step, planEchoCount }, '🔧 CHAT_TOOLS: Planning JSON echoed; nudging to execute');
+        // Reinforce the transition to tool execution
+        msgs.push({
+          role: 'system',
+          content:
+            'Reminder: Execute the planned tool calls now using tool_calls. Do not output the planning JSON. After tools finish, produce the final grounded answer with citations.',
+        });
+        // Continue the loop to give the model another chance to issue tool_calls
+        continue;
+      }
       
       log?.debug?.({ 
         step,
