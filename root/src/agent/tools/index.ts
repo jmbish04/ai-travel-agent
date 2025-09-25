@@ -650,6 +650,27 @@ export async function callChatWithTools(args: {
                       if (typeof c === 'string') citations.push(c);
                     }
                   }
+                  // Enrich facts for packingSuggest so blending & verification can ground in curated items
+                  if (tool.name === 'packingSuggest') {
+                    try {
+                      const items = o.items as { base: string[]; special: Record<string, string[]> };
+                      const band = o.band as string | undefined;
+                      if (band) facts.push({ key: 'packingBand', value: String(band), source: o.source });
+                      if (items && Array.isArray(items.base)) {
+                        const basePreview = items.base.slice(0, 10);
+                        facts.push({ key: 'packingItemsBase', value: JSON.stringify(basePreview), source: 'curated' });
+                      }
+                      if (items && items.special && typeof items.special === 'object') {
+                        const specialPreview: Record<string, string[]> = {};
+                        for (const [k, arr] of Object.entries(items.special)) {
+                          if (Array.isArray(arr) && arr.length > 0) specialPreview[k] = arr.slice(0, 8);
+                        }
+                        if (Object.keys(specialPreview).length > 0) {
+                          facts.push({ key: 'packingItemsSpecial', value: JSON.stringify(specialPreview), source: 'curated' });
+                        }
+                      }
+                    } catch {}
+                  }
                   log?.debug?.({ 
                     toolName, 
                     factAdded: true, 

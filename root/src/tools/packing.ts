@@ -79,7 +79,8 @@ export async function suggestPacking(
     if (arr.length) special[k] = Array.from(new Set(arr.slice(0, 50)));
   }
 
-  const summary = `Packing for ${input.city}: ${band} conditions expected.`;
+  const wxSummary = wx.summary ? String(wx.summary) : `band: ${band}`;
+  const summary = `Packing for ${input.city}: ${wxSummary} — ${band}.`;
   return {
     ok: true,
     summary,
