@@ -1,16 +1,16 @@
 ```mermaid
 flowchart TD
-  U["User message"] --> API["POST /chat\nroot/src/api/routes.ts"]
-  API --> HANDLE["handleChat()\nroot/src/core/blend.ts"]
-  HANDLE --> RUN["runMetaAgentTurn()\nroot/src/agent/meta_agent.ts"]
+  U["User message"] --> API["POST /chat<br/>root/src/api/routes.ts"]
+  API --> HANDLE["handleChat()<br/>root/src/core/blend.ts"]
+  HANDLE --> RUN["runMetaAgentTurn()<br/>root/src/agent/meta_agent.ts"]
 
-  subgraph MetaAgent["Meta Agent\nAnalyze → Plan → Act → Blend"]
-    RUN --> LOAD["Load meta_agent.md\nlog prompt hash/version"]
-    LOAD --> PLAN["Analyze + Plan (LLM)\nCONTROL JSON route/missing/calls"]
-    PLAN --> ACT["chatWithToolsLLM()\nexecute tool plan"]
+  subgraph MetaAgent["Meta Agent<br/>Analyze → Plan → Act → Blend"]
+    RUN --> LOAD["Load meta_agent.md<br/>log prompt hash/version"]
+    LOAD --> PLAN["Analyze + Plan (LLM)<br/>CONTROL JSON route/missing/calls"]
+    PLAN --> ACT["chatWithToolsLLM()<br/>execute tool plan"]
     ACT --> BLEND["Blend (LLM) grounded reply"]
 
-    subgraph Tools["Tools Registry\nroot/src/agent/tools/index.ts"]
+    subgraph Tools["Tools Registry<br/>root/src/agent/tools/index.ts"]
       ACT --> T1["weather / getCountry / getAttractions"]
       ACT --> T2["searchTravelInfo (Tavily/Brave)"]
       ACT --> T3["vectaraQuery (RAG locator)"]
@@ -18,22 +18,22 @@ flowchart TD
       ACT --> T5["Amadeus resolveCity / airports / flights"]
     end
 
-    BLEND --> RECEIPTS["setLastReceipts()\nslot_memory.ts"]
+    BLEND --> RECEIPTS["setLastReceipts()<br/>slot_memory.ts"]
   end
 
-  RECEIPTS --> MET["observeStage / addMeta* metrics\nutil/metrics.ts"]
+  RECEIPTS --> MET["observeStage / addMeta* metrics<br/>util/metrics.ts"]
   MET --> AUTO{"AUTO_VERIFY_REPLIES=true?"}
-  AUTO -->|Yes| VERIFY["verifyAnswer()\ncore/verify.ts\nctx: getContext + slots + intent"]
-  VERIFY --> STORE["setLastVerification()\nslot_memory.ts"]
+  AUTO -->|Yes| VERIFY["verifyAnswer()<br/>core/verify.ts<br/>ctx: getContext + slots + intent"]
+  VERIFY --> STORE["setLastVerification()<br/>slot_memory.ts"]
   VERIFY --> VERDICT{"verdict = fail & revised answer?"}
-  VERDICT -->|Yes| REPLACE["Use revised answer\npushMessage(thread, revised)"]
+  VERDICT -->|Yes| REPLACE["Use revised answer<br/>pushMessage(thread, revised)"]
   VERDICT -->|No| FINAL["Return meta reply"]
   STORE --> FINAL
   AUTO -->|No| FINAL
   REPLACE --> FINAL
 
   FINAL --> RESP["ChatOutput → caller"]
-  RESP --> WHY["/why command\nreads receipts + stored verification"]
+  RESP --> WHY["/why command<br/>reads receipts + stored verification"]
 ```
 
 Implementation Map (Big‑LLM First)

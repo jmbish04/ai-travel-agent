@@ -4,7 +4,7 @@ flowchart TD
   SYS --> PLAN["Planning request (LLM)<br/>CONTROL JSON route/missing/calls"]
   PLAN --> ACT["chatWithToolsLLM<br/>Meta Agent execution"]
   ACT --> BLEND["Blend instructions<br/>within meta_agent.md"]
-  BLEND --> RECEIPTS["Persist receipts\nslot_memory.setLastReceipts"]
+  BLEND --> RECEIPTS["Persist receipts<br/>slot_memory.setLastReceipts"]
   RECEIPTS --> VERQ{"Auto-verify or /why?"}
   VERQ -->|Yes| VERIFY["verify.md<br/>STRICT JSON verdict"]
   VERIFY --> OUT["Reply + receipts"]
@@ -22,6 +22,5 @@ Prompt Inventory
   complexity/budget for planning (only when enabled).
 - **verify.md** — STRICT JSON verifier for auto-verify and `/why` fallback
   (pass/warn/fail, confidence, notes, scores, revised answer).
-- Legacy prompts (router, blend, policy, etc.) remain archived under
-  `root/src/prompts/multiprompt.md` for reference but are not executed in the
-  Big LLM flow.
+- Legacy multi-prompt assets were removed during the Big LLM refactor; the
+  meta_agent.md governs the end-to-end flow.

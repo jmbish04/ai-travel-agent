@@ -1,54 +1,71 @@
-# Voyant Travel Assistant
+# Meta‑Agent Travel Assistant
 
-Builds trust, then answers fast.
+Single meta‑agent pipeline that plans tool calls, executes, writes receipts,
+and verifies before reply. Built for fast, trustworthy answers with clear
+provenance and resilient I/O.
 
-![Voyant Travel Assistant Screenshot](./assets/screenshot.png)
+Quick start: `cd root && npm install && npm run build && npm run start`.
+For CLI: `cd root && npm run cli`. Minimal env: `LLM_PROVIDER_BASEURL` +
+`LLM_API_KEY` (or `OPENROUTER_API_KEY`), plus optional Amadeus/Vectara/Search
+keys when those tools are used.
 
-Demo travel assistant featuring Transformers.js NLP, Amadeus flight search, Vectara RAG for policy documents, intelligent web crawling with Playwright, and comprehensive anti-hallucination safeguards.
+Architecture focuses on AI‑first planning (OpenAI‑style tools), strict JSON
+parsing via Zod, non‑blocking async I/O with explicit timeouts/signals, and a
+verification pipeline that stores receipts and artifacts for `/why`.
 
-## Quick Start
-```bash
-npm install
+**Agent Decision Flow**
 
-# CLI
-npm run cli
+```mermaid
+flowchart TD
+  U["User message"] --> API["POST /chat\\nroot/src/api/routes.ts"]
+  API --> HANDLE["handleChat()\\nroot/src/core/blend.ts"]
+  HANDLE --> RUN["runMetaAgentTurn()\\nroot/src/agent/meta_agent.ts"]
 
-# HTTP server
-npm run dev
+  subgraph MetaAgent["Meta Agent\\nAnalyze → Plan → Act → Blend"]
+    RUN --> LOAD["Load meta_agent.md\\nlog prompt hash/version"]
+    LOAD --> PLAN["Analyze + Plan (LLM)\\nCONTROL JSON route/missing/calls"]
+    PLAN --> ACT["chatWithToolsLLM()\\nexecute tool plan"]
+    ACT --> BLEND["Blend (LLM) grounded reply"]
+
+    subgraph Tools["Tools Registry\\nroot/src/agent/tools/index.ts"]
+      ACT --> T1["weather / getCountry / getAttractions"]
+      ACT --> T2["searchTravelInfo (Tavily/Brave)"]
+      ACT --> T3["vectaraQuery (RAG locator)"]
+      ACT --> T4["extractPolicyWithCrawlee / deepResearch"]
+      ACT --> T5["Amadeus resolveCity / airports / flights"]
+    end
+
+    BLEND --> RECEIPTS["setLastReceipts()\\nslot_memory.ts"]
+  end
+
+  RECEIPTS --> MET["observeStage / addMeta* metrics\\nutil/metrics.ts"]
+  MET --> AUTO{"AUTO_VERIFY_REPLIES=true?"}
+  AUTO -->|Yes| VERIFY["verifyAnswer()\\ncore/verify.ts\\nctx: getContext + slots + intent"]
+  VERIFY --> STORE["setLastVerification()\\nslot_memory.ts"]
+  VERIFY --> VERDICT{"verdict = fail & revised answer?"}
+  VERDICT -->|Yes| REPLACE["Use revised answer\\npushMessage(thread, revised)"]
+  VERDICT -->|No| FINAL["Return meta reply"]
+  STORE --> FINAL
+  AUTO -->|No| FINAL
+  REPLACE --> FINAL
+
+  FINAL --> RESP["ChatOutput → caller"]
+  RESP --> WHY["/why command\\nreads receipts + stored verification"]
 ```
 
-## Minimal Config
-- **LLM**: Set `OPENROUTER_API_KEY` or `LLM_PROVIDER_BASEURL` + `LLM_API_KEY` (+ optional `LLM_MODEL`)
-- **Flight Search**: `AMADEUS_CLIENT_ID` + `AMADEUS_CLIENT_SECRET` for live flight data
-- **RAG/Policy**: `VECTARA_API_KEY` + `VECTARA_CUSTOMER_ID` + corpus IDs for policy document search
-- **Web Search**: `BRAVE_SEARCH_API_KEY` or `TAVILY_API_KEY` for fallback research
-- **Optional APIs**: `OPENTRIPMAP_API_KEY` for enhanced attraction data
-- **Features**: `DEEP_RESEARCH_ENABLED=true`, `POLICY_RAG=on`, `SEARCH_PROVIDER=brave|tavily`
-- **Session Store**: `SESSION_STORE=memory|redis`, `SESSION_TTL_SEC=3600`, `SESSION_REDIS_URL=redis://localhost:6379` (if using Redis)
-- **Monitoring**: `METRICS=json|prom` for observability
+**Prompts Flow**
 
-## Highlights
-- **Advanced NLP Pipeline**: Transformers.js with multilingual NER, intent classification, and 20-40% latency reduction via smart routing cascade
-- **Live Flight Search**: Amadeus API integration with complete itineraries, pricing, connection details, and natural language date parsing
-- **Advanced RAG**: Vectara integration for policy documents with paragraph-level citations and quality assessment
-- **Multi-Modal Research**: Crawlee/Playwright-powered web crawling for complex queries with AI summarization
-- **Demo Architecture**: Circuit breakers, rate limiting, comprehensive test suite (685+ tests), and Prometheus metrics
-- **Anti-Hallucination**: Self-verification system with citation validation and fact-checking mechanisms
-- **9 Intent Types**: weather, packing, destinations, attractions, flights, policy, system, web_search, unknown with context-aware routing
+```mermaid
+flowchart TD
+  U["User message"] --> SYS["meta_agent.md<br/>System prompt"]
+  SYS --> PLAN["Planning request (LLM)<br/>CONTROL JSON route/missing/calls"]
+  PLAN --> ACT["chatWithToolsLLM<br/>Meta Agent execution"]
+  ACT --> BLEND["Blend instructions<br/>within meta_agent.md"]
+  BLEND --> RECEIPTS["Persist receipts\\nslot_memory.setLastReceipts"]
+  RECEIPTS --> VERQ{"Auto-verify or /why?"}
+  VERQ -->|Yes| VERIFY["verify.md<br/>STRICT JSON verdict"]
+  VERIFY --> OUT["Reply + receipts"]
+  VERQ -->|No| OUT
+```
 
-## Roadmap (Priority Order)
-1. **Policy Browser Mode v1**: Headless Playwright navigation to official policy pages with screenshot+DOM evidence, verbatim citations, and content hashing for chain of custody
-2. **IRROPS & Partial-Leg Changes**: ✨ *Foundational components implemented* - Agentic flow for disruption handling with MCT/fare rule validation, A/B/C options with cited policy rules (basic schemas, constraint validators, and option ranking ready for production integration)
-3. **Hotels & Stays (Amadeus)**: City + dates + guests search with policy compliance filtering, loyalty integration, and unified itinerary view
-4. **Profile & Policy Guardrail Engine**: YAML-based rules engine for corporate travel policy with IN-POLICY/OUT-OF-POLICY badges and exception workflows
-5. **Unified Itinerary & Smart Notifications**: Merged flights+hotels+POIs with ICS export and proactive nudges (check-in, gate changes, cancellation windows)
-6. **Trip Risk & Resilience Score**: Predictive disruption scoring with Plan B recommendations based on MCT buffers, weather patterns, and carrier reliability
-7. **Advanced Observability & Packaging**: P95/P99 metrics, OpenAPI documentation, Docker/Lambda packaging, and cost guardrails with budget controls
-
-## Agent Decision Flow
-
-See docs/AGENT_DECISION_FLOW.md for the current routing/consent/RAG diagram.
-
----
-
-Demo page: [View Live Demo](https://chernistry.github.io/voyant/) for a guided tour and sample transcripts.
+Docs: see `docs/index.html` for quick links to prompts/observability.
