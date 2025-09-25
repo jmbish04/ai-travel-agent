@@ -1,4 +1,4 @@
-# Meta‑Agent Travel Assistant
+# Voyant Travel Assistant
 
 Single meta‑agent pipeline that plans tool calls, executes, writes receipts,
 and verifies before reply. Built for fast, trustworthy answers with clear
