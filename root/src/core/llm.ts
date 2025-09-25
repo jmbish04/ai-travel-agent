@@ -57,9 +57,33 @@ export type IntentClassification = {
   slots?: Record<string, unknown>;
 };
 
-// Simple token counter (approximate)
+// Simple token counter (approximate, for logs only)
 function countTokens(text: string): number {
-  return Math.ceil(text.length / 4); // Rough approximation: 1 token ≈ 4 characters
+  return Math.ceil(text.length / 4);
+}
+
+function numFromEnv(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function buildGenParams(format: ResponseFormat, kind: 'plain' | 'tools') {
+  // Temperature
+  const baseTemp = numFromEnv('LLM_TEMPERATURE');
+  const jsonTemp = numFromEnv('LLM_TEMPERATURE_JSON');
+  const toolsTemp = numFromEnv('LLM_TOOLS_TEMPERATURE');
+  const temperature = kind === 'tools'
+    ? (toolsTemp ?? baseTemp ?? 0.2)
+    : (format === 'json' ? (jsonTemp ?? baseTemp ?? 0.2) : (baseTemp ?? 0.5));
+  // Max output tokens (omit if not provided to allow provider defaults)
+  const maxTokens = kind === 'tools' ? (numFromEnv('LLM_TOOLS_MAX_TOKENS') ?? numFromEnv('LLM_MAX_TOKENS'))
+                                     : numFromEnv('LLM_MAX_TOKENS');
+  // Sampling controls
+  const topP = numFromEnv('LLM_TOP_P');
+  const topK = numFromEnv('LLM_TOP_K');
+  return { temperature, maxTokens, topP, topK };
 }
 
 export async function callLLM(
@@ -143,19 +167,23 @@ async function tryModel(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('llm_timeout')), Math.max(500, timeoutMs));
       const reqStart = Date.now();
+      const params = buildGenParams(format, 'plain');
+      const body: any = {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: params.temperature,
+        ...(params.maxTokens !== undefined ? { max_tokens: params.maxTokens } : {}),
+        ...(params.topP !== undefined ? { top_p: params.topP } : {}),
+        ...(params.topK !== undefined ? { top_k: params.topK } : {}),
+        ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      };
       const res = await undiciFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: format === 'json' ? 0.2 : 0.5,
-          max_tokens: 5000,
-          ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -284,13 +312,16 @@ export async function chatWithToolsLLM(opts: {
   }, timeoutMs);
   const signal = opts.signal;
   
-  const requestBody = {
+  const gen = buildGenParams('text', 'tools');
+  const requestBody: any = {
     model,
     messages: opts.messages,
     tools: opts.tools,
     tool_choice: opts.tool_choice || 'auto',
-    temperature: 0.2,
-    max_tokens: 1200,
+    temperature: gen.temperature,
+    ...(gen.maxTokens !== undefined ? { max_tokens: gen.maxTokens } : {}),
+    ...(gen.topP !== undefined ? { top_p: gen.topP } : {}),
+    ...(gen.topK !== undefined ? { top_k: gen.topK } : {}),
   };
   
   opts.log?.debug?.({ 
@@ -336,7 +367,7 @@ export async function chatWithToolsLLM(opts: {
       // Return explicit error envelope so callers can branch correctly
       return { error: { status: res.status, body: errorText }, choices: [] };
     }
-    const data = await res.json();
+    const data = await res.json() as any;
     
     opts.log?.debug?.({ 
       choicesCount: data.choices?.length || 0,

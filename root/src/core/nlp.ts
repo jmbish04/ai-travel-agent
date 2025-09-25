@@ -1,7 +1,6 @@
 import type pino from 'pino';
 import { z } from 'zod';
 import { classifyContent } from './llm.js';
-import { buildClarifyingQuestion } from './clarifier.js';
 import { parseCity, parseDate } from './parsers.js';
 
 export type Intent = 'weather'|'packing'|'attractions'|'destinations'|'unknown'|'web_search'|'system';
@@ -55,7 +54,13 @@ export async function clarifierLLM(
   context: Slots,
   log: pino.Logger,
 ): Promise<string> {
-  return buildClarifyingQuestion(missing, context as Record<string, string>, log);
+  if (missing.includes('city')) {
+    return 'Which city are you asking about?';
+  }
+  if (missing.includes('dates')) {
+    return 'What dates are you planning to travel?';
+  }
+  return `Could you provide more details about: ${missing.join(', ')}?`;
 }
 
 export async function extractCityLLM(

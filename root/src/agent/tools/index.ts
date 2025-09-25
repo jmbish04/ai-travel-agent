@@ -430,6 +430,7 @@ export async function callChatWithTools(args: {
     }
     // Optional planning step: request control JSON (best-effort)
     let lastPlan: any | undefined;
+    let planStart = Date.now();
     try {
       log?.debug?.('🔧 CHAT_TOOLS: Starting planning phase');
       const planMessages: ChatToolMsg[] = [];
@@ -474,7 +475,7 @@ export async function callChatWithTools(args: {
         planTimeoutMs: Math.min(5000, Math.max(1500, (args.timeoutMs ?? 20000) - 5000))
       }, '🔧 CHAT_TOOLS: Calling LLM for planning');
 
-      const planStart = Date.now();
+      planStart = Date.now();
       const planRes = await chatWithToolsLLM({
         messages: planMessages,
         tools: [],
@@ -812,8 +813,8 @@ export async function callChatWithTools(args: {
       try {
         const city = (args.context?.city as string) || (args.user.match(/in\s+([\p{L} ]+)/iu)?.[1] || '').trim();
         log?.debug?.({ city, contextCity: args.context?.city }, '🔧 CHAT_TOOLS: Extracted city for weather fallback');
-        if (city) {
-          const out: any = await tools[0].call({ city }, {});
+        if (city && tools.length > 0) {
+          const out: any = await tools[0]!.call({ city }, {});
           log?.debug?.({ 
             weatherResult: out,
             hasSource: !!out?.source,

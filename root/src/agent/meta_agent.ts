@@ -90,7 +90,7 @@ export async function runMetaAgentTurn(
       result: result?.substring(0, 100)
     }, '🔧 META_AGENT: Storing receipts');
 
-    await setLastReceipts(threadId, facts || [], decisions || [], result);
+    await setLastReceipts(threadId, (facts || []).map(f => ({ ...f, source: f.source || 'internal' })), decisions || [], result);
     incReceiptsWrittenTotal();
 
     log.debug({ threadId }, '🔧 META_AGENT: Receipts stored successfully');

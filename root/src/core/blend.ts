@@ -194,7 +194,7 @@ export async function handleChat(
         log: ctx.log,
         latestUser,
         previousUsers,
-        slotsSummary: { before: slotsBefore },
+        slotsSummary: { before: JSON.stringify(slotsBefore) },
         lastIntent: intent,
       });
       const vDur = Date.now() - vStart;
