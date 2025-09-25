@@ -1,5 +1,4 @@
 import pino from 'pino';
-import { handleChat } from '../../src/core/blend.js';
 import { fetchLastVerification } from '../helpers/verify.js';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
@@ -46,6 +45,7 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
       suggestPacking: async () => ({ ok: true, summary: 'light layers, compact umbrella', source: 'curated', band: 'mild', items: { base: ['t-shirt', 'jacket'], special: {} } })
     }));
 
+    const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'I am going to London next week, what should I pack?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
     const artifact = await fetchLastVerification(out.threadId);
@@ -53,4 +53,3 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);
   }, 15000);
 });
-

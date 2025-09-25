@@ -4,7 +4,6 @@
  * - Real verifying LLM only when VERIFY_LLM=1
  */
 import pino from 'pino';
-import { handleChat } from '../../src/core/blend.js';
 import { fetchLastVerification } from '../helpers/verify.js';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
@@ -64,6 +63,7 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
       getSearchSource: () => 'brave-search',
     }));
 
+    const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'What is Marriott cancellation window and penalty?', receipts: true }, { log });
     expect(typeof out.threadId).toBe('string');
     expect(typeof out.reply).toBe('string');
@@ -77,4 +77,3 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     }
   }, 15000);
 });
-

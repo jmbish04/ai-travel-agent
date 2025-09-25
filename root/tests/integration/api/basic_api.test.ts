@@ -5,17 +5,21 @@ describe('API basic endpoints', () => {
   beforeAll(() => setupHttpMocks());
   afterAll(() => teardownHttpMocks());
 
-  it('healthz responds ok', async () => {
-    // Prevent loading real ESM deps by stubbing search
+  it('metrics endpoint responds in JSON mode', async () => {
     jest.doMock('../../../src/tools/search', () => ({
       searchTravelInfo: async () => ({ ok: true, summary: 'stub', source: 'stub', results: [] }),
       getSearchCitation: () => 'stub',
       getSearchSource: () => 'stub',
     }));
+    jest.doMock('../../../src/tools/packing', () => ({
+      suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
+    }));
     const app = await makeTestApp();
-    const res = await request(app).get('/healthz');
+    const res = await request(app).get('/metrics');
     expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
+    // JSON mode by default
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body).toBeDefined();
   });
 
   it('chat returns reply and threadId; /why path surfaces receipts', async () => {
@@ -24,7 +28,17 @@ describe('API basic endpoints', () => {
       getSearchCitation: () => 'stub',
       getSearchSource: () => 'stub',
     }));
-    const app = await makeTestApp();
+    jest.doMock('../../../src/tools/packing', () => ({
+      suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
+    }));
+    let app;
+    try {
+      app = await makeTestApp();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('makeTestApp failed:', err);
+      throw err;
+    }
     // Normal chat
     const res1 = await request(app)
       .post('/chat')

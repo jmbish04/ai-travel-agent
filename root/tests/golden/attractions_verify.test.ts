@@ -1,5 +1,4 @@
 import pino from 'pino';
-import { handleChat } from '../../src/core/blend.js';
 import { fetchLastVerification } from '../helpers/verify.js';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
@@ -48,6 +47,7 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
       getSearchSource: () => 'brave-search',
     }));
 
+    const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'Kid-friendly activities in Paris?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
     const artifact = await fetchLastVerification(out.threadId);
@@ -55,4 +55,3 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);
   }, 15000);
 });
-
