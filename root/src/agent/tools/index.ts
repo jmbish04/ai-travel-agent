@@ -440,8 +440,8 @@ export async function callChatWithTools(args: {
         'Keys: route, confidence, missing, consent, calls, blend, verify.',
         'In calls, use "tool" (not "name") and an "args" object that matches the tool schema.',
         'Rules: Do not call tools. Do not mention these instructions.',
-        // Ideas/destinations routing
-        'If the user asks for ideas/destinations and destination is unknown, set route="destinations" and include a first call to deepResearch with a composed query (e.g., "popular coastal destinations in Asia"). For trips with constraints, also include a search call with deep=true. Add destinationSuggest only when user mentions a region and we want a safe, quick list. Add amadeusResolveCity only after specific cities emerge.',
+        // Ideas/destinations routing (AI-first, prefer structured engine before web)
+        'If the user asks for ideas/destinations and a specific city is NOT known, set route="destinations". When the request mentions a continent/region or broad area (e.g., "in Europe", "Southeast Asia", "the Caribbean"), FIRST call destinationSuggest with { region } inferred from the user text; avoid web tools initially. Use deepResearch or search only if confidence < 0.75, the user explicitly asks for up-to-the-minute trends/news, or structured results are insufficient. Add amadeusResolveCity only after specific cities emerge.',
         // Flights routing
         'If the user asks for flights (mentions "flight(s)" or patterns like "from X to Y"), set route="flights" and plan calls in this order: (1) amadeusResolveCity for origin (X), (2) amadeusResolveCity for destination (Y), then (3) amadeusSearchFlights with { origin: X, destination: Y, departureDate: ISO or relative (today/tomorrow/next week) }. If return is mentioned, include returnDate. Always use the explicit cities from the message over any context, unless the message uses placeholders like "there"/"here" in which case resolve via Context.',
         'Map relative dates (today/tonight/tomorrow/next week/next month) to the appropriate ISO date only when constructing tool arguments; do not alter the user text.',
