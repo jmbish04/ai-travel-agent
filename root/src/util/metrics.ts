@@ -82,6 +82,9 @@ let toolCallsTotal = 0;
 // META aggregates
 const metaToolCalls: Record<string, number> = {};
 const metaToolLatency: Map<string, { count: number; sum: number; min: number; max: number }> = new Map();
+const metaToolLedgerHits: Record<string, number> = {};
+const metaToolSkippedByLedger: Record<string, number> = {};
+const metaToolGatedSkips: Record<string, number> = {};
 let metaRouteConfidence = 0;
 let metaParseFailures = 0;
 const metaConsentGates: Record<string, number> = {};
@@ -201,6 +204,9 @@ let counterMetaCitations: CounterT | undefined;
 let histMetaTurnLatencyMs: HistogramT | undefined;
 let counterMetaTokensIn: CounterT | undefined;
 let counterMetaTokensOut: CounterT | undefined;
+let counterMetaToolLedgerHits: CounterT | undefined;
+let counterMetaToolSkippedByLedger: CounterT | undefined;
+let counterMetaToolGatedSkips: CounterT | undefined;
 // Crawler (Prometheus)
 let counterCrawlerEngineUsage: CounterT | undefined;
 let counterCrawlerPagesCrawled: CounterT | undefined;
@@ -371,6 +377,24 @@ async function ensureProm(): Promise<void> {
     counterMetaTokensOut = new Counter({
       name: 'meta_tokens_out_total',
       help: 'Estimated output tokens produced by meta agent',
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolLedgerHits = new Counter({
+      name: 'meta_tool_ledger_hits_total',
+      help: 'Duplicate tool call hits within a turn',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolSkippedByLedger = new Counter({
+      name: 'meta_tool_skipped_due_ledger_total',
+      help: 'Tool calls skipped due to prior terminal failure in ledger',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolGatedSkips = new Counter({
+      name: 'meta_tool_gated_skips_total',
+      help: 'Tool calls gated by route selection',
+      labelNames: ['tool','route'],
       registers: [register],
     }) as CounterT;
 
@@ -586,6 +610,26 @@ export function addMetaTokens(inTok: number, outTok: number) {
   metaTokensIn += i; metaTokensOut += o;
   for (let k = 0; k < i; k++) counterMetaTokensIn?.inc();
   for (let k = 0; k < o; k++) counterMetaTokensOut?.inc();
+}
+
+export function incMetaToolLedgerHit(tool: string) {
+  const key = tool || 'unknown';
+  metaToolLedgerHits[key] = (metaToolLedgerHits[key] ?? 0) + 1;
+  counterMetaToolLedgerHits?.inc({ tool: key });
+}
+
+export function incMetaToolSkippedByLedger(tool: string) {
+  const key = tool || 'unknown';
+  metaToolSkippedByLedger[key] = (metaToolSkippedByLedger[key] ?? 0) + 1;
+  counterMetaToolSkippedByLedger?.inc({ tool: key });
+}
+
+export function incMetaToolGatedSkip(tool: string, route: string) {
+  const key = tool || 'unknown';
+  const r = route || 'unknown';
+  const mapKey = `${key}:${r}`;
+  metaToolGatedSkips[mapKey] = (metaToolGatedSkips[mapKey] ?? 0) + 1;
+  counterMetaToolGatedSkips?.inc({ tool: key, route: r });
 }
 
 export function observeMetaTurnLatency(ms: number) {

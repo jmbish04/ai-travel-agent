@@ -4,6 +4,7 @@ import { getPrompt } from '../core/prompts.js';
 import { scoreDomainAuthenticity } from '../core/domain_authenticity.js';
 import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt, type DomainScore } from '../schemas/policy.js';
 import { observeCrawler } from '../util/metrics.js';
+import { blockHost, isHostBlocked, getBlockedHosts } from '../util/blocked_hosts.js';
 
 const DEBUG = process.env.LOG_LEVEL === 'debug';
 
@@ -23,6 +24,12 @@ export async function deepResearchPages(
   results: CrawlResult[];
   summary?: string;
 }> {
+  if (urls.length === 0) return { ok: false, results: [] };
+  // Filter out blocked hosts up front
+  if (DEBUG) console.debug(`🔍 Blocked hosts (TTL): ${getBlockedHosts().join(', ')}`);
+  urls = urls.filter(u => {
+    try { return !isHostBlocked(new URL(u).hostname); } catch { return true; }
+  });
   if (urls.length === 0) return { ok: false, results: [] };
   
   const engine = opts.engine || process.env.CRAWLEE_ENGINE || 'cheerio';
@@ -108,6 +115,15 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
   const crawler = new CheerioCrawler({
     maxRequestsPerCrawl: maxPages,
     requestHandlerTimeoutSecs: 15,
+    maxRequestRetries: 1,
+    useSessionPool: true,
+    // treat 401/403/429 as blocked to retire session quickly
+    isBlockedResponseFunction: ({ response }) => {
+      try {
+        const sc = (response as any)?.statusCode || (response as any)?.status();
+        return sc === 401 || sc === 403 || sc === 429;
+      } catch { return false; }
+    },
     async requestHandler({ $, request }) {
       try {
         const title = $('title').text().trim();
@@ -137,6 +153,7 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
     },
     failedRequestHandler({ request }) {
       console.warn(`Failed to crawl: ${request.url}`);
+      try { const h = new URL(request.url).hostname; blockHost(h); } catch {}
       failedUrls.push(request.url);
       observeCrawler('cheerio', 0, false);
     },
@@ -181,6 +198,8 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
     maxRequestsPerCrawl: maxPages,
     requestHandlerTimeoutSecs: 15,
     navigationTimeoutSecs: 10,
+    maxRequestRetries: 1,
+    useSessionPool: true,
     launchContext: {
       launchOptions: {
         headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
@@ -274,6 +293,7 @@ async function runPlaywrightCrawler(urls: string[], maxPages: number, results: C
     },
     failedRequestHandler({ request }) {
       console.warn(`Failed to crawl: ${request.url}`);
+      try { const h = new URL(request.url).hostname; blockHost(h); } catch {}
       observeCrawler('playwright', 0, false);
     },
   });

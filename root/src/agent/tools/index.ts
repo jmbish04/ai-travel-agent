@@ -9,7 +9,7 @@ import { searchTravelInfo, getSearchCitation, getSearchSource } from '../../tool
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
-import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision } from '../../util/metrics.js';
+import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip } from '../../util/metrics.js';
 import { VectaraClient } from '../../tools/vectara.js';
 import { performDeepResearch } from '../../core/deep_research.js';
 import { DestinationEngine } from '../../core/destination_engine.js';
@@ -297,6 +297,44 @@ export const tools: ToolSpec[] = [
 
 type ChatToolMsg = { role: 'system'|'user'|'assistant'|'tool'; content: string; name?: string; tool_call_id?: string };
 
+// --- Execution ledger (per-turn) to dedupe/skips on repeated failures ---
+function stableHash(input: unknown): string {
+  try { return typeof input === 'string' ? input : JSON.stringify(input); } catch { return String(input); }
+}
+class ExecutionLedger {
+  private map = new Map<string, { ok: boolean; http?: number; err?: string; ts: number }>();
+  private successTtl = Number(process.env.LEDGER_SUCCESS_TTL_MS || 300000);
+  private httpBlockTtl = Number(process.env.LEDGER_HTTP_BLOCK_TTL_MS || 900000);
+  private zodFailTtl = Number(process.env.LEDGER_ZOD_FAIL_TTL_MS || 300000);
+  private genericFailTtl = Number(process.env.LEDGER_FAIL_TTL_MS || 120000);
+  key(tool: string, args: unknown) { return `${tool}:${stableHash(args)}`; }
+  shouldSkip(tool: string, args: unknown): boolean {
+    const k = this.key(tool, args);
+    const e = this.map.get(k);
+    if (!e) return false;
+    const age = Date.now() - e.ts;
+    if (e.ok) return age < this.successTtl;
+    const ttl = (e.http === 403 || e.http === 429) ? this.httpBlockTtl
+      : (e.err && e.err.includes('Zod')) ? this.zodFailTtl
+      : this.genericFailTtl;
+    return age < ttl;
+  }
+  finish(tool: string, args: unknown, outcome: { ok: boolean; http?: number; err?: string }) {
+    const k = this.key(tool, args);
+    this.map.set(k, { ...outcome, ts: Date.now() });
+  }
+}
+
+function allowedToolsForRoute(route?: string): string[] {
+  const all = tools.map(t => t.name);
+  if (!route) return all;
+  const lower = route.toLowerCase();
+  if (lower === 'destinations' || lower === 'web' || lower === 'policy' || lower === 'visas') {
+    return all.filter(n => !n.startsWith('amadeus'));
+  }
+  return all;
+}
+
 export async function callChatWithTools(args: {
   system: string;
   attachments?: Array<{ name: string; content: string }>;
@@ -323,6 +361,8 @@ export async function callChatWithTools(args: {
     controller.abort('meta_timeout');
   }, Math.max(2000, args.timeoutMs ?? 20000));
   try {
+    const ledger = new ExecutionLedger();
+    const executed = new Set<string>();
     // Compute query complexity for planner and potential routing
     let complexity: { isComplex: boolean; confidence: number; reasoning: string } | undefined;
     try {
@@ -443,7 +483,8 @@ export async function callChatWithTools(args: {
       toolNames: tools.map(t => t.name)
     }, '🔧 CHAT_TOOLS: Starting main execution loop');
 
-    const toolSpecs = tools.map(t => t.spec);
+    let activeToolNames = allowedToolsForRoute(lastPlan?.route);
+    let toolSpecs = tools.filter(t => activeToolNames.includes(t.name)).map(t => t.spec);
     const facts: Array<{ key: string; value: string; source?: string }> = [];
     const decisions: string[] = [];
     const citations: string[] = [];
@@ -465,6 +506,9 @@ export async function callChatWithTools(args: {
       const remaining = Math.max(0, (args.timeoutMs ?? 20000) - elapsed);
       const stepTimeoutMs = Math.max(1500, Math.min(15000, remaining - 500));
 
+      // Recompute active tools if route was determined in planning
+      activeToolNames = allowedToolsForRoute(lastPlan?.route);
+      toolSpecs = tools.filter(t => activeToolNames.includes(t.name)).map(t => t.spec);
       const res = await chatWithToolsLLM({ 
         messages: msgs, 
         tools: toolSpecs, 
@@ -484,33 +528,7 @@ export async function callChatWithTools(args: {
       if (!message) {
         log?.debug?.({ step }, '🔧 CHAT_TOOLS: No message in response');
         // Best-effort: execute planned calls if available
-        if (lastPlan && Array.isArray(lastPlan.calls) && lastPlan.calls.length > 0) {
-          log?.debug?.({ plannedCalls: lastPlan.calls.length }, '🔧 CHAT_TOOLS: Executing planned calls as fallback');
-          for (const planned of lastPlan.calls.slice(0, 3)) {
-            const toolName = (planned.tool || planned.name) as string;
-            const tool = tools.find(t => t.name === toolName);
-            if (!tool) continue;
-            // Normalize args: use planned.args or remaining fields as args
-            let callArgs: any = planned.args || planned.arguments;
-            if (!callArgs || typeof callArgs !== 'object') {
-              const { tool: _t, when: _w, parallel: _p, timeoutMs: _tm, ...rest } = planned || {};
-              callArgs = rest;
-            }
-            const t0 = Date.now();
-            try {
-              const out: any = await tool.call(callArgs, { signal: controller.signal });
-              observeMetaToolLatency(tool.name, Date.now() - t0);
-              msgs.push({ role: 'tool', name: tool.name, tool_call_id: `planned_${tool.name}_${Date.now()}`, content: JSON.stringify(out ?? {}) });
-              if (out && out.ok && out.summary) {
-                facts.push({ key: tool.name, value: String(out.summary), source: out.source });
-                if (out.source) citations.push(String(out.source));
-              }
-            } catch (e) {
-              log?.error?.({ toolName, error: String(e) }, '🔧 CHAT_TOOLS: Planned call failed');
-            }
-          }
-          // Do not prematurely reply; continue to policy fallback below if needed
-        }
+        // Do not replay planned calls on missing message; return to fallback
         // If still here, break and let outer fallback handle minimal response
         break;
       }
@@ -549,6 +567,27 @@ export async function callChatWithTools(args: {
             incMetaParseFailure();
             log?.error?.({ toolName, arguments: tc.function.arguments, error: String(e) }, '🔧 CHAT_TOOLS: Failed to parse tool arguments');
           }
+          // Route-based gating: if tool is not in active list, skip
+          if (!activeToolNames.includes(tool.name)) {
+            incMetaToolGatedSkip(tool.name, String(lastPlan?.route || ''));
+            log?.debug?.({ toolName: tool.name, route: lastPlan?.route }, '🔧 CHAT_TOOLS: Tool gated by route, skipping');
+            msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: 'gated_by_route' }) });
+            continue;
+          }
+          // Ledger dedupe/skip
+          const sig = `${tool.name}:${stableHash(parsed)}`;
+          if (executed.has(sig)) {
+            incMetaToolLedgerHit(tool.name);
+            log?.debug?.({ toolName: tool.name }, '🔧 CHAT_TOOLS: Duplicate tool call in same turn, skipping');
+            msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: 'duplicate_in_turn' }) });
+            continue;
+          }
+          if (ledger.shouldSkip(tool.name, parsed)) {
+            incMetaToolSkippedByLedger(tool.name);
+            log?.debug?.({ toolName: tool.name }, '🔧 CHAT_TOOLS: Skipping tool due to prior failure in ledger');
+            msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: 'skipped_by_ledger' }) });
+            continue;
+          }
           const inTok = Math.ceil(JSON.stringify(msgs).length / 4);
           const t0 = Date.now();
           incMetaToolCall(tool.name);
@@ -558,6 +597,8 @@ export async function callChatWithTools(args: {
             const latency = Date.now() - t0;
             observeMetaToolLatency(tool.name, latency);
             addMetaTokens(inTok, 0);
+            executed.add(sig);
+            ledger.finish(tool.name, parsed, { ok: true });
             
             log?.debug?.({ 
               toolName, 
@@ -606,6 +647,11 @@ export async function callChatWithTools(args: {
               error: String(error),
               isAbortError: error instanceof Error && error.name === 'AbortError'
             }, '🔧 CHAT_TOOLS: Tool execution failed');
+            executed.add(sig);
+            // Rough HTTP code extraction if present in error string
+            const m = String(error).match(/\b(403|429)\b/);
+            const http = m ? Number(m[1]) : undefined;
+            ledger.finish(tool.name, parsed, { ok: false, http, err: String(error) });
             msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: String(error) }) });
           }
         }
@@ -625,7 +671,10 @@ export async function callChatWithTools(args: {
         decisionsCount: decisions.length,
         citationsCount: citations.length
       }, '🔧 CHAT_TOOLS: Returning final result');
-      
+      // Ledger summary
+      try {
+        log?.debug?.({ executedCount: executed.size, allowedTools: activeToolNames }, '🔧 CHAT_TOOLS: Ledger summary');
+      } catch {}
       return { result: content || '', facts, decisions, citations: Array.from(new Set(citations)).slice(0, 8) };
     }
 
@@ -660,6 +709,7 @@ export async function callChatWithTools(args: {
       decisionsCount: decisions.length,
       citationsCount: citations.length
     }, '🔧 CHAT_TOOLS: Returning default fallback response');
+    try { log?.debug?.({ executedCount: executed.size }, '🔧 CHAT_TOOLS: Fallback return with ledger summary'); } catch {}
     return { result: 'I need a city or destination to help.', facts, decisions, citations };
   } finally {
     clearTimeout(timeout);
