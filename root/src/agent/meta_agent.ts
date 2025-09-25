@@ -1,5 +1,6 @@
 import pino from 'pino';
 import { getPrompt } from '../core/prompts.js';
+import { createHash } from 'node:crypto';
 import { setLastReceipts, getThreadSlots, setLastUserMessage } from '../core/slot_memory.js';
 import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount, addCitationDomain, observeStage } from '../util/metrics.js';
 import { getLastIntent } from '../core/slot_memory.js';
@@ -28,6 +29,10 @@ export async function runMetaAgentTurn(
   }, '🔧 META_AGENT: Starting runMetaAgentTurn');
   
   const meta = await getPrompt('meta_agent');
+  try {
+    const hash = createHash('sha256').update(meta).digest('hex').slice(0, 12);
+    log.debug({ metaPromptHash: hash, metaPromptLength: meta.length }, '🔧 META_AGENT: Prompt version');
+  } catch {}
   log.debug({ 
     metaPromptLength: meta.length,
     metaPromptSample: meta.substring(0, 300)

@@ -91,6 +91,9 @@ export async function verifyAnswer(input: {
     }
     
     const result = VerifySchema.parse(parsed);
+    // AI-first: let the verifier's own scoring/notes enforce groundedness.
+    // Additional numeric pattern checks removed per coding rules.
+    try { input.log?.debug?.({ factsCount: input.facts?.length || 0 }, '🔧 VERIFY: groundedness_check'); } catch {}
     
     input.log?.debug?.({ 
       verdict: result.verdict,

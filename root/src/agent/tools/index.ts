@@ -166,12 +166,30 @@ export const tools: ToolSpec[] = [
         const client = new VectaraClient();
         const out = await client.query(input.query, { corpus: input.corpus, maxResults: input.maxResults, filter: input.filter });
         const summary = out.summary || (out.hits?.[0]?.snippet ? out.hits[0].snippet : '');
-        const citeUrls = [
-          ...(Array.isArray(out.citations) ? out.citations : []).map((c: any) => c?.url).filter((u: any) => typeof u === 'string'),
-          ...(Array.isArray(out.hits) ? out.hits : []).map((h: any) => h?.url).filter((u: any) => typeof u === 'string')
-        ].filter(Boolean);
-        const source = citeUrls[0] || (out.hits?.[0]?.title ? `vectara:doc:${out.hits?.[0]?.title}` : 'vectara');
-        return { ok: true, summary, source, citations: citeUrls.slice(0, 5), raw: out };
+
+        // Prefer explicit Vectara identifiers so downstream receipts show corpus provenance.
+        const citationsArr = Array.isArray(out.citations) ? out.citations : [];
+        const hitsArr = Array.isArray(out.hits) ? out.hits : [];
+        const primary = [...citationsArr, ...hitsArr].find((entry: any) => {
+          return entry && (entry.documentId || entry.title);
+        });
+        const docId = primary?.documentId;
+        const docTitle = primary?.title;
+        const docLabel = docId ? `vectara:doc:${docId}` : docTitle ? `vectara:doc:${docTitle}` : 'vectara';
+
+        const urlSet = new Set<string>();
+        urlSet.add(docLabel);
+        if (primary?.url) urlSet.add(primary.url);
+        for (const c of citationsArr) {
+          if (c?.url) urlSet.add(String(c.url));
+        }
+        for (const h of hitsArr) {
+          if (h?.url) urlSet.add(String(h.url));
+        }
+
+        const citations = Array.from(urlSet).slice(0, 6);
+        const source = docLabel;
+        return { ok: true, summary, source, citations, raw: out };
       } finally { clearTimeout(timeout); }
     }
   },
@@ -391,6 +409,9 @@ export async function callChatWithTools(args: {
     controller.abort('meta_timeout');
   }, Math.max(2000, args.timeoutMs ?? 20000));
   try {
+
+    // Heuristic numeric normalization removed — rely on AI-first prompt + verify
+
     const ledger = new ExecutionLedger();
     const executed = new Set<string>();
     // Compute query complexity for planner and potential routing
@@ -429,8 +450,15 @@ export async function callChatWithTools(args: {
         'If Complexity.isComplex=true (confidence>=0.6), prefer deepResearch over search for the first call; otherwise prefer search.',
         // Policy RAG → Web → Crawlee receipts (AI-first)
         'For airline/hotel/visa policy queries: plan calls in this order: (1) vectaraQuery with required corpus (airlines|hotels|visas); (2) search with site:<brand-domain> and deep=false; (3) extractPolicyWithCrawlee with { url, clause, airlineName }. Only answer from on-brand receipts.',
+        'Visa alignment: Ensure receipts explicitly match the nationality→destination pair in the user question. If vectaraQuery surfaces off-topic results, ignore them and prefer official sovereign domains (gov.cn, embassy, diplo.de) via search.',
+        'Visa durations: Never propose a number unless it appears in receipts for this turn. If unclear or conflicting, either ask one confirmation or link without a number.',
         'Be concise; omit empty fields.',
       ].join(' ');
+      try {
+        const { createHash } = await import('node:crypto');
+        const planHash = createHash('sha256').update(PLANNING_SYS_PROMPT).digest('hex').slice(0, 12);
+        log?.debug?.({ planPromptHash: planHash, planPromptLength: PLANNING_SYS_PROMPT.length }, '🔧 CHAT_TOOLS: Planning prompt version');
+      } catch {}
       planMessages.push({ role: 'system', content: PLANNING_SYS_PROMPT });
       if (complexity) planMessages.push({ role: 'system', content: `Complexity: ${JSON.stringify(complexity)}` });
       if (args.context && Object.keys(args.context).length > 0) {
@@ -767,7 +795,13 @@ export async function callChatWithTools(args: {
       try {
         log?.debug?.({ executedCount: executed.size, allowedTools: activeToolNames }, '🔧 CHAT_TOOLS: Ledger summary');
       } catch {}
-      return { result: content || '', facts, decisions, citations: Array.from(new Set(citations)).slice(0, 8) };
+      const dedupCites = Array.from(new Set(citations)).slice(0, 8);
+      const finalContent = content || '';
+      try {
+        // High-level alignment log only; no regex parsing or normalization
+        log?.debug?.({ route: (lastPlan?.route || lastPlan?.intent || ''), factsCount: facts.length, citations: dedupCites }, 'blend_summary');
+      } catch {}
+      return { result: finalContent, facts, decisions, citations: dedupCites };
     }
 
     // Fallback minimal behavior (offline/test environments)
@@ -787,7 +821,8 @@ export async function callChatWithTools(args: {
           }, '🔧 CHAT_TOOLS: Weather tool result in fallback');
           const reply = out?.ok && out.summary ? `Weather — ${out.summary}${out.source ? `\n\nSource: ${out.source}` : ''}` : `I found no reliable weather data for ${city}.`;
           if (out?.source) citations.push(out.source);
-          return { result: reply, facts, decisions, citations };
+          const dedupCites = Array.from(new Set(citations)).slice(0, 8);
+          return { result: reply, facts, decisions, citations: dedupCites };
         } else {
           log?.debug?.('🔧 CHAT_TOOLS: No city found for weather fallback');
         }
@@ -802,7 +837,8 @@ export async function callChatWithTools(args: {
       citationsCount: citations.length
     }, '🔧 CHAT_TOOLS: Returning default fallback response');
     try { log?.debug?.({ executedCount: executed.size }, '🔧 CHAT_TOOLS: Fallback return with ledger summary'); } catch {}
-    return { result: 'I need a city or destination to help.', facts, decisions, citations };
+    const dedupCites = Array.from(new Set(citations)).slice(0, 8);
+    return { result: 'I need a city or destination to help.', facts, decisions, citations: dedupCites };
   } finally {
     clearTimeout(timeout);
   }
