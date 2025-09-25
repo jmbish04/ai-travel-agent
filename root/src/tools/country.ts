@@ -10,12 +10,19 @@ import { getPrompt } from '../core/prompts.js';
 
 type Out = { ok: true; summary: string; source?: string; reason?: string } | { ok: false; reason: string };
 
-export async function getCountryFacts(input: { city?: string; country?: string }): Promise<Out> {
+/**
+ * Get concise country facts by country or city input.
+ * LLM-first for disambiguation; explicit timeouts; optional AbortSignal.
+ */
+export async function getCountryFacts(
+  input: { city?: string; country?: string },
+  signal?: AbortSignal,
+): Promise<Out> {
   const target = input.country || input.city;
   if (!target) return { ok: false, reason: 'no_city' };
   
   // LLM-based location detection (replaces legacy NER path)
-  const locationInfo = await detectLocationWithLLM(target);
+  const locationInfo = await detectLocationWithLLM(target, signal);
   
   if (locationInfo.isCountry) {
     // Direct country lookup
@@ -44,7 +51,7 @@ export async function getCountryFacts(input: { city?: string; country?: string }
   return primaryResult; // Return original error
 }
 
-async function detectLocationWithLLM(target: string): Promise<{
+async function detectLocationWithLLM(target: string, signal?: AbortSignal): Promise<{
   isCountry: boolean;
   resolvedName: string;
   confidence: number;
@@ -53,7 +60,7 @@ async function detectLocationWithLLM(target: string): Promise<{
     const tpl = await getPrompt('country_disambiguator');
     const prompt = tpl.replace('{target}', target);
 
-    const response = await callLLM(prompt, { timeoutMs: 5000 });
+    const response = await callLLM(prompt, { timeoutMs: 5000, signal });
     const parsed = JSON.parse(response.trim());
     
     return {
@@ -64,7 +71,8 @@ async function detectLocationWithLLM(target: string): Promise<{
   } catch {
     const fallbackName = target.trim();
     return {
-      isCountry: isLikelyCountryName(fallbackName),
+      // Avoid heuristic/regex for country detection; default to not-a-country
+      isCountry: false,
       resolvedName: fallbackName,
       confidence: 0.55,
     };
@@ -186,16 +194,5 @@ async function tryCountryFallback(city: string): Promise<Out> {
   }
 
   return { ok: false, reason: 'no_country_data' };
-}
-
-
-function isLikelyCountryName(name: string): boolean {
-  const normalized = name.toLowerCase();
-  const knownCountries = [
-    'spain', 'france', 'italy', 'germany', 'japan', 'canada', 'australia',
-    'brazil', 'mexico', 'india', 'china', 'russia', 'uk', 'usa', 'america',
-    'united states', 'united kingdom', 'netherlands', 'sweden', 'norway',
-  ];
-  return knownCountries.some((country) => normalized.includes(country));
 }
 

@@ -88,7 +88,7 @@ function buildGenParams(format: ResponseFormat, kind: 'plain' | 'tools') {
 
 export async function callLLM(
   prompt: string,
-  _opts: { responseFormat?: ResponseFormat; log?: any; timeoutMs?: number } = {},
+  _opts: { responseFormat?: ResponseFormat; log?: any; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
   const trimmed = prompt?.trim?.() ?? '';
   if (!trimmed) {
@@ -119,13 +119,13 @@ export async function callLLM(
 
   if (baseUrl && apiKey && preferredModel) {
     // Try preferred model first
-    const result = await tryModel(baseUrl, apiKey, preferredModel, prompt, format, log || undefined, _opts.timeoutMs);
+    const result = await tryModel(baseUrl, apiKey, preferredModel, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
     if (result) return result;
     
     // Fallback to other models
     for (const model of models) {
       if (model !== preferredModel) {
-        const result = await tryModel(baseUrl, apiKey, model, prompt, format, log || undefined, _opts.timeoutMs);
+        const result = await tryModel(baseUrl, apiKey, model, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
         if (result) return result;
       }
     }
@@ -135,7 +135,7 @@ export async function callLLM(
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   if (openrouterKey) {
     for (const model of models) {
-      const result = await tryModel('https://openrouter.ai/api/v1', openrouterKey, model, prompt, format, log || undefined, _opts.timeoutMs);
+      const result = await tryModel('https://openrouter.ai/api/v1', openrouterKey, model, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
       if (result) return result;
     }
   }
@@ -151,7 +151,8 @@ async function tryModel(
   prompt: string,
   format: ResponseFormat,
   log?: any,
-  timeoutMs: number = 2500
+  timeoutMs: number = 2500,
+  externalSignal?: AbortSignal
 ): Promise<string | null> {
   try {
     if (log?.debug) log.debug(`🔗 Trying model: ${model} at ${baseUrl}`);
@@ -166,6 +167,8 @@ async function tryModel(
     const result = await llmCircuitBreaker.execute(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('llm_timeout')), Math.max(500, timeoutMs));
+      // If caller provided a signal, link it to our internal timeout controller
+      const signal = externalSignal ? (AbortSignal as any).any?.([controller.signal, externalSignal]) || controller.signal : controller.signal;
       const reqStart = Date.now();
       const params = buildGenParams(format, 'plain');
       const body: any = {
@@ -184,7 +187,7 @@ async function tryModel(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal,
       });
       clearTimeout(timer);
       try {

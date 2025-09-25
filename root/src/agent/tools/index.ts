@@ -270,7 +270,7 @@ export const tools: ToolSpec[] = [
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort('timeout'), 7000);
       try {
-        return await policy.execute(() => limiter.schedule(() => getCountryFacts({ country: input.country, city: input.city })));
+        return await policy.execute(() => limiter.schedule(() => getCountryFacts({ country: input.country, city: input.city }, controller.signal)));
       } finally { clearTimeout(timeout); }
     }
   },

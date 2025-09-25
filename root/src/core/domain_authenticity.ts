@@ -2,6 +2,9 @@ import { callLLM, safeExtractJson } from './llm.js';
 import { getPrompt } from './prompts.js';
 import { z } from 'zod';
 
+/**
+ * Authenticity score for a policy/source domain.
+ */
 export interface DomainScore {
   domain: string;
   confidence: number;
@@ -18,7 +21,12 @@ const LlmOut = z.object({
   subject_type: z.enum(['brand','country','other']).optional().default('other'),
 });
 
-async function classifyWithLLM(domain: string, airlineName: string, clause?: string, signal?: AbortSignal): Promise<number> {
+async function classifyWithLLM(
+  domain: string,
+  airlineName: string,
+  clause?: string,
+  signal?: AbortSignal,
+): Promise<number> {
   // Bump cache version when prompt guidance changes to avoid stale scores
   const cacheKey = `v3:${domain}:${airlineName}:${clause ?? ''}`;
   if (domainCache.has(cacheKey)) {
@@ -34,7 +42,7 @@ async function classifyWithLLM(domain: string, airlineName: string, clause?: str
       .replace('{{airlineName}}', airlineName)
       .replace('{{clause}}', (clause ?? 'other'));
     
-    const response = await callLLM(filled, { responseFormat: 'json', log: undefined, timeoutMs: 1800 });
+    const response = await callLLM(filled, { responseFormat: 'json', log: undefined, timeoutMs: 2000, signal });
     const parsedUnknown = (() => {
       try { return JSON.parse(response); } catch { return safeExtractJson(response); }
     })();
@@ -55,30 +63,10 @@ async function classifyWithLLM(domain: string, airlineName: string, clause?: str
   }
 }
 
-function hostFrom(input: string): string {
-  try { return new URL(input).hostname; } catch { return input.toLowerCase(); }
-}
-
-function looksLikeCountry(subject: string): boolean {
-  const s = subject.trim().toLowerCase();
-  return /\b(usa|u\.s\.a|united states|us|uk|united kingdom|england|scotland|wales|ireland|canada|mexico|france|germany|spain|italy|eu|europe|china|japan|india|australia|new zealand)\b/.test(s);
-}
-
-function preScoreOverride(domain: string, subject: string): number | null {
-  const host = hostFrom(domain);
-  const isGov = /(^|\.)gov(\.|$)/.test(host) || host.endsWith('.gov.uk') || host.endsWith('.europa.eu') || host.endsWith('usembassy.gov');
-  const isEmbassy = host.includes('embassy') || host.includes('consulate') || host.endsWith('usembassy.gov');
-  const isBooking = /(booking|expedia|kayak|skyscanner|tripadvisor|seatguru|schengenvisainfo)\./.test(host);
-  const isAirlineOrHotel = /(delta|united|american|jetblue|alaska|spirit|frontier|emirates|qatar|lufthansa|airfrance|britishairways|marriott|hilton|hyatt|ihg)\./.test(host);
-
-  if (looksLikeCountry(subject)) {
-    if (isGov || isEmbassy) return 0.95; // official
-    if (isBooking) return 0.2;          // not official
-    if (isAirlineOrHotel) return 0.1;   // brand is not official for country policy
-  }
-  return null;
-}
-
+/**
+ * Classify if a domain is an official source for the given subject.
+ * LLM-first with strict JSON; no heuristic allow/deny lists.
+ */
 export async function scoreDomainAuthenticity(
   domain: string,
   airlineName: string,
