@@ -94,5 +94,11 @@ preloadPrompts()
   .catch(() => void 0)
   .finally(() => {
     app.listen(port, () => log.info({ port }, 'HTTP server started'));
+    // Optionally start the metrics dashboard server in-process for coherence
+    // This ensures http://localhost:3001 reads metrics from the same process
+    if ((process.env.METRICS_DASHBOARD || '').toLowerCase() === 'true') {
+      import('../util/metrics-server.js')
+        .then(() => log.info('Metrics dashboard server started (in-process)'))
+        .catch((err) => log.warn({ err }, 'Failed to start metrics dashboard server'));
+    }
   });
-

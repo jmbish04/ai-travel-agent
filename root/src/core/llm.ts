@@ -142,7 +142,7 @@ async function tryModel(
     const result = await llmCircuitBreaker.execute(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('llm_timeout')), Math.max(500, timeoutMs));
-      
+      const reqStart = Date.now();
       const res = await undiciFetch(url, {
         method: 'POST',
         headers: {
@@ -159,6 +159,11 @@ async function tryModel(
         signal: controller.signal,
       });
       clearTimeout(timer);
+      try {
+        const provider = ((): string => { try { return new URL(baseUrl).hostname || 'custom'; } catch { return 'custom'; } })();
+        const latency = Date.now() - reqStart;
+        observeLLMRequest(provider, model, 'chat', latency);
+      } catch {}
       
       if (!res.ok) {
         const errorText = await res.text();

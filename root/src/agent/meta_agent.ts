@@ -1,7 +1,8 @@
 import pino from 'pino';
 import { getPrompt } from '../core/prompts.js';
 import { setLastReceipts, getThreadSlots, setLastUserMessage } from '../core/slot_memory.js';
-import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount, addCitationDomain } from '../util/metrics.js';
+import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount, addCitationDomain, observeStage } from '../util/metrics.js';
+import { getLastIntent } from '../core/slot_memory.js';
 import { callChatWithTools } from './tools/index.js';
 
 export type MetaAgentOutput = {
@@ -116,6 +117,10 @@ export async function runMetaAgentTurn(
   
   const turnLatency = Date.now() - turnStart;
   observeMetaTurnLatency(turnLatency);
+  try {
+    const intent = await getLastIntent(threadId);
+    observeStage('blend', turnLatency, Boolean(result && result.length > 0), intent || '');
+  } catch {}
   
   log.debug({ 
     threadId,

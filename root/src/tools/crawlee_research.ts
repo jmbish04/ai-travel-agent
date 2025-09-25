@@ -3,7 +3,7 @@ import { callLLM } from '../core/llm.js';
 import { getPrompt } from '../core/prompts.js';
 import { scoreDomainAuthenticity } from '../core/domain_authenticity.js';
 import { PolicyReceiptSchema, type ClauseTypeT, type PolicyReceipt, type DomainScore } from '../schemas/policy.js';
-import { observeCrawler } from '../util/metrics.js';
+import { observeCrawler, observePolicyBrowser } from '../util/metrics.js';
 import { blockHost, isHostBlocked, getBlockedHosts } from '../util/blocked_hosts.js';
 
 const DEBUG = process.env.LOG_LEVEL === 'debug';
@@ -471,7 +471,6 @@ export async function extractPolicyWithCrawlee(params: {
   try {
     await crawler.run([url]);
   } finally {
-    observeCrawler(engine, duration(), ok, { screenshotBytes });
     await fs.rm(runStorageDir, { recursive: true, force: true }).catch(() => undefined);
   }
 
@@ -531,5 +530,6 @@ export async function extractPolicyWithCrawlee(params: {
     })(),
     domainAuthenticity,
   });
+  try { observePolicyBrowser(engine, duration(), ok, confidence); } catch {}
   return receipt;
 }

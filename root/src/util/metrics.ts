@@ -39,7 +39,6 @@ const verifyScores = {
 
 // Flow counters (low-cardinality labels only)
 const chatTurns: Record<string, number> = {};
-const routerLowConf: Record<string, number> = {};
 const clarifyRequests: Record<string, number> = {};
 const clarifyResolved: Record<string, number> = {};
 const fallbacks: Record<string, number> = { web: 0, browser: 0 };
@@ -50,14 +49,6 @@ type LatAgg = { count: number; sum: number; min: number; max: number };
 const clarifyResolutionLatency = new Map<string, LatAgg>();
 const pendingClarify = new Map<string, number>(); // key = intent:slot → timestamp
 
-// Router confidence distribution buckets
-const routerConfidenceBuckets: Record<string, number> = {
-  '0.0-0.5': 0,
-  '0.5-0.6': 0,
-  '0.6-0.75': 0,
-  '0.75-0.9': 0,
-  '0.9-1.0': 0,
-};
 
 // Business/session metrics (lightweight approximation for dev/demo)
 const sessions = new Map<string, { startedAt: number; intent?: string; turns: number; resolved?: boolean }>();
@@ -102,6 +93,7 @@ const verificationRuns: Record<'pass'|'warn'|'fail', number> = { pass: 0, warn: 
 const webAllowlistBlocks: Record<string, number> = {};
 const sanitizationActions: Record<string, number> = {};
 const citationsByDomain: Record<string, number> = {};
+const policyExtractionSummary: { count: number; sum: number } = { count: 0, sum: 0 };
 
 // Crawler metrics (Crawlee-only consolidation)
 const crawlerEngineUsage: Record<string, number> = {};
@@ -192,7 +184,6 @@ let gaugeBreakerState: GaugeT | undefined;
 let counterBreakerEvents: CounterT | undefined;
 let counterRateLimitThrottled: CounterT | undefined;
 let counterChatTurn: CounterT | undefined;
-let counterRouterLowConf: CounterT | undefined;
 let counterClarify: CounterT | undefined;
 let counterClarifyResolved: CounterT | undefined;
 let counterFallback: CounterT | undefined;
@@ -228,6 +219,7 @@ let counterCrawlerPageFailures: CounterT | undefined;
 let histCrawlerRenderMs: HistogramT | undefined;
 let counterCrawlerBytesDownloaded: CounterT | undefined;
 let counterCrawlerScreenshotBytes: CounterT | undefined;
+let histPolicyExtractionConfidence: HistogramT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -285,12 +277,6 @@ async function ensureProm(): Promise<void> {
     counterChatTurn = new Counter({
       name: 'chat_turn_total',
       help: 'Chat turns by intent',
-      labelNames: ['intent'],
-      registers: [register],
-    }) as CounterT;
-    counterRouterLowConf = new Counter({
-      name: 'router_low_conf_total',
-      help: 'Router low confidence routes',
       labelNames: ['intent'],
       registers: [register],
     }) as CounterT;
@@ -484,6 +470,12 @@ async function ensureProm(): Promise<void> {
       help: 'Crawler screenshot bytes (approx)',
       registers: [register],
     }) as unknown as CounterT;
+    histPolicyExtractionConfidence = new Histogram({
+      name: 'policy_extraction_confidence',
+      help: 'Policy extraction confidence score',
+      buckets: [0.2, 0.4, 0.6, 0.8, 1.0],
+      registers: [register],
+    }) as HistogramT;
   })();
   return initPromise;
 }
@@ -522,11 +514,6 @@ export function incTurn(intent: string) {
   void pushIngest('chat_turn_total', { intent: intent || 'unknown' });
 }
 
-export function incRouterLowConf(intent: string) {
-  bump(routerLowConf, intent || 'unknown');
-  if (counterRouterLowConf) counterRouterLowConf.inc({ intent: intent || 'unknown' });
-  void pushIngest('router_low_conf_total', { intent: intent || 'unknown' });
-}
 
 export function incClarify(intent: string, slot: string) {
   const key = `${intent || 'unknown'}:${slot || 'unknown'}`;
@@ -641,6 +628,14 @@ export function setMetaRouteConfidence(v: number, intent?: string) {
   const val = Math.max(0, Math.min(1, isFinite(v) ? v : 0));
   metaRouteConfidence = val;
   if (gaugeMetaRouteConfidence) gaugeMetaRouteConfidence.set({ intent: intent || 'unknown' }, val);
+}
+
+/**
+ * Expose latest router confidence for correlation at verify time.
+ * Note: lightweight, per-process value; suitable for dev/demo dashboards.
+ */
+export function getMetaRouteConfidence(): number {
+  return metaRouteConfidence;
 }
 
 export function incMetaParseFailure() {
@@ -879,7 +874,10 @@ export function observePolicyBrowser(
   // Backwards-compatible wrapper: forward to observeCrawler
   observeCrawler(engine, durationMs, success);
   if (confidence !== undefined) {
-    console.log(`policy_browser_confidence: ${confidence.toFixed(2)} (${engine})`);
+    try { histPolicyExtractionConfidence?.observe({}, Math.max(0, Math.min(1, confidence))); } catch {}
+    // track summary for JSON snapshot
+    (policyExtractionSummary as any).count += 1;
+    (policyExtractionSummary as any).sum += Math.max(0, Math.min(1, confidence));
   }
 }
 
@@ -1014,8 +1012,6 @@ export function snapshot() {
   return { 
     messages_total: messages, 
     chat_turns: chatTurns,
-    router_low_conf: routerLowConf,
-    router_confidence_buckets: routerConfidenceBuckets,
     clarify_requests: clarifyRequests,
     clarify_resolved: clarifyResolved,
     fallbacks,
@@ -1062,13 +1058,38 @@ export function snapshot() {
       route_confidence: metaRouteConfidence,
       tool_calls: metaToolCalls,
       tool_latency_ms: Object.fromEntries(Array.from(metaToolLatency.entries()).map(([k, a]) => [k, { count: a.count, avg: a.count>0?Number((a.sum/a.count).toFixed(1)):0, max: a.max } ])),
+      tool_errors: ((): Record<string, Record<string, number>> => {
+        const out: Record<string, Record<string, number>> = {};
+        for (const [key, count] of Object.entries(metaToolErrors)) {
+          const i = key.indexOf(':');
+          const tool = i >= 0 ? key.slice(0, i) : key;
+          const err = i >= 0 ? key.slice(i + 1) : 'unknown';
+          if (!out[tool]) out[tool] = {};
+          out[tool][err] = (out[tool][err] ?? 0) + count;
+        }
+        return out;
+      })(),
       parse_failures: metaParseFailures,
       consent_gates: metaConsentGates,
       receipts_written_total: receiptsWritten,
       citations_count: metaCitations,
+      citations_by_domain: citationsByDomain,
       tokens: { in: metaTokensIn, out: metaTokensOut },
       turn_latency_ms: { count: metaTurnLatency.count, avg: metaTurnLatency.count>0?Number((metaTurnLatency.sum/metaTurnLatency.count).toFixed(1)):0, max: metaTurnLatency.max },
       routing_decision: metaRoutingDecision,
+      ledger: {
+        duplicate_hits_by_tool: metaToolLedgerHits,
+        skipped_by_ledger_by_tool: metaToolSkippedByLedger,
+        gated_skips_by_tool_route: metaToolGatedSkips,
+      },
+      verification_runs: verificationRuns,
+      policy_extraction_confidence: {
+        count: policyExtractionSummary.count,
+        avg: policyExtractionSummary.count > 0 ? Number((policyExtractionSummary.sum / policyExtractionSummary.count).toFixed(3)) : 0,
+      },
+    },
+    llm: {
+      request_latency_ms: Object.fromEntries(Array.from(llmLatency.entries()).map(([key, a]) => [key, { count: a.count, avg: a.count>0?Number((a.sum/a.count).toFixed(1)):0, max: a.max } ])),
     },
     business: {
       total_sessions: totalSessions,
@@ -1085,6 +1106,10 @@ export function snapshot() {
     },
     breaker: { byTarget: getAllBreakerStats() },
     rate_limit: { byTarget: getAllLimiterStats() },
+    security: {
+      web_allowlist_blocks: webAllowlistBlocks,
+      sanitization_actions: sanitizationActions,
+    },
     session_store_kind: sessionStoreKind,
     session_ttl_sec: sessionTtlSec,
   };
@@ -1139,9 +1164,6 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     }
     case 'chat_turn_total':
       incTurn(labels?.intent || 'unknown');
-      break;
-    case 'router_low_conf_total':
-      incRouterLowConf(labels?.intent || 'unknown');
       break;
     case 'clarify_total':
       incClarify(labels?.intent || 'unknown', labels?.slot || 'unknown');
@@ -1237,15 +1259,7 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
   }
 }
 
-// Router confidence bucket observation
-export function observeRouterConfidence(confidence: number) {
-  const c = isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-  if (c < 0.5) routerConfidenceBuckets['0.0-0.5'] = (routerConfidenceBuckets['0.0-0.5'] ?? 0) + 1;
-  else if (c < 0.6) routerConfidenceBuckets['0.5-0.6'] = (routerConfidenceBuckets['0.5-0.6'] ?? 0) + 1;
-  else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] = (routerConfidenceBuckets['0.6-0.75'] ?? 0) + 1;
-  else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] = (routerConfidenceBuckets['0.75-0.9'] ?? 0) + 1;
-  else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
-}
+// Legacy router confidence observer removed in Phase 3 cleanup.
 
 export function observeStageVerification(
   stage: 'guard'|'extract'|'route'|'gather'|'blend'|'verify',
@@ -1291,36 +1305,7 @@ export function observeStage(
   addLatency(s2.latency, durationMs);
 }
 
-export function observeRouterResult(
-  intent: string,
-  confidence: number,
-  missingSlots: number,
-  success?: boolean
-) {
-  observeRouterConfidence(confidence);
-  
-  // Track confidence correlation if success is known
-  if (success !== undefined) {
-    observeConfidenceOutcome('router', confidence, success, intent);
-  }
-  
-  // Track missing slots as a quality indicator
-  if (missingSlots > 0) {
-    bump(clarifyRequests, `${intent}:missing_slots`);
-  }
-
-  // Track anomalies
-  if (missingSlots > 0 && confidence >= 0.9) {
-    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
-    r.high_conf_miss += 1;
-    routerAnomalies.set(intent || 'unknown', r);
-  }
-  if (missingSlots === 0 && confidence < 0.6 && success) {
-    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
-    r.low_conf_hit += 1;
-    routerAnomalies.set(intent || 'unknown', r);
-  }
-}
+// Legacy router observers removed in Phase 3 cleanup.
 
 export function observeSearchQuality(
   complexity: { isComplex: boolean; confidence: number },
@@ -1499,10 +1484,27 @@ export function snapshotV2() {
     if (t.timeout_rate > 0.05) alerts.push({ message: `${t.target} timeouts ${(t.timeout_rate*100).toFixed(1)}%`, level: 'alert' });
   }
 
+  // Build a conversation summary block for the dashboard (v2)
+  const totalClarifyReq = Object.values(clarifyRequests).reduce((a, b) => a + b, 0);
+  const totalClarifyRes = Object.values(clarifyResolved).reduce((a, b) => a + b, 0);
+  const conv: Array<{ label: string; value: number; format: 'percent'; tone?: string }> = [];
+  const vTotal = (verificationRuns.pass || 0) + (verificationRuns.warn || 0) + (verificationRuns.fail || 0);
+  const vPassRate = vTotal > 0 ? Number(((verificationRuns.pass || 0) / vTotal).toFixed(3)) : (generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0);
+  const vFailRate = vTotal > 0 ? Number(((verificationRuns.fail || 0) / vTotal).toFixed(3)) : (generatedAnswers > 0 ? Number((verifyFail / generatedAnswers).toFixed(3)) : 0);
+  conv.push({ label: 'Verify pass rate', value: vPassRate, format: 'percent', tone: vPassRate >= 0.9 ? 'positive' : vPassRate < 0.8 ? 'critical' : '' });
+  conv.push({ label: 'Verify fail rate', value: vFailRate, format: 'percent', tone: vFailRate > 0.15 ? 'critical' : '' });
+  if (answersUsingExternal > 0) {
+    const coverage = Number((answersWithCitations / answersUsingExternal).toFixed(3));
+    conv.push({ label: 'Citation coverage', value: coverage, format: 'percent', tone: coverage >= 0.8 ? 'positive' : '' });
+  }
+  if (totalClarifyReq > 0) {
+    conv.push({ label: 'Clarification efficacy', value: Number((totalClarifyRes / totalClarifyReq).toFixed(3)), format: 'percent' });
+  }
+
   return {
     pipeline: { stages, alerts },
     intents,
-    quality: { verify, confidence },
+    quality: { conversation: conv, verify, confidence },
     search,
     external: { targets },
     llm,

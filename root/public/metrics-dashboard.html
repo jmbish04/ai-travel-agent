@@ -572,6 +572,27 @@
         <div class="pipeline-grid" id="pipelineGrid"></div>
       </section>
 
+      <section class="section" aria-labelledby="meta-title">
+        <div class="section__header">
+          <h2 class="section__title" id="meta-title">Meta Agent</h2>
+          <p class="section__subtitle">Routing confidence, tool usage/errors, tokens, and LLM latency.</p>
+        </div>
+        <div class="panel-grid">
+          <article class="panel" aria-label="Routing & tokens">
+            <header class="panel__title"><i class="fas fa-route"></i>Routing & tokens</header>
+            <div class="metric-list" id="metaRouting"></div>
+          </article>
+          <article class="panel" aria-label="Tool usage & errors">
+            <header class="panel__title"><i class="fas fa-wrench"></i>Tool usage & errors</header>
+            <div class="metric-list" id="metaTools"></div>
+          </article>
+          <article class="panel" aria-label="LLM latency">
+            <header class="panel__title"><i class="fas fa-brain"></i>LLM latency</header>
+            <div class="metric-list" id="metaLLM"></div>
+          </article>
+        </div>
+      </section>
+
       <section class="section" aria-labelledby="quality-title">
         <div class="section__header">
           <h2 class="section__title" id="quality-title">Conversation quality & safety</h2>
@@ -662,6 +683,9 @@
       summary: document.getElementById('summaryGrid'),
       alerts: document.getElementById('alertsList'),
       pipeline: document.getElementById('pipelineGrid'),
+      metaRouting: document.getElementById('metaRouting'),
+      metaTools: document.getElementById('metaTools'),
+      metaLLM: document.getElementById('metaLLM'),
       conversation: document.getElementById('conversationMetrics'),
       confidence: document.getElementById('confidenceMetrics'),
       search: document.getElementById('searchMetrics'),
@@ -901,6 +925,9 @@
         quality: { conversation: conversationMetrics, confidence: confidenceMetrics },
         search: searchMetrics,
         external: { targets: externalTargets },
+        meta: legacy.meta || {},
+        llm: legacy.llm || {},
+        security: legacy.security || {},
         performance: performanceBlock,
         system: { breaker: breakerStats, rate_limit: rateLimitStats }
       };
@@ -1053,6 +1080,77 @@
       });
     }
 
+    function renderMeta(meta, llm, security) {
+      // Routing & tokens
+      clearNode(els.metaRouting);
+      if (meta && typeof meta.route_confidence === 'number') {
+        els.metaRouting.appendChild(createMetricRow('Route confidence', formatPercent(meta.route_confidence)));
+      }
+      if (meta && meta.tokens) {
+        els.metaRouting.appendChild(createMetricRow('Tokens in', formatNumber(meta.tokens.in || 0)));
+        els.metaRouting.appendChild(createMetricRow('Tokens out', formatNumber(meta.tokens.out || 0)));
+      }
+      if (meta && typeof meta.citations_count === 'number') {
+        els.metaRouting.appendChild(createMetricRow('Citations (turn)', formatNumber(meta.citations_count)));
+      }
+      if (meta && meta.verification_runs) {
+        const v = meta.verification_runs;
+        const total = (v.pass||0)+(v.warn||0)+(v.fail||0);
+        if (total>0) {
+          els.metaRouting.appendChild(createMetricRow('Verify pass', formatPercent((v.pass||0)/total), (v.pass||0)/total<0.9?'warn':'positive'));
+          els.metaRouting.appendChild(createMetricRow('Verify fail', formatPercent((v.fail||0)/total), (v.fail||0)>0?'critical':''));
+        }
+      }
+      if (meta && meta.routing_decision) {
+        const entries = Object.entries(meta.routing_decision).sort((a,b)=>b[1]-a[1]).slice(0,3);
+        entries.forEach(([intent,count])=>{
+          els.metaRouting.appendChild(createMetricRow(`Route · ${intent}`, formatNumber(count)));
+        });
+      }
+
+      // Tools usage & errors
+      clearNode(els.metaTools);
+      if (meta && meta.tool_calls) {
+        const topCalls = Object.entries(meta.tool_calls).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        topCalls.forEach(([tool,count])=>{
+          els.metaTools.appendChild(createMetricRow(`Calls · ${tool}`, formatNumber(count)));
+        });
+      }
+      if (meta && meta.tool_errors) {
+        const byTool = meta.tool_errors;
+        Object.entries(byTool).slice(0,3).forEach(([tool, errs])=>{
+          const sum = Object.values(errs).reduce((a,b)=>a+b,0);
+          els.metaTools.appendChild(createMetricRow(`Errors · ${tool}`, formatNumber(sum), sum>0?'warn':''));
+        });
+      }
+      if (meta && meta.ledger && meta.ledger.skipped_by_ledger_by_tool) {
+        const entries = Object.entries(meta.ledger.skipped_by_ledger_by_tool).sort((a,b)=>b[1]-a[1]).slice(0,3);
+        entries.forEach(([tool,count])=>{
+          els.metaTools.appendChild(createMetricRow(`Skipped (ledger) · ${tool}`, formatNumber(count)));
+        });
+      }
+
+      // LLM latency + security
+      clearNode(els.metaLLM);
+      if (llm && llm.request_latency_ms) {
+        const items = Object.entries(llm.request_latency_ms).sort((a,b)=> (b[1].count||0)-(a[1].count||0)).slice(0,5);
+        items.forEach(([key, agg])=>{
+          const label = key.replace(/:[^:]*:(\w+)$/, ' · $1');
+          els.metaLLM.appendChild(createMetricRow(`${label}`, `${formatMilliseconds(agg.avg)} avg / ${formatMilliseconds(agg.max)} max (${formatNumber(agg.count)}x)`));
+        });
+      } else {
+        renderEmpty(els.metaLLM, 'No LLM latency yet.');
+      }
+      if (security && security.web_allowlist_blocks) {
+        const totalBlocks = Object.values(security.web_allowlist_blocks).reduce((a,b)=>a+b,0);
+        if (totalBlocks>0) els.metaLLM.appendChild(createMetricRow('Allowlist blocks', formatNumber(totalBlocks), 'warn'));
+      }
+      if (security && security.sanitization_actions) {
+        const totalSan = Object.values(security.sanitization_actions).reduce((a,b)=>a+b,0);
+        if (totalSan>0) els.metaLLM.appendChild(createMetricRow('Sanitizations', formatNumber(totalSan)));
+      }
+    }
+
     function renderConversation(conversation) {
       if (!Array.isArray(conversation) || conversation.length === 0) {
         renderEmpty(els.conversation, 'No conversation quality data yet.');
@@ -1189,6 +1287,7 @@
         renderConfidence(payload.quality && payload.quality.confidence);
         renderSearch(payload.search);
         renderExternal(payload.external);
+        renderMeta(payload.meta, payload.llm, payload.security);
         renderPerformance(payload.performance);
         renderSystem(payload.system);
 

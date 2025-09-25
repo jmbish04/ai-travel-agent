@@ -9,7 +9,7 @@ import { searchTravelInfo, getSearchCitation, getSearchSource } from '../../tool
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
-import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError } from '../../util/metrics.js';
+import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError, observeStage, observeStageClarify } from '../../util/metrics.js';
 import { VectaraClient } from '../../tools/vectara.js';
 import { performDeepResearch } from '../../core/deep_research.js';
 import { DestinationEngine } from '../../core/destination_engine.js';
@@ -446,6 +446,7 @@ export async function callChatWithTools(args: {
         planTimeoutMs: Math.min(5000, Math.max(1500, (args.timeoutMs ?? 20000) - 5000))
       }, '🔧 CHAT_TOOLS: Calling LLM for planning');
 
+      const planStart = Date.now();
       const planRes = await chatWithToolsLLM({
         messages: planMessages,
         tools: [],
@@ -492,16 +493,38 @@ export async function callChatWithTools(args: {
             }, '🔧 CHAT_TOOLS: Setting route confidence and routing decision');
             setMetaRouteConfidence(plan.confidence, plan.route);
             noteMetaRoutingDecision(plan.route);
+            try {
+              // Record route stage metrics: success or clarification if missing slots
+              const routeIntent = String(plan.route || plan.intent || 'unknown');
+              const dur = Date.now() - planStart;
+              if (Array.isArray(plan.missing) && plan.missing.length > 0) {
+                observeStageClarify('route', routeIntent, dur);
+              } else {
+                observeStage('route', dur, true, routeIntent);
+              }
+            } catch {}
           }
           msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
         } else {
           log?.debug?.({ planMsg }, '🔧 CHAT_TOOLS: Planning response not a valid object');
+          try {
+            const dur = Date.now() - planStart;
+            observeStage('route', dur, false, 'unknown');
+          } catch {}
         }
       } else {
         log?.debug?.('🔧 CHAT_TOOLS: No planning message content received');
+        try {
+          const dur = Date.now() - planStart;
+          observeStage('route', dur, false, 'unknown');
+        } catch {}
       }
     } catch (error) {
       log?.error?.({ error: String(error) }, '🔧 CHAT_TOOLS: Planning phase failed');
+      try {
+        const dur = Date.now() - planStart;
+        observeStage('route', dur, false, 'unknown');
+      } catch {}
     }
 
     // Add the actual user message for action
@@ -629,6 +652,10 @@ export async function callChatWithTools(args: {
             addMetaTokens(inTok, 0);
             executed.add(sig);
             ledger.finish(tool.name, parsed, { ok: true });
+            try {
+              const routeIntent = String(lastPlan?.route || lastPlan?.intent || 'unknown');
+              observeStage('gather', latency, Boolean((out as any)?.ok ?? true), routeIntent);
+            } catch {}
             
             log?.debug?.({ 
               toolName, 
@@ -698,6 +725,10 @@ export async function callChatWithTools(args: {
               error: String(error),
               isAbortError: error instanceof Error && error.name === 'AbortError'
             }, '🔧 CHAT_TOOLS: Tool execution failed');
+            try {
+              const routeIntent = String(lastPlan?.route || lastPlan?.intent || 'unknown');
+              observeStage('gather', latency, false, routeIntent);
+            } catch {}
             try {
               const s = String(error).toLowerCase();
               let cat = 'other';

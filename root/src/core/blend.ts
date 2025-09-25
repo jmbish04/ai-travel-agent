@@ -18,6 +18,14 @@ import {
   incAnswersWithCitations,
   incAnswerUsingExternal,
   observeE2E,
+  incVerifyFail,
+  incVerifyPass,
+  incVerificationRun,
+  observeVerifyScores,
+  observeStage,
+  observeStageVerification,
+  observeConfidenceOutcome,
+  getMetaRouteConfidence,
 } from '../util/metrics.js';
 
 type BlendContext = { log: pino.Logger; onStatus?: (status: string) => void };
@@ -179,6 +187,7 @@ export async function handleChat(
         previousUsersCount: previousUsers.length
       }, '🔧 BLEND: Auto-verify - calling verifyAnswer');
 
+      const vStart = Date.now();
       const audit = await verifyAnswer({
         reply: out.reply,
         facts: facts.map((f) => ({ key: f.key, value: f.value, source: String(f.source) })),
@@ -188,6 +197,7 @@ export async function handleChat(
         slotsSummary: { before: slotsBefore },
         lastIntent: intent,
       });
+      const vDur = Date.now() - vStart;
 
       ctx.log.debug({ 
         threadId,
@@ -195,6 +205,44 @@ export async function handleChat(
         notesCount: audit.notes?.length || 0,
         hasRevisedAnswer: !!audit.revisedAnswer
       }, '🔧 BLEND: Auto-verify - verification completed');
+
+      // Verification metrics
+      try {
+        // Pass/fail/warn counters
+        if (audit.verdict === 'fail') {
+          const reason = (audit.notes?.[0] || 'fail').toLowerCase();
+          incVerifyFail(reason);
+          incVerificationRun('fail');
+        } else if (audit.verdict === 'warn') {
+          incVerificationRun('warn');
+        } else {
+          incVerifyPass();
+          incVerificationRun('pass');
+        }
+        // Score distributions
+        if ((audit as any)?.scores) {
+          const s = (audit as any).scores as { relevance: number; grounding: number; coherence: number; context_consistency: number };
+          observeVerifyScores(s);
+        }
+        // Stage latency + outcome
+        const ok = audit.verdict !== 'fail';
+        observeStage('verify', vDur, ok, intent || '');
+        observeStageVerification('verify', intent || null, ok);
+        // Confidence correlation
+        const conf = typeof (audit as any)?.confidence === 'number'
+          ? Math.max(0, Math.min(1, (audit as any).confidence))
+          : (() => {
+              const s = (audit as any)?.scores;
+              if (!s) return 0;
+              const avg = (s.relevance + s.grounding + s.coherence + s.context_consistency) / 4;
+              return Math.max(0, Math.min(1, avg));
+            })();
+        observeConfidenceOutcome('verify', conf, ok, intent || '');
+        try {
+          const routerConf = getMetaRouteConfidence();
+          observeConfidenceOutcome('router', routerConf, ok, intent || '');
+        } catch {}
+      } catch {}
 
       await setLastVerification(threadId, {
         verdict: audit.verdict,
