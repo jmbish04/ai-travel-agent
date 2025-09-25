@@ -579,6 +579,7 @@ export async function callChatWithTools(args: {
     const facts: Array<{ key: string; value: string; source?: string }> = [];
     const decisions: string[] = [];
     const citations: string[] = [];
+    let toolsExecutedAtLeastOnce = false;
 
     const maxSteps = Math.max(1, Math.min(12, args.maxSteps ?? 6));
     log?.debug?.({ maxSteps }, '🔧 CHAT_TOOLS: Starting tool execution loop');
@@ -595,7 +596,9 @@ export async function callChatWithTools(args: {
       // Allocate dynamic per-step time budget
       const elapsed = Date.now() - tStart;
       const remaining = Math.max(0, (args.timeoutMs ?? 20000) - elapsed);
-      const stepTimeoutMs = Math.max(1500, Math.min(15000, remaining - 500));
+      // Ensure enough time for final synthesis after tools executed at least once
+      const minFloor = toolsExecutedAtLeastOnce ? 7000 : 1500;
+      const stepTimeoutMs = Math.max(minFloor, Math.min(15000, remaining - 500));
 
       // Recompute active tools if route was determined in planning
       activeToolNames = allowedToolsForRoute(lastPlan?.route);
@@ -785,6 +788,7 @@ export async function callChatWithTools(args: {
             msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: String(error) }) });
           }
         }
+        toolsExecutedAtLeastOnce = true;
         // Continue loop to let the model read tool results
         log?.debug?.({ step }, '🔧 CHAT_TOOLS: Continuing loop after tool calls');
         continue;
@@ -843,6 +847,16 @@ export async function callChatWithTools(args: {
 
     // Fallback minimal behavior (offline/test environments)
     log?.debug?.('🔧 CHAT_TOOLS: Reached fallback behavior - checking for weather intent');
+    // If we have facts and citations already, synthesize a minimal grounded reply
+    if (facts.length > 0) {
+      try {
+        const joinedFacts = facts.map(f => f.value).join('\n\n');
+        const dedupCites = Array.from(new Set(citations)).slice(0, 8);
+        const sourcesLine = dedupCites.length > 0 ? `\n\nSources: ${dedupCites.join(', ')}` : '';
+        const reply = `${joinedFacts}${sourcesLine}`.slice(0, 1200);
+        return { result: reply, facts, decisions, citations: dedupCites };
+      } catch {}
+    }
     const lower = (args.user || '').toLowerCase();
     if (/weather|temperature|rain|forecast/.test(lower)) {
       log?.debug?.('🔧 CHAT_TOOLS: Weather intent detected in fallback');

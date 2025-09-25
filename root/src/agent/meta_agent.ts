@@ -65,8 +65,9 @@ export async function runMetaAgentTurn(
     system: meta,
     user: message,
     context: ctxSlots,
-    maxSteps: 8,
-    timeoutMs: 35000,
+    maxSteps: 10,
+    // Policy/search flows may need extra time for tool calls + final synthesis
+    timeoutMs: 60000,
     log,
   });
 

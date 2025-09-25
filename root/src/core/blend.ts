@@ -253,6 +253,14 @@ export async function handleChat(
 
       if (audit.verdict === 'fail' && audit.revisedAnswer) {
         finalReply = audit.revisedAnswer;
+        // Ensure sources are surfaced when verification replaces the answer
+        const cites = Array.isArray(out.citations) ? Array.from(new Set(out.citations)) : [];
+        if (cites.length > 0) {
+          const hasSourcesText = /\bSources:/i.test(finalReply);
+          if (!hasSourcesText) {
+            finalReply = `${finalReply}\n\nSources: ${cites.join(', ')}`;
+          }
+        }
         await pushMessage(threadId, { role: 'assistant', content: finalReply });
         ctx.log.debug({ threadId }, '🔧 BLEND: Auto-verify - using revised answer');
       }
