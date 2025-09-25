@@ -2,6 +2,7 @@ import type pino from 'pino';
 import { getPrompt } from './prompts.js';
 import { callLLM } from './llm.js';
 import { searchTravelInfo } from '../tools/search.js';
+import { addSanitizationAction } from '../util/metrics.js';
 
 export type ResearchCitation = { source: string; url: string; confidence: number };
 export type ResearchResult = {
@@ -141,11 +142,13 @@ function fallbackSummary(
 }
 
 function sanitize(s: string): string {
-  return (s || '')
+  const out = (s || '')
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, '&')
     .replace(/<[^>]*>/g, '')
     .trim();
+  try { addSanitizationAction('sanitize_text'); } catch {}
+  return out;
 }
 
 function deduplicateByDomain<T extends { url: string }>(items: T[]): T[] {

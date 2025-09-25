@@ -1,5 +1,6 @@
 import { TavilyClient } from 'tavily';
 import { deepResearchPages } from './crawlee_research.js';
+import { isHostBlocked } from '../util/blocked_hosts.js';
 import { withResilience } from '../util/resilience.js';
 import type { SearchResult, Out } from './brave_search.js';
 
@@ -57,11 +58,15 @@ export async function searchTravelInfo(
     const duration = Date.now() - start;
     log?.debug?.(`✅ Tavily success after ${duration}ms`);
   
-    const results: SearchResult[] = res.results?.map((r: TavilyResult) => ({
+    let results: SearchResult[] = res.results?.map((r: TavilyResult) => ({
       title: r.title || '',
       url: r.url || '',
       description: r.content || '',
     })) ?? [];
+    // Filter blocked hosts
+    results = results.filter(r => {
+      try { return !isHostBlocked(new URL(r.url).hostname); } catch { return true; }
+    });
     
     let deepSummary = res.answer?.trim();
     if (deepResearch && results.length > 0) {

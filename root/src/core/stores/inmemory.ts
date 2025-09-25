@@ -46,14 +46,19 @@ export function createInMemoryStore(cfg: SessionConfig): SessionStore {
     async getMsgs(id: string, limit?: number): Promise<Msg[]> {
       const entry = getEntry(id);
       touch(id);
-      return limit ? entry.msgs.slice(-limit) : entry.msgs;
+      if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+        return entry.msgs.slice(-limit);
+      }
+      return [...entry.msgs];
     },
 
-    async appendMsg(id: string, msg: Msg, limit = 16): Promise<void> {
+    async appendMsg(id: string, msg: Msg, limit?: number): Promise<void> {
       const entry = getEntry(id);
       entry.msgs.push(msg);
-      while (entry.msgs.length > limit) {
-        entry.msgs.shift();
+      if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+        while (entry.msgs.length > limit) {
+          entry.msgs.shift();
+        }
       }
       touch(id);
     },

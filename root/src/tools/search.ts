@@ -1,6 +1,6 @@
 import { searchTravelInfo as braveSearch } from './brave_search.js';
 import { searchTravelInfo as tavilySearch } from './tavily_search.js';
-import { observeExternal, observeSearchQuality } from '../util/metrics.js';
+import { observeExternal, observeSearchQuality, observeConfidenceOutcome } from '../util/metrics.js';
 import { assessQueryComplexity } from '../core/complexity.js';
 import type { Out } from './brave_search.js';
 
@@ -57,6 +57,10 @@ export async function searchTravelInfo(
     if (result.ok) {
       complexityPromise.then(complexity => {
         observeSearchQuality(complexity, result.results.length, false);
+        try {
+          // Correlate assessed complexity confidence with success
+          observeConfidenceOutcome('search', Math.max(0, Math.min(1, complexity.confidence ?? 0)), true);
+        } catch {}
       }).catch(() => {}); // ignore metrics failures
     }
     

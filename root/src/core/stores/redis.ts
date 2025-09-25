@@ -47,18 +47,22 @@ export function createRedisStore(
       return withTimeout(async () => {
         const redis = await getClient();
         const key = `chat:${id}:msgs`;
-        const msgs = await redis.lRange(key, 0, (limit || 16) - 1);
+        const hasLimit = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
+        const end = hasLimit ? limit - 1 : -1;
+        const msgs = await redis.lRange(key, 0, end);
         return msgs.reverse().map((m: string) => JSON.parse(m));
       });
     },
 
-    async appendMsg(id: string, msg: Msg, limit = 16): Promise<void> {
+    async appendMsg(id: string, msg: Msg, limit?: number): Promise<void> {
       return withTimeout(async () => {
         const redis = await getClient();
         const key = `chat:${id}:msgs`;
         const multi = redis.multi();
         multi.lPush(key, JSON.stringify(msg));
-        multi.lTrim(key, 0, limit - 1);
+        if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+          multi.lTrim(key, 0, limit - 1);
+        }
         multi.expire(key, cfg.ttlSec);
         await multi.exec();
       });

@@ -39,7 +39,6 @@ const verifyScores = {
 
 // Flow counters (low-cardinality labels only)
 const chatTurns: Record<string, number> = {};
-const routerLowConf: Record<string, number> = {};
 const clarifyRequests: Record<string, number> = {};
 const clarifyResolved: Record<string, number> = {};
 const fallbacks: Record<string, number> = { web: 0, browser: 0 };
@@ -50,14 +49,6 @@ type LatAgg = { count: number; sum: number; min: number; max: number };
 const clarifyResolutionLatency = new Map<string, LatAgg>();
 const pendingClarify = new Map<string, number>(); // key = intent:slot → timestamp
 
-// Router confidence distribution buckets
-const routerConfidenceBuckets: Record<string, number> = {
-  '0.0-0.5': 0,
-  '0.5-0.6': 0,
-  '0.6-0.75': 0,
-  '0.75-0.9': 0,
-  '0.9-1.0': 0,
-};
 
 // Business/session metrics (lightweight approximation for dev/demo)
 const sessions = new Map<string, { startedAt: number; intent?: string; turns: number; resolved?: boolean }>();
@@ -79,6 +70,38 @@ type ExtAgg = {
 };
 const externalAgg = new Map<string, ExtAgg>(); // key = target
 let toolCallsTotal = 0;
+// META aggregates
+const metaToolCalls: Record<string, number> = {};
+const metaToolLatency: Map<string, { count: number; sum: number; min: number; max: number }> = new Map();
+const metaToolLedgerHits: Record<string, number> = {};
+const metaToolSkippedByLedger: Record<string, number> = {};
+const metaToolGatedSkips: Record<string, number> = {};
+let metaRouteConfidence = 0;
+let metaParseFailures = 0;
+const metaConsentGates: Record<string, number> = {};
+let receiptsWritten = 0;
+let metaCitations = 0;
+let metaTokensIn = 0;
+let metaTokensOut = 0;
+const metaTurnLatency: { count: number; sum: number; min: number; max: number } = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+const metaRoutingDecision: Record<string, number> = {};
+
+// Additional aggregates (JSON mode) for extended observability
+const metaToolErrors: Record<string, number> = {};
+const llmLatency = new Map<string, { count: number; sum: number; min: number; max: number }>();
+const verificationRuns: Record<'pass'|'warn'|'fail', number> = { pass: 0, warn: 0, fail: 0 };
+const webAllowlistBlocks: Record<string, number> = {};
+const sanitizationActions: Record<string, number> = {};
+const citationsByDomain: Record<string, number> = {};
+const policyExtractionSummary: { count: number; sum: number } = { count: 0, sum: 0 };
+
+// Crawler metrics (Crawlee-only consolidation)
+const crawlerEngineUsage: Record<string, number> = {};
+let crawlerPagesCrawled = 0;
+let crawlerPageFailures = 0;
+const crawlerRenderLatency = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+let crawlerBytesDownloaded = 0;
+let crawlerScreenshotBytes = 0;
 
 // Quality correlation tracking - connects confidence with outcomes
 const confidenceOutcomes = new Map<string, {
@@ -161,7 +184,6 @@ let gaugeBreakerState: GaugeT | undefined;
 let counterBreakerEvents: CounterT | undefined;
 let counterRateLimitThrottled: CounterT | undefined;
 let counterChatTurn: CounterT | undefined;
-let counterRouterLowConf: CounterT | undefined;
 let counterClarify: CounterT | undefined;
 let counterClarifyResolved: CounterT | undefined;
 let counterFallback: CounterT | undefined;
@@ -169,6 +191,35 @@ let counterAnswersWithCitations: CounterT | undefined;
 let counterVerifyFail: CounterT | undefined;
 let histE2ESeconds: HistogramT | undefined;
 let counterSessionResolved: CounterT | undefined;
+
+// --- META-AGENT metrics (Prometheus) ---
+let counterMetaToolCalls: CounterT | undefined;
+let histMetaToolLatencyMs: HistogramT | undefined;
+let gaugeMetaRouteConfidence: GaugeT | undefined;
+let counterMetaParseFailures: CounterT | undefined;
+let counterMetaConsentGates: CounterT | undefined;
+let counterReceiptsWritten: CounterT | undefined;
+let counterMetaCitations: CounterT | undefined;
+let histMetaTurnLatencyMs: HistogramT | undefined;
+let counterMetaTokensIn: CounterT | undefined;
+let counterMetaTokensOut: CounterT | undefined;
+let counterMetaToolLedgerHits: CounterT | undefined;
+let counterMetaToolSkippedByLedger: CounterT | undefined;
+let counterMetaToolGatedSkips: CounterT | undefined;
+let counterMetaToolErrors: CounterT | undefined;
+let histLLMRequestLatencyMs: HistogramT | undefined;
+let counterVerificationRuns: CounterT | undefined;
+let counterWebAllowlistBlock: CounterT | undefined;
+let counterSanitizationActions: CounterT | undefined;
+let counterCitationsByDomain: CounterT | undefined;
+// Crawler (Prometheus)
+let counterCrawlerEngineUsage: CounterT | undefined;
+let counterCrawlerPagesCrawled: CounterT | undefined;
+let counterCrawlerPageFailures: CounterT | undefined;
+let histCrawlerRenderMs: HistogramT | undefined;
+let counterCrawlerBytesDownloaded: CounterT | undefined;
+let counterCrawlerScreenshotBytes: CounterT | undefined;
+let histPolicyExtractionConfidence: HistogramT | undefined;
 
 async function ensureProm(): Promise<void> {
   if (!IS_PROM) return;
@@ -229,12 +280,6 @@ async function ensureProm(): Promise<void> {
       labelNames: ['intent'],
       registers: [register],
     }) as CounterT;
-    counterRouterLowConf = new Counter({
-      name: 'router_low_conf_total',
-      help: 'Router low confidence routes',
-      labelNames: ['intent'],
-      registers: [register],
-    }) as CounterT;
     counterClarify = new Counter({
       name: 'clarify_total',
       help: 'Clarifications requested',
@@ -276,6 +321,161 @@ async function ensureProm(): Promise<void> {
       labelNames: ['mode'],
       registers: [register],
     }) as CounterT;
+
+    // META-AGENT specific
+    counterMetaToolCalls = new Counter({
+      name: 'meta_tool_calls_total',
+      help: 'Meta agent tool calls',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolErrors = new Counter({
+      name: 'meta_tool_errors_total',
+      help: 'Meta agent tool errors',
+      labelNames: ['tool','error'],
+      registers: [register],
+    }) as CounterT;
+    histMetaToolLatencyMs = new Histogram({
+      name: 'meta_tool_latency_ms',
+      help: 'Meta agent tool latency (ms)',
+      labelNames: ['tool'],
+      buckets: [50, 100, 200, 400, 800, 2000, 4000],
+      registers: [register],
+    }) as HistogramT;
+    gaugeMetaRouteConfidence = new Gauge({
+      name: 'meta_route_confidence',
+      help: 'Meta agent routing confidence (0..1)',
+      labelNames: ['intent'],
+      registers: [register],
+    }) as GaugeT;
+    counterMetaParseFailures = new Counter({
+      name: 'meta_parse_failures_total',
+      help: 'Meta agent parse failures (e.g., JSON args)',
+      registers: [register],
+    }) as CounterT;
+    counterMetaConsentGates = new Counter({
+      name: 'meta_consent_gates_total',
+      help: 'Consent gates triggered by type',
+      labelNames: ['type'],
+      registers: [register],
+    }) as CounterT;
+    counterReceiptsWritten = new Counter({
+      name: 'receipts_written_total',
+      help: 'Receipts persisted before verification',
+      registers: [register],
+    }) as CounterT;
+    counterMetaCitations = new Counter({
+      name: 'meta_citations_total',
+      help: 'Citations recorded by meta agent',
+      registers: [register],
+    }) as CounterT;
+    histMetaTurnLatencyMs = new Histogram({
+      name: 'meta_turn_latency_ms',
+      help: 'Meta agent turn latency (ms)',
+      buckets: [100, 300, 600, 1000, 2000, 5000, 8000],
+      registers: [register],
+    }) as HistogramT;
+    counterMetaTokensIn = new Counter({
+      name: 'meta_tokens_in_total',
+      help: 'Estimated input tokens processed by meta agent',
+      registers: [register],
+    }) as CounterT;
+    counterMetaTokensOut = new Counter({
+      name: 'meta_tokens_out_total',
+      help: 'Estimated output tokens produced by meta agent',
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolLedgerHits = new Counter({
+      name: 'meta_tool_ledger_hits_total',
+      help: 'Duplicate tool call hits within a turn',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolSkippedByLedger = new Counter({
+      name: 'meta_tool_skipped_due_ledger_total',
+      help: 'Tool calls skipped due to prior terminal failure in ledger',
+      labelNames: ['tool'],
+      registers: [register],
+    }) as CounterT;
+    counterMetaToolGatedSkips = new Counter({
+      name: 'meta_tool_gated_skips_total',
+      help: 'Tool calls gated by route selection',
+      labelNames: ['tool','route'],
+      registers: [register],
+    }) as CounterT;
+
+    // LLM + verification + security
+    histLLMRequestLatencyMs = new Histogram({
+      name: 'llm_request_latency_ms',
+      help: 'LLM request latency (ms)',
+      labelNames: ['provider','model','type'],
+      buckets: [50,100,200,400,800,1500,3000,6000,12000],
+      registers: [register],
+    }) as HistogramT;
+    counterVerificationRuns = new Counter({
+      name: 'verification_runs_total',
+      help: 'Verification runs by verdict',
+      labelNames: ['verdict'],
+      registers: [register],
+    }) as CounterT;
+    counterWebAllowlistBlock = new Counter({
+      name: 'web_allowlist_block_total',
+      help: 'Blocked host attempts (allowlist)',
+      labelNames: ['host'],
+      registers: [register],
+    }) as CounterT;
+    counterSanitizationActions = new Counter({
+      name: 'sanitization_actions_total',
+      help: 'Sanitization actions performed',
+      labelNames: ['type'],
+      registers: [register],
+    }) as CounterT;
+    counterCitationsByDomain = new Counter({
+      name: 'citations_total',
+      help: 'Citations aggregated by domain',
+      labelNames: ['domain'],
+      registers: [register],
+    }) as CounterT;
+
+    // Crawler metrics
+    counterCrawlerEngineUsage = new Counter({
+      name: 'crawler_engine_usage_total',
+      help: 'Crawler engine usage count',
+      labelNames: ['engine'],
+      registers: [register],
+    }) as CounterT;
+    counterCrawlerPagesCrawled = new Counter({
+      name: 'crawler_pages_crawled_total',
+      help: 'Total pages crawled',
+      registers: [register],
+    }) as unknown as CounterT;
+    counterCrawlerPageFailures = new Counter({
+      name: 'crawler_page_failures_total',
+      help: 'Total crawler page failures',
+      registers: [register],
+    }) as unknown as CounterT;
+    histCrawlerRenderMs = new Histogram({
+      name: 'crawler_page_render_time_ms',
+      help: 'Crawler page render time (ms)',
+      buckets: [100, 300, 600, 1000, 2000, 5000, 8000],
+      registers: [register],
+    }) as HistogramT;
+    counterCrawlerBytesDownloaded = new Counter({
+      name: 'crawler_bytes_downloaded_total',
+      help: 'Crawler bytes downloaded (approx)',
+      registers: [register],
+    }) as unknown as CounterT;
+    counterCrawlerScreenshotBytes = new Counter({
+      name: 'crawler_screenshot_bytes_total',
+      help: 'Crawler screenshot bytes (approx)',
+      registers: [register],
+    }) as unknown as CounterT;
+    histPolicyExtractionConfidence = new Histogram({
+      name: 'policy_extraction_confidence',
+      help: 'Policy extraction confidence score',
+      buckets: [0.2, 0.4, 0.6, 0.8, 1.0],
+      registers: [register],
+    }) as HistogramT;
   })();
   return initPromise;
 }
@@ -314,11 +514,6 @@ export function incTurn(intent: string) {
   void pushIngest('chat_turn_total', { intent: intent || 'unknown' });
 }
 
-export function incRouterLowConf(intent: string) {
-  bump(routerLowConf, intent || 'unknown');
-  if (counterRouterLowConf) counterRouterLowConf.inc({ intent: intent || 'unknown' });
-  void pushIngest('router_low_conf_total', { intent: intent || 'unknown' });
-}
 
 export function incClarify(intent: string, slot: string) {
   const key = `${intent || 'unknown'}:${slot || 'unknown'}`;
@@ -403,6 +598,104 @@ export function observeE2E(durationMs: number) {
   }
   histE2ESeconds?.observe({}, durationMs / 1000);
   void pushIngest('e2e_latency_ms', {}, durationMs);
+}
+
+// --- META-AGENT public helpers ---
+export function incMetaToolCall(tool: string) {
+  const key = tool || 'unknown';
+  metaToolCalls[key] = (metaToolCalls[key] ?? 0) + 1;
+  toolCallsTotal += 1; // contribute to overall tool call count
+  counterMetaToolCalls?.inc({ tool: key });
+}
+
+export function incMetaToolError(tool: string, error: string) {
+  const t = tool || 'unknown';
+  const e = (error || 'unknown').toLowerCase();
+  const key = `${t}:${e}`;
+  metaToolErrors[key] = (metaToolErrors[key] ?? 0) + 1;
+  counterMetaToolErrors?.inc({ tool: t, error: e });
+}
+
+export function observeMetaToolLatency(tool: string, ms: number) {
+  const key = tool || 'unknown';
+  const agg = metaToolLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+  addLatency(agg as any, Math.max(0, Math.floor(ms)));
+  metaToolLatency.set(key, agg);
+  histMetaToolLatencyMs?.observe({ tool: key }, Math.max(0, ms));
+}
+
+export function setMetaRouteConfidence(v: number, intent?: string) {
+  const val = Math.max(0, Math.min(1, isFinite(v) ? v : 0));
+  metaRouteConfidence = val;
+  if (gaugeMetaRouteConfidence) gaugeMetaRouteConfidence.set({ intent: intent || 'unknown' }, val);
+}
+
+/**
+ * Expose latest router confidence for correlation at verify time.
+ * Note: lightweight, per-process value; suitable for dev/demo dashboards.
+ */
+export function getMetaRouteConfidence(): number {
+  return metaRouteConfidence;
+}
+
+export function incMetaParseFailure() {
+  metaParseFailures += 1;
+  counterMetaParseFailures?.inc();
+}
+
+export function incMetaConsentGate(type: 'web' | 'deep' | 'web_after_rag') {
+  const t = type || 'web';
+  metaConsentGates[t] = (metaConsentGates[t] ?? 0) + 1;
+  counterMetaConsentGates?.inc({ type: t });
+}
+
+export function incReceiptsWrittenTotal() {
+  receiptsWritten += 1;
+  counterReceiptsWritten?.inc();
+}
+
+export function addMetaCitationsCount(n: number) {
+  const v = Math.max(0, Math.floor(n || 0));
+  metaCitations += v;
+  for (let i = 0; i < v; i++) counterMetaCitations?.inc();
+}
+
+export function addMetaTokens(inTok: number, outTok: number) {
+  const i = Math.max(0, Math.floor(inTok || 0));
+  const o = Math.max(0, Math.floor(outTok || 0));
+  metaTokensIn += i; metaTokensOut += o;
+  for (let k = 0; k < i; k++) counterMetaTokensIn?.inc();
+  for (let k = 0; k < o; k++) counterMetaTokensOut?.inc();
+}
+
+export function incMetaToolLedgerHit(tool: string) {
+  const key = tool || 'unknown';
+  metaToolLedgerHits[key] = (metaToolLedgerHits[key] ?? 0) + 1;
+  counterMetaToolLedgerHits?.inc({ tool: key });
+}
+
+export function incMetaToolSkippedByLedger(tool: string) {
+  const key = tool || 'unknown';
+  metaToolSkippedByLedger[key] = (metaToolSkippedByLedger[key] ?? 0) + 1;
+  counterMetaToolSkippedByLedger?.inc({ tool: key });
+}
+
+export function incMetaToolGatedSkip(tool: string, route: string) {
+  const key = tool || 'unknown';
+  const r = route || 'unknown';
+  const mapKey = `${key}:${r}`;
+  metaToolGatedSkips[mapKey] = (metaToolGatedSkips[mapKey] ?? 0) + 1;
+  counterMetaToolGatedSkips?.inc({ tool: key, route: r });
+}
+
+export function observeMetaTurnLatency(ms: number) {
+  addLatency(metaTurnLatency as any, Math.max(0, Math.floor(ms)));
+  histMetaTurnLatencyMs?.observe({}, Math.max(0, ms));
+}
+
+export function noteMetaRoutingDecision(intent: string) {
+  const key = intent || 'unknown';
+  metaRoutingDecision[key] = (metaRoutingDecision[key] ?? 0) + 1;
 }
 
 // Session helpers (best-effort, dev-only)
@@ -493,6 +786,49 @@ export function observeExternal(labels: Labels, durationMs: number) {
   toolCallsTotal += 1;
 }
 
+export function observeLLMRequest(
+  provider: string,
+  model: string,
+  type: 'chat' | 'tool' | 'verify',
+  durationMs: number,
+) {
+  const key = `${provider || 'unknown'}:${model || 'unknown'}:${type}`;
+  const agg = llmLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+  addLatency(agg as any, Math.max(0, Math.floor(durationMs)));
+  llmLatency.set(key, agg);
+  histLLMRequestLatencyMs?.observe({ provider: provider || 'unknown', model: model || 'unknown', type }, Math.max(0, durationMs));
+}
+
+/**
+ * Record Crawlee crawler metrics in a unified way.
+ * Use engine labels of 'cheerio' or 'playwright'.
+ */
+export function observeCrawler(
+  engine: 'cheerio' | 'playwright',
+  durationMs: number,
+  ok: boolean,
+  extra?: { bytes?: number; screenshotBytes?: number }
+) {
+  // External-style aggregate for JSON snapshot
+  observeExternal(
+    { target: 'crawler', status: ok ? 'ok' : 'error', domain: engine },
+    durationMs,
+  );
+  // Local counters
+  const key = engine || 'unknown';
+  crawlerEngineUsage[key] = (crawlerEngineUsage[key] ?? 0) + 1;
+  if (ok) crawlerPagesCrawled += 1; else crawlerPageFailures += 1;
+  addLatency(crawlerRenderLatency as any, Math.max(0, Math.floor(durationMs)));
+  if (extra?.bytes) crawlerBytesDownloaded += Math.max(0, Math.floor(extra.bytes));
+  if (extra?.screenshotBytes) crawlerScreenshotBytes += Math.max(0, Math.floor(extra.screenshotBytes));
+  // Prometheus
+  counterCrawlerEngineUsage?.inc({ engine: key });
+  if (ok) counterCrawlerPagesCrawled?.inc(); else counterCrawlerPageFailures?.inc();
+  histCrawlerRenderMs?.observe({ engine: key } as any, Math.max(0, durationMs));
+  for (let i = 0; i < Math.max(0, Math.floor(extra?.bytes || 0)); i += 65536) counterCrawlerBytesDownloaded?.inc();
+  for (let i = 0; i < Math.max(0, Math.floor(extra?.screenshotBytes || 0)); i += 65536) counterCrawlerScreenshotBytes?.inc();
+}
+
 export function updateBreakerMetrics() {
   if (!gaugeBreakerState || !counterBreakerEvents) return;
   
@@ -535,18 +871,38 @@ export function observePolicyBrowser(
   success: boolean = true,
   confidence?: number
 ) {
-  observeExternal(
-    {
-      target: 'policy_browser',
-      status: success ? 'ok' : 'error',
-    },
-    durationMs
-  );
-  
-  // Log confidence for monitoring extraction quality
+  // Backwards-compatible wrapper: forward to observeCrawler
+  observeCrawler(engine, durationMs, success);
   if (confidence !== undefined) {
-    console.log(`policy_browser_confidence: ${confidence.toFixed(2)} (${engine})`);
+    try { histPolicyExtractionConfidence?.observe({}, Math.max(0, Math.min(1, confidence))); } catch {}
+    // track summary for JSON snapshot
+    (policyExtractionSummary as any).count += 1;
+    (policyExtractionSummary as any).sum += Math.max(0, Math.min(1, confidence));
   }
+}
+
+export function incVerificationRun(verdict: 'pass'|'warn'|'fail') {
+  const v = verdict || 'fail';
+  verificationRuns[v] = (verificationRuns[v] ?? 0) + 1;
+  counterVerificationRuns?.inc({ verdict: v });
+}
+
+export function incWebAllowlistBlock(host: string) {
+  const h = (host || 'unknown').toLowerCase();
+  webAllowlistBlocks[h] = (webAllowlistBlocks[h] ?? 0) + 1;
+  counterWebAllowlistBlock?.inc({ host: h });
+}
+
+export function addSanitizationAction(type: string) {
+  const t = (type || 'unknown').toLowerCase();
+  sanitizationActions[t] = (sanitizationActions[t] ?? 0) + 1;
+  counterSanitizationActions?.inc({ type: t });
+}
+
+export function addCitationDomain(domain: string) {
+  const d = (domain || 'unknown').toLowerCase();
+  citationsByDomain[d] = (citationsByDomain[d] ?? 0) + 1;
+  counterCitationsByDomain?.inc({ domain: d });
 }
 
 export function incBreakerEvent(target: string, type: string) {
@@ -656,8 +1012,6 @@ export function snapshot() {
   return { 
     messages_total: messages, 
     chat_turns: chatTurns,
-    router_low_conf: routerLowConf,
-    router_confidence_buckets: routerConfidenceBuckets,
     clarify_requests: clarifyRequests,
     clarify_resolved: clarifyResolved,
     fallbacks,
@@ -700,6 +1054,43 @@ export function snapshot() {
       })(),
       total_tool_calls: toolCallsTotal,
     },
+    meta: {
+      route_confidence: metaRouteConfidence,
+      tool_calls: metaToolCalls,
+      tool_latency_ms: Object.fromEntries(Array.from(metaToolLatency.entries()).map(([k, a]) => [k, { count: a.count, avg: a.count>0?Number((a.sum/a.count).toFixed(1)):0, max: a.max } ])),
+      tool_errors: ((): Record<string, Record<string, number>> => {
+        const out: Record<string, Record<string, number>> = {};
+        for (const [key, count] of Object.entries(metaToolErrors)) {
+          const i = key.indexOf(':');
+          const tool = i >= 0 ? key.slice(0, i) : key;
+          const err = i >= 0 ? key.slice(i + 1) : 'unknown';
+          if (!out[tool]) out[tool] = {};
+          out[tool][err] = (out[tool][err] ?? 0) + count;
+        }
+        return out;
+      })(),
+      parse_failures: metaParseFailures,
+      consent_gates: metaConsentGates,
+      receipts_written_total: receiptsWritten,
+      citations_count: metaCitations,
+      citations_by_domain: citationsByDomain,
+      tokens: { in: metaTokensIn, out: metaTokensOut },
+      turn_latency_ms: { count: metaTurnLatency.count, avg: metaTurnLatency.count>0?Number((metaTurnLatency.sum/metaTurnLatency.count).toFixed(1)):0, max: metaTurnLatency.max },
+      routing_decision: metaRoutingDecision,
+      ledger: {
+        duplicate_hits_by_tool: metaToolLedgerHits,
+        skipped_by_ledger_by_tool: metaToolSkippedByLedger,
+        gated_skips_by_tool_route: metaToolGatedSkips,
+      },
+      verification_runs: verificationRuns,
+      policy_extraction_confidence: {
+        count: policyExtractionSummary.count,
+        avg: policyExtractionSummary.count > 0 ? Number((policyExtractionSummary.sum / policyExtractionSummary.count).toFixed(3)) : 0,
+      },
+    },
+    llm: {
+      request_latency_ms: Object.fromEntries(Array.from(llmLatency.entries()).map(([key, a]) => [key, { count: a.count, avg: a.count>0?Number((a.sum/a.count).toFixed(1)):0, max: a.max } ])),
+    },
     business: {
       total_sessions: totalSessions,
       resolved_sessions: resolvedSessions,
@@ -715,6 +1106,10 @@ export function snapshot() {
     },
     breaker: { byTarget: getAllBreakerStats() },
     rate_limit: { byTarget: getAllLimiterStats() },
+    security: {
+      web_allowlist_blocks: webAllowlistBlocks,
+      sanitization_actions: sanitizationActions,
+    },
     session_store_kind: sessionStoreKind,
     session_ttl_sec: sessionTtlSec,
   };
@@ -770,9 +1165,6 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'chat_turn_total':
       incTurn(labels?.intent || 'unknown');
       break;
-    case 'router_low_conf_total':
-      incRouterLowConf(labels?.intent || 'unknown');
-      break;
     case 'clarify_total':
       incClarify(labels?.intent || 'unknown', labels?.slot || 'unknown');
       break;
@@ -797,6 +1189,57 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
     case 'generated_answers_total':
       incGeneratedAnswer();
       break;
+    // Meta-agent events
+    case 'meta_tool_call_total': {
+      const tool = labels?.tool || 'unknown';
+      incMetaToolCall(tool);
+      break;
+    }
+    case 'meta_tool_latency_ms': {
+      const tool = labels?.tool || 'unknown';
+      if (typeof value === 'number') observeMetaToolLatency(tool, value);
+      break;
+    }
+    case 'meta_route_confidence': {
+      const intent = labels?.intent || 'unknown';
+      if (typeof value === 'number') setMetaRouteConfidence(value, intent);
+      break;
+    }
+    case 'meta_parse_failures_total':
+      incMetaParseFailure();
+      break;
+    case 'meta_consent_gates_total': {
+      const type = (labels?.type as any) || 'web';
+      incMetaConsentGate(type);
+      break;
+    }
+    case 'receipts_written_total':
+      incReceiptsWrittenTotal();
+      break;
+    case 'meta_citations_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaCitationsCount(n);
+      break;
+    }
+    case 'meta_tokens_in_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaTokens(n, 0);
+      break;
+    }
+    case 'meta_tokens_out_total': {
+      const n = typeof value === 'number' ? value : 1;
+      addMetaTokens(0, n);
+      break;
+    }
+    case 'meta_turn_latency_ms': {
+      if (typeof value === 'number') observeMetaTurnLatency(value);
+      break;
+    }
+    case 'meta_routing_decision': {
+      const intent = labels?.intent || 'unknown';
+      noteMetaRoutingDecision(intent);
+      break;
+    }
     case 'search_upgrade_request_total':
       // allow external processes to record upgrade requests
       searchUpgradeRequests += typeof value === 'number' ? Math.max(1, Math.floor(value)) : 1;
@@ -816,15 +1259,7 @@ export function ingestEvent(name: string, labels?: Record<string, string>, value
   }
 }
 
-// Router confidence bucket observation
-export function observeRouterConfidence(confidence: number) {
-  const c = isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-  if (c < 0.5) routerConfidenceBuckets['0.0-0.5'] = (routerConfidenceBuckets['0.0-0.5'] ?? 0) + 1;
-  else if (c < 0.6) routerConfidenceBuckets['0.5-0.6'] = (routerConfidenceBuckets['0.5-0.6'] ?? 0) + 1;
-  else if (c < 0.75) routerConfidenceBuckets['0.6-0.75'] = (routerConfidenceBuckets['0.6-0.75'] ?? 0) + 1;
-  else if (c < 0.9) routerConfidenceBuckets['0.75-0.9'] = (routerConfidenceBuckets['0.75-0.9'] ?? 0) + 1;
-  else routerConfidenceBuckets['0.9-1.0'] = (routerConfidenceBuckets['0.9-1.0'] ?? 0) + 1;
-}
+// Legacy router confidence observer removed in Phase 3 cleanup.
 
 export function observeStageVerification(
   stage: 'guard'|'extract'|'route'|'gather'|'blend'|'verify',
@@ -870,36 +1305,7 @@ export function observeStage(
   addLatency(s2.latency, durationMs);
 }
 
-export function observeRouterResult(
-  intent: string,
-  confidence: number,
-  missingSlots: number,
-  success?: boolean
-) {
-  observeRouterConfidence(confidence);
-  
-  // Track confidence correlation if success is known
-  if (success !== undefined) {
-    observeConfidenceOutcome('router', confidence, success, intent);
-  }
-  
-  // Track missing slots as a quality indicator
-  if (missingSlots > 0) {
-    bump(clarifyRequests, `${intent}:missing_slots`);
-  }
-
-  // Track anomalies
-  if (missingSlots > 0 && confidence >= 0.9) {
-    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
-    r.high_conf_miss += 1;
-    routerAnomalies.set(intent || 'unknown', r);
-  }
-  if (missingSlots === 0 && confidence < 0.6 && success) {
-    const r = routerAnomalies.get(intent || 'unknown') || { high_conf_miss: 0, low_conf_hit: 0 };
-    r.low_conf_hit += 1;
-    routerAnomalies.set(intent || 'unknown', r);
-  }
-}
+// Legacy router observers removed in Phase 3 cleanup.
 
 export function observeSearchQuality(
   complexity: { isComplex: boolean; confidence: number },
@@ -1078,10 +1484,27 @@ export function snapshotV2() {
     if (t.timeout_rate > 0.05) alerts.push({ message: `${t.target} timeouts ${(t.timeout_rate*100).toFixed(1)}%`, level: 'alert' });
   }
 
+  // Build a conversation summary block for the dashboard (v2)
+  const totalClarifyReq = Object.values(clarifyRequests).reduce((a, b) => a + b, 0);
+  const totalClarifyRes = Object.values(clarifyResolved).reduce((a, b) => a + b, 0);
+  const conv: Array<{ label: string; value: number; format: 'percent'; tone?: string }> = [];
+  const vTotal = (verificationRuns.pass || 0) + (verificationRuns.warn || 0) + (verificationRuns.fail || 0);
+  const vPassRate = vTotal > 0 ? Number(((verificationRuns.pass || 0) / vTotal).toFixed(3)) : (generatedAnswers > 0 ? Number((verifyPass / generatedAnswers).toFixed(3)) : 0);
+  const vFailRate = vTotal > 0 ? Number(((verificationRuns.fail || 0) / vTotal).toFixed(3)) : (generatedAnswers > 0 ? Number((verifyFail / generatedAnswers).toFixed(3)) : 0);
+  conv.push({ label: 'Verify pass rate', value: vPassRate, format: 'percent', tone: vPassRate >= 0.9 ? 'positive' : vPassRate < 0.8 ? 'critical' : '' });
+  conv.push({ label: 'Verify fail rate', value: vFailRate, format: 'percent', tone: vFailRate > 0.15 ? 'critical' : '' });
+  if (answersUsingExternal > 0) {
+    const coverage = Number((answersWithCitations / answersUsingExternal).toFixed(3));
+    conv.push({ label: 'Citation coverage', value: coverage, format: 'percent', tone: coverage >= 0.8 ? 'positive' : '' });
+  }
+  if (totalClarifyReq > 0) {
+    conv.push({ label: 'Clarification efficacy', value: Number((totalClarifyRes / totalClarifyReq).toFixed(3)), format: 'percent' });
+  }
+
   return {
     pipeline: { stages, alerts },
     intents,
-    quality: { verify, confidence },
+    quality: { conversation: conv, verify, confidence },
     search,
     external: { targets },
     llm,

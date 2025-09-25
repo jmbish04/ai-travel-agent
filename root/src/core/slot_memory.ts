@@ -101,21 +101,23 @@ export async function updateThreadSlots(
     currentSlots = prevState.slots || {};
     lastIntent = prevState.lastIntent;
   }
-  
+
+  const intentForTransition = newIntent === 'system' ? lastIntent : newIntent;
+
   // Handle intent transitions with context management
-  if (newIntent && lastIntent && newIntent !== lastIntent) {
+  if (intentForTransition && lastIntent && intentForTransition !== lastIntent) {
     debugLog('🔧 SLOTS: Intent transition detected', { 
       threadId, 
       from: lastIntent, 
-      to: newIntent 
+      to: intentForTransition 
     });
     
     // Get slots to preserve based on intent transition
-    const preservedSlots = getSlotsToPreserve(currentSlots, lastIntent, newIntent);
+    const preservedSlots = getSlotsToPreserve(currentSlots, lastIntent, intentForTransition);
     
     // Clear workflow state immediately
     const cleanedSlots = clearWorkflowState(preservedSlots);
-    
+
     debugLog('🔧 SLOTS: Context transition applied', {
       threadId,
       preserved: Object.keys(preservedSlots),
@@ -149,7 +151,7 @@ export async function updateThreadSlots(
     ...prevState,
     slots: updatedSlots,
     expectedMissing,
-    lastIntent: (newIntent || lastIntent) as SlotState['lastIntent'],
+    lastIntent: (newIntent === 'system' ? lastIntent : (newIntent || lastIntent)) as SlotState['lastIntent'],
     sessionMetadata
   };
   await store.setJson('state', threadId, newState);
@@ -472,6 +474,8 @@ export function normalizeSlots(
     delete safe.destinationCity;
     delete safe.dates; // Don't persist dates from "today"
     delete safe.month;
+    delete safe.departureDate;
+    delete safe.returnDate;
   }
 
   // 4) Apply existing filtering logic
@@ -531,26 +535,34 @@ export function readConsentState(slots: Record<string, string>) {
 }
 
 export async function writeConsentState(threadId: string, next: { type: 'web' | 'deep' | 'web_after_rag' | '', pending: string }): Promise<void> {
-  const updates: Record<string, string> = {
-    awaiting_search_consent: '',
-    pending_search_query: '',
-    awaiting_deep_research_consent: '',
-    pending_deep_research_query: '',
-    awaiting_web_search_consent: '',
-    pending_web_search_query: ''
-  };
-  
+  const baseRemovals = [
+    'awaiting_search_consent',
+    'pending_search_query',
+    'awaiting_deep_research_consent',
+    'pending_deep_research_query',
+    'awaiting_web_search_consent',
+    'pending_web_search_query',
+    'deep_research_consent_needed',
+    'complexity_reasoning',
+    'complexity_score'
+  ];
+
+  const updates: Record<string, string> = {};
+
   if (next.type === 'web') {
     updates.awaiting_search_consent = 'true';
     updates.pending_search_query = next.pending;
   } else if (next.type === 'deep') {
     updates.awaiting_deep_research_consent = 'true';
     updates.pending_deep_research_query = next.pending;
+    updates.deep_research_consent_needed = 'true';
   } else if (next.type === 'web_after_rag') {
     updates.awaiting_web_search_consent = 'true';
     updates.pending_web_search_query = next.pending;
   }
-  
+
+  const removals = baseRemovals.filter((key) => !(key in updates));
+
   console.log(`🔧 CONSENT: writeConsentState called with type='${next.type}', updates:`, updates);
-  await updateThreadSlots(threadId, updates, []);
+  await updateThreadSlots(threadId, updates, [], removals);
 }

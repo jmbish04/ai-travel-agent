@@ -16,7 +16,8 @@ export interface SessionStore {
   clear(id: string): Promise<void>;
 }
 
-export const MAX_MESSAGES = 16;
+const rawMax = Number(process.env.SESSION_MAX_MESSAGES ?? '0');
+export const MAX_MESSAGES = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : undefined;
 
 const storeSymbol = Symbol('sessionStore');
 let globalStore: SessionStore | undefined;

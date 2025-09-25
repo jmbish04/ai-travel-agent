@@ -2,6 +2,7 @@ import { BraveSearch } from 'brave-search';
 import { getPrompt } from '../core/prompts.js';
 import { callLLM } from '../core/llm.js';
 import { deepResearchPages } from './crawlee_research.js';
+import { isHostBlocked } from '../util/blocked_hosts.js';
 import { withResilience } from '../util/resilience.js';
 import { observeExternal } from '../util/metrics.js';
 
@@ -56,7 +57,7 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
     if (log) log.debug(`✅ Brave Search success after ${duration}ms`);
     
     // Extract results from the wrapper response
-    const results: SearchResult[] = [];
+    let results: SearchResult[] = [];
     
     if (response.web?.results) {
       for (const result of response.web.results) {
@@ -67,6 +68,10 @@ export async function searchTravelInfo(query: string, log?: any, deepResearch = 
         });
       }
     }
+    // Filter out blocked hosts
+    results = results.filter(r => {
+      try { return !isHostBlocked(new URL(r.url).hostname); } catch { return true; }
+    });
     
     if (log) {
       log.debug(`✅ Brave Search success: ${results.length} results`);

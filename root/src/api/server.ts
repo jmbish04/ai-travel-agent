@@ -23,7 +23,9 @@ log.info({ sessionStore: sessionConfig.kind, ttlSec: sessionConfig.ttlSec }, 'Se
 // Rate limiter for API endpoints
 const apiRateLimiter = new RateLimiter(RATE_LIMITER_CONFIG);
 
-app.use(express.json({ limit: '512kb' }));
+// Allow large payloads to preserve full context; configurable via BODY_LIMIT
+const bodyLimit = process.env.BODY_LIMIT || '2.mb';
+app.use(express.json({ limit: bodyLimit }));
 
 // CORS support for frontend integration
 app.use((req, res, next) => {
@@ -94,5 +96,11 @@ preloadPrompts()
   .catch(() => void 0)
   .finally(() => {
     app.listen(port, () => log.info({ port }, 'HTTP server started'));
+    // Optionally start the metrics dashboard server in-process for coherence
+    // This ensures http://localhost:3001 reads metrics from the same process
+    if ((process.env.METRICS_DASHBOARD || '').toLowerCase() === 'true') {
+      import('../util/metrics-server.js')
+        .then(() => log.info('Metrics dashboard server started (in-process)'))
+        .catch((err) => log.warn({ err }, 'Failed to start metrics dashboard server'));
+    }
   });
-

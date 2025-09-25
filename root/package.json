@@ -34,6 +34,7 @@
     "dashboard": "open http://localhost:3001",
     "prepublishOnly": "npm run build",
     "test": "jest --runInBand --config jest.config.cjs",
+    "test:coverage": "COVERAGE=true jest --runInBand --config jest.config.cjs",
     "test:transcripts": "RECORD_TRANSCRIPTS=true jest --runInBand --config jest.config.cjs",
     "test:weather": "jest --runInBand --config jest.config.cjs --testNamePattern=\"weather|misspelled|abbreviation\"",
     "test:packing": "jest --runInBand --config jest.config.cjs --testNamePattern=\"packing\"",
@@ -83,8 +84,8 @@
     "test:unit": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/",
     "test:unit:watch": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --watch",
     "test:unit:circuit": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"circuit|rate\"",
-    "test:unit:ai": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"nlp|ner|transformers|ai\"",
-    "test:unit:router": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"router|policy\"",
+    "test:unit:ai": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"ai\"",
+    "test:unit:router": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"policy\"",
     "test:unit:data": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/unit/ --testNamePattern=\"amadeus|vectara|flight|parser\"",
     "test:integration": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/integration/",
     "test:integration:watch": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/integration/ --watch",
@@ -100,13 +101,13 @@
     "onnxruntime-web": "1.19.2"
   },
   "dependencies": {
-    "@huggingface/transformers": "3.0.0",
+    
     "@langchain/langgraph": "^0.4.9",
     "@types/express": "^4.17.21",
     "@types/langdetect": "^0.2.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.12.12",
-    "@xenova/transformers": "^2.17.2",
+    
     "@yusifaliyevpro/countries": "^2.2.2",
     "amadeus": "^11.0.0",
     "bottleneck": "^2.19.5",

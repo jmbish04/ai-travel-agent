@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getContext } from './memory.js';
 import { fetch as undiciFetch } from 'undici';
 import { getPrompt } from './prompts.js';
+import { observeLLMRequest, addMetaTokens } from '../util/metrics.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
 import type { Logger } from 'pino';
@@ -56,14 +57,38 @@ export type IntentClassification = {
   slots?: Record<string, unknown>;
 };
 
-// Simple token counter (approximate)
+// Simple token counter (approximate, for logs only)
 function countTokens(text: string): number {
-  return Math.ceil(text.length / 4); // Rough approximation: 1 token ≈ 4 characters
+  return Math.ceil(text.length / 4);
+}
+
+function numFromEnv(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function buildGenParams(format: ResponseFormat, kind: 'plain' | 'tools') {
+  // Temperature
+  const baseTemp = numFromEnv('LLM_TEMPERATURE');
+  const jsonTemp = numFromEnv('LLM_TEMPERATURE_JSON');
+  const toolsTemp = numFromEnv('LLM_TOOLS_TEMPERATURE');
+  const temperature = kind === 'tools'
+    ? (toolsTemp ?? baseTemp ?? 0.2)
+    : (format === 'json' ? (jsonTemp ?? baseTemp ?? 0.2) : (baseTemp ?? 0.5));
+  // Max output tokens (omit if not provided to allow provider defaults)
+  const maxTokens = kind === 'tools' ? (numFromEnv('LLM_TOOLS_MAX_TOKENS') ?? numFromEnv('LLM_MAX_TOKENS'))
+                                     : numFromEnv('LLM_MAX_TOKENS');
+  // Sampling controls
+  const topP = numFromEnv('LLM_TOP_P');
+  const topK = numFromEnv('LLM_TOP_K');
+  return { temperature, maxTokens, topP, topK };
 }
 
 export async function callLLM(
   prompt: string,
-  _opts: { responseFormat?: ResponseFormat; log?: any; timeoutMs?: number } = {},
+  _opts: { responseFormat?: ResponseFormat; log?: any; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
   const trimmed = prompt?.trim?.() ?? '';
   if (!trimmed) {
@@ -94,13 +119,13 @@ export async function callLLM(
 
   if (baseUrl && apiKey && preferredModel) {
     // Try preferred model first
-    const result = await tryModel(baseUrl, apiKey, preferredModel, prompt, format, log || undefined, _opts.timeoutMs);
+    const result = await tryModel(baseUrl, apiKey, preferredModel, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
     if (result) return result;
     
     // Fallback to other models
     for (const model of models) {
       if (model !== preferredModel) {
-        const result = await tryModel(baseUrl, apiKey, model, prompt, format, log || undefined, _opts.timeoutMs);
+        const result = await tryModel(baseUrl, apiKey, model, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
         if (result) return result;
       }
     }
@@ -110,7 +135,7 @@ export async function callLLM(
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   if (openrouterKey) {
     for (const model of models) {
-      const result = await tryModel('https://openrouter.ai/api/v1', openrouterKey, model, prompt, format, log || undefined, _opts.timeoutMs);
+      const result = await tryModel('https://openrouter.ai/api/v1', openrouterKey, model, prompt, format, log || undefined, _opts.timeoutMs, _opts.signal);
       if (result) return result;
     }
   }
@@ -126,7 +151,8 @@ async function tryModel(
   prompt: string,
   format: ResponseFormat,
   log?: any,
-  timeoutMs: number = 2500
+  timeoutMs: number = 2500,
+  externalSignal?: AbortSignal
 ): Promise<string | null> {
   try {
     if (log?.debug) log.debug(`🔗 Trying model: ${model} at ${baseUrl}`);
@@ -141,23 +167,34 @@ async function tryModel(
     const result = await llmCircuitBreaker.execute(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('llm_timeout')), Math.max(500, timeoutMs));
-      
+      // If caller provided a signal, link it to our internal timeout controller
+      const signal = externalSignal ? (AbortSignal as any).any?.([controller.signal, externalSignal]) || controller.signal : controller.signal;
+      const reqStart = Date.now();
+      const params = buildGenParams(format, 'plain');
+      const body: any = {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: params.temperature,
+        ...(params.maxTokens !== undefined ? { max_tokens: params.maxTokens } : {}),
+        ...(params.topP !== undefined ? { top_p: params.topP } : {}),
+        ...(params.topK !== undefined ? { top_k: params.topK } : {}),
+        ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      };
       const res = await undiciFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: format === 'json' ? 0.2 : 0.5,
-          max_tokens: 5000,
-          ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
-        }),
-        signal: controller.signal,
+        body: JSON.stringify(body),
+        signal,
       });
       clearTimeout(timer);
+      try {
+        const provider = ((): string => { try { return new URL(baseUrl).hostname || 'custom'; } catch { return 'custom'; } })();
+        const latency = Date.now() - reqStart;
+        observeLLMRequest(provider, model, 'chat', latency);
+      } catch {}
       
       if (!res.ok) {
         const errorText = await res.text();
@@ -173,6 +210,11 @@ async function tryModel(
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     const content = data?.choices?.[0]?.message?.content ?? '';
+    try {
+      if (data?.usage) {
+        addMetaTokens(Math.max(0, data.usage.prompt_tokens || 0), Math.max(0, data.usage.completion_tokens || 0));
+      }
+    } catch {}
     
     if (typeof content === 'string' && content.trim().length > 0) {
       if (log?.debug) log.debug(`✅ Model ${model} succeeded - Output: ${countTokens(content)} tokens`);
@@ -234,6 +276,134 @@ function stubSynthesize(prompt: string): string {
   
   // For regular chat responses, throw error instead of returning error message
   throw new Error("LLM service temporarily unavailable");
+}
+
+// OpenAI-style chat with tools (function calling)
+export async function chatWithToolsLLM(opts: {
+  messages: Array<{ role: 'system'|'user'|'assistant'|'tool'; content: string; name?: string; tool_call_id?: string }>;
+  tools: Array<{ type: 'function'; function: { name: string; description?: string; parameters: unknown } }>;
+  tool_choice?: 'auto' | { type: 'function'; function: { name: string } };
+  timeoutMs?: number;
+  log?: any;
+  signal?: AbortSignal;
+}): Promise<any> {
+  const baseUrl = process.env.LLM_PROVIDER_BASEURL;
+  const apiKey = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+  const model = process.env.LLM_MODEL || 'x-ai/grok-4-fast:free';
+  
+  opts.log?.debug?.({ 
+    baseUrl: !!baseUrl,
+    hasApiKey: !!apiKey,
+    model,
+    messagesCount: opts.messages?.length || 0,
+    toolsCount: opts.tools?.length || 0,
+    timeoutMs: opts.timeoutMs,
+    hasSignal: !!opts.signal
+  }, '🔧 LLM: Starting chatWithToolsLLM');
+  
+  if (!baseUrl || !apiKey) {
+    opts.log?.error?.({ baseUrl: !!baseUrl, hasApiKey: !!apiKey }, '🔧 LLM: Missing baseUrl or apiKey');
+    // Return empty response to trigger local fallback
+    return { choices: [{ message: { role: 'assistant', content: '' } }] };
+  }
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1000, opts.timeoutMs ?? 15000);
+  const t = setTimeout(() => {
+    opts.log?.error?.({ timeoutMs }, '🔧 LLM: Timeout reached, aborting request');
+    controller.abort(new Error('llm_tools_timeout'));
+  }, timeoutMs);
+  const signal = opts.signal;
+  
+  const gen = buildGenParams('text', 'tools');
+  const requestBody: any = {
+    model,
+    messages: opts.messages,
+    tools: opts.tools,
+    tool_choice: opts.tool_choice || 'auto',
+    temperature: gen.temperature,
+    ...(gen.maxTokens !== undefined ? { max_tokens: gen.maxTokens } : {}),
+    ...(gen.topP !== undefined ? { top_p: gen.topP } : {}),
+    ...(gen.topK !== undefined ? { top_k: gen.topK } : {}),
+  };
+  
+  opts.log?.debug?.({ 
+    url,
+    model,
+    messagesLength: JSON.stringify(opts.messages).length,
+    toolsLength: JSON.stringify(opts.tools).length,
+    requestBodySize: JSON.stringify(requestBody).length
+  }, '🔧 LLM: Making request to LLM API');
+  
+  try {
+    const requestStart = Date.now();
+    const res = await undiciFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+      signal: signal ?? controller.signal,
+    });
+    const requestLatency = Date.now() - requestStart;
+    clearTimeout(t);
+    try {
+      const provider = ((): string => { try { return new URL(baseUrl).hostname || 'custom'; } catch { return 'custom'; } })();
+      observeLLMRequest(provider, model, 'tool', requestLatency);
+    } catch {}
+    
+    opts.log?.debug?.({ 
+      status: res.status,
+      ok: res.ok,
+      requestLatency,
+      hasResponse: !!res
+    }, '🔧 LLM: Received response from LLM API');
+    
+    if (!res.ok) {
+      const errorText = await res.text();
+      opts.log?.error?.({ 
+        status: res.status,
+        errorText: errorText.substring(0, 500),
+        requestLatency
+      }, '🔧 LLM: chatWithToolsLLM failed with non-OK status');
+      // Return explicit error envelope so callers can branch correctly
+      return { error: { status: res.status, body: errorText }, choices: [] };
+    }
+    const data = await res.json() as any;
+    
+    opts.log?.debug?.({ 
+      choicesCount: data.choices?.length || 0,
+      hasMessage: !!data.choices?.[0]?.message,
+      messageContent: data.choices?.[0]?.message?.content?.substring(0, 200),
+      hasToolCalls: !!data.choices?.[0]?.message?.tool_calls,
+      toolCallsCount: data.choices?.[0]?.message?.tool_calls?.length || 0,
+      requestLatency
+    }, '🔧 LLM: Successfully parsed LLM response');
+    try {
+      if (data?.usage) {
+        addMetaTokens(Math.max(0, data.usage.prompt_tokens || 0), Math.max(0, data.usage.completion_tokens || 0));
+      }
+    } catch {}
+    
+    return data;
+  } catch (e) {
+    const isAbortError = e instanceof Error && (e.name === 'AbortError' || e.message.includes('abort'));
+    const isTimeoutError = e instanceof Error && e.message.includes('timeout');
+    
+    opts.log?.error?.({ 
+      error: String(e),
+      errorName: e instanceof Error ? e.name : 'unknown',
+      isAbortError,
+      isTimeoutError,
+      timeoutMs
+    }, '🔧 LLM: chatWithToolsLLM error occurred');
+    
+    // Return explicit error envelope instead of empty content
+    return { error: { message: String(e) }, choices: [] };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // NLP Service Functions

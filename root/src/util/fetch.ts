@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { createLogger } from './logging.js';
 import { scheduleWithLimit } from './limiter.js';
+import { incWebAllowlistBlock } from './metrics.js';
 import { withBreaker } from './circuit.js';
 
 const log = createLogger();
@@ -83,6 +84,7 @@ export async function fetchJSON<T = unknown>(
   try {
     const u = new URL(url);
     if (!ALLOWLIST.has(u.hostname)) {
+      try { incWebAllowlistBlock(u.hostname); } catch {}
       throw new ExternalFetchError('network', 'host_not_allowed');
     }
   } catch (e) {
@@ -224,5 +226,4 @@ export async function fetchJSON<T = unknown>(
   log.error({ target, totalAttempts: retries + 1 }, '💥 All attempts failed');
   throw lastErr;
 }
-
 

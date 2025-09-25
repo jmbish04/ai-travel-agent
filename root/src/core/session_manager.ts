@@ -14,6 +14,7 @@ interface SessionMetadata {
 export type { SessionMetadata };
 
 const CURRENT_PROCESS_ID = randomUUID();
+const SESSION_SCOPE = (process.env.SESSION_SCOPE || 'global').toLowerCase();
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
@@ -32,7 +33,7 @@ export function createSessionMetadata(sessionId: string): SessionMetadata {
     id: sessionId,
     createdAt: now,
     lastAccessedAt: now,
-    processId: CURRENT_PROCESS_ID
+    processId: SESSION_SCOPE === 'process' ? CURRENT_PROCESS_ID : 'global'
   };
 }
 
@@ -44,9 +45,11 @@ export function isSessionValid(metadata: SessionMetadata | null): boolean {
   
   const now = Date.now();
   
-  // Check if session belongs to current process
-  if (metadata.processId !== CURRENT_PROCESS_ID) {
-    return false;
+  // Respect session scope: in 'global' mode, ignore processId differences
+  if (SESSION_SCOPE === 'process') {
+    if (metadata.processId !== CURRENT_PROCESS_ID) {
+      return false;
+    }
   }
   
   // Check if session has timed out
