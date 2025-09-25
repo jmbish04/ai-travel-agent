@@ -3,7 +3,7 @@ import express from 'express';
 import type pino from 'pino';
 import { ChatInput, ChatOutput } from '../schemas/chat.js';
 import { handleChat } from '../core/blend.js';
-import { getPrometheusText, metricsMode, snapshot, snapshotV2, observeE2E, ingestEvent, incVerifyFail, incVerifyPass } from '../util/metrics.js';
+import { getPrometheusText, metricsMode, snapshot, snapshotV2, observeE2E, ingestEvent, incVerifyFail, incVerifyPass, incVerificationRun } from '../util/metrics.js';
 import { buildReceiptsSkeleton, ReceiptsSchema } from '../core/receipts.js';
 import { getLastReceipts, getLastVerification } from '../core/slot_memory.js';
 import { verifyAnswer } from '../core/verify.js';
@@ -68,8 +68,10 @@ export const router = (log: pino.Logger): Router => {
         if (audit.verdict === 'fail') {
           const reason = (audit.notes?.[0] || 'fail').toLowerCase();
           incVerifyFail(reason);
+          try { incVerificationRun('fail'); } catch {}
         } else {
           incVerifyPass();
+          try { incVerificationRun(audit.verdict as 'pass'|'warn'); } catch {}
         }
         const merged = {
           ...receipts,

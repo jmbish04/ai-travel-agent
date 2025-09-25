@@ -1,7 +1,7 @@
 import pino from 'pino';
 import { getPrompt } from '../core/prompts.js';
 import { setLastReceipts, getThreadSlots, setLastUserMessage } from '../core/slot_memory.js';
-import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount } from '../util/metrics.js';
+import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount, addCitationDomain } from '../util/metrics.js';
 import { callChatWithTools } from './tools/index.js';
 
 export type MetaAgentOutput = {
@@ -104,6 +104,14 @@ export async function runMetaAgentTurn(
       citationsCount: citations.length,
       citations
     }, '🔧 META_AGENT: Citations processed');
+    try {
+      for (const c of citations) {
+        if (!c) continue;
+        let domain = c;
+        try { domain = new URL(c).hostname || c; } catch {}
+        addCitationDomain(domain);
+      }
+    } catch {}
   }
   
   const turnLatency = Date.now() - turnStart;

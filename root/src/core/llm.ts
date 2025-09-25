@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getContext } from './memory.js';
 import { fetch as undiciFetch } from 'undici';
 import { getPrompt } from './prompts.js';
+import { observeLLMRequest, addMetaTokens } from '../util/metrics.js';
 import { CircuitBreaker } from './circuit-breaker.js';
 import { CIRCUIT_BREAKER_CONFIG } from '../config/resilience.js';
 import type { Logger } from 'pino';
@@ -173,6 +174,11 @@ async function tryModel(
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     const content = data?.choices?.[0]?.message?.content ?? '';
+    try {
+      if (data?.usage) {
+        addMetaTokens(Math.max(0, data.usage.prompt_tokens || 0), Math.max(0, data.usage.completion_tokens || 0));
+      }
+    } catch {}
     
     if (typeof content === 'string' && content.trim().length > 0) {
       if (log?.debug) log.debug(`✅ Model ${model} succeeded - Output: ${countTokens(content)} tokens`);
@@ -303,6 +309,10 @@ export async function chatWithToolsLLM(opts: {
     });
     const requestLatency = Date.now() - requestStart;
     clearTimeout(t);
+    try {
+      const provider = ((): string => { try { return new URL(baseUrl).hostname || 'custom'; } catch { return 'custom'; } })();
+      observeLLMRequest(provider, model, 'tool', requestLatency);
+    } catch {}
     
     opts.log?.debug?.({ 
       status: res.status,
@@ -331,6 +341,11 @@ export async function chatWithToolsLLM(opts: {
       toolCallsCount: data.choices?.[0]?.message?.tool_calls?.length || 0,
       requestLatency
     }, '🔧 LLM: Successfully parsed LLM response');
+    try {
+      if (data?.usage) {
+        addMetaTokens(Math.max(0, data.usage.prompt_tokens || 0), Math.max(0, data.usage.completion_tokens || 0));
+      }
+    } catch {}
     
     return data;
   } catch (e) {

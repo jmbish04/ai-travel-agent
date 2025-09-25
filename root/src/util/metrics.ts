@@ -95,6 +95,14 @@ let metaTokensOut = 0;
 const metaTurnLatency: { count: number; sum: number; min: number; max: number } = { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
 const metaRoutingDecision: Record<string, number> = {};
 
+// Additional aggregates (JSON mode) for extended observability
+const metaToolErrors: Record<string, number> = {};
+const llmLatency = new Map<string, { count: number; sum: number; min: number; max: number }>();
+const verificationRuns: Record<'pass'|'warn'|'fail', number> = { pass: 0, warn: 0, fail: 0 };
+const webAllowlistBlocks: Record<string, number> = {};
+const sanitizationActions: Record<string, number> = {};
+const citationsByDomain: Record<string, number> = {};
+
 // Crawler metrics (Crawlee-only consolidation)
 const crawlerEngineUsage: Record<string, number> = {};
 let crawlerPagesCrawled = 0;
@@ -207,6 +215,12 @@ let counterMetaTokensOut: CounterT | undefined;
 let counterMetaToolLedgerHits: CounterT | undefined;
 let counterMetaToolSkippedByLedger: CounterT | undefined;
 let counterMetaToolGatedSkips: CounterT | undefined;
+let counterMetaToolErrors: CounterT | undefined;
+let histLLMRequestLatencyMs: HistogramT | undefined;
+let counterVerificationRuns: CounterT | undefined;
+let counterWebAllowlistBlock: CounterT | undefined;
+let counterSanitizationActions: CounterT | undefined;
+let counterCitationsByDomain: CounterT | undefined;
 // Crawler (Prometheus)
 let counterCrawlerEngineUsage: CounterT | undefined;
 let counterCrawlerPagesCrawled: CounterT | undefined;
@@ -329,6 +343,12 @@ async function ensureProm(): Promise<void> {
       labelNames: ['tool'],
       registers: [register],
     }) as CounterT;
+    counterMetaToolErrors = new Counter({
+      name: 'meta_tool_errors_total',
+      help: 'Meta agent tool errors',
+      labelNames: ['tool','error'],
+      registers: [register],
+    }) as CounterT;
     histMetaToolLatencyMs = new Histogram({
       name: 'meta_tool_latency_ms',
       help: 'Meta agent tool latency (ms)',
@@ -395,6 +415,39 @@ async function ensureProm(): Promise<void> {
       name: 'meta_tool_gated_skips_total',
       help: 'Tool calls gated by route selection',
       labelNames: ['tool','route'],
+      registers: [register],
+    }) as CounterT;
+
+    // LLM + verification + security
+    histLLMRequestLatencyMs = new Histogram({
+      name: 'llm_request_latency_ms',
+      help: 'LLM request latency (ms)',
+      labelNames: ['provider','model','type'],
+      buckets: [50,100,200,400,800,1500,3000,6000,12000],
+      registers: [register],
+    }) as HistogramT;
+    counterVerificationRuns = new Counter({
+      name: 'verification_runs_total',
+      help: 'Verification runs by verdict',
+      labelNames: ['verdict'],
+      registers: [register],
+    }) as CounterT;
+    counterWebAllowlistBlock = new Counter({
+      name: 'web_allowlist_block_total',
+      help: 'Blocked host attempts (allowlist)',
+      labelNames: ['host'],
+      registers: [register],
+    }) as CounterT;
+    counterSanitizationActions = new Counter({
+      name: 'sanitization_actions_total',
+      help: 'Sanitization actions performed',
+      labelNames: ['type'],
+      registers: [register],
+    }) as CounterT;
+    counterCitationsByDomain = new Counter({
+      name: 'citations_total',
+      help: 'Citations aggregated by domain',
+      labelNames: ['domain'],
       registers: [register],
     }) as CounterT;
 
@@ -568,6 +621,14 @@ export function incMetaToolCall(tool: string) {
   counterMetaToolCalls?.inc({ tool: key });
 }
 
+export function incMetaToolError(tool: string, error: string) {
+  const t = tool || 'unknown';
+  const e = (error || 'unknown').toLowerCase();
+  const key = `${t}:${e}`;
+  metaToolErrors[key] = (metaToolErrors[key] ?? 0) + 1;
+  counterMetaToolErrors?.inc({ tool: t, error: e });
+}
+
 export function observeMetaToolLatency(tool: string, ms: number) {
   const key = tool || 'unknown';
   const agg = metaToolLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
@@ -730,6 +791,19 @@ export function observeExternal(labels: Labels, durationMs: number) {
   toolCallsTotal += 1;
 }
 
+export function observeLLMRequest(
+  provider: string,
+  model: string,
+  type: 'chat' | 'tool' | 'verify',
+  durationMs: number,
+) {
+  const key = `${provider || 'unknown'}:${model || 'unknown'}:${type}`;
+  const agg = llmLatency.get(key) ?? { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: 0 };
+  addLatency(agg as any, Math.max(0, Math.floor(durationMs)));
+  llmLatency.set(key, agg);
+  histLLMRequestLatencyMs?.observe({ provider: provider || 'unknown', model: model || 'unknown', type }, Math.max(0, durationMs));
+}
+
 /**
  * Record Crawlee crawler metrics in a unified way.
  * Use engine labels of 'cheerio' or 'playwright'.
@@ -807,6 +881,30 @@ export function observePolicyBrowser(
   if (confidence !== undefined) {
     console.log(`policy_browser_confidence: ${confidence.toFixed(2)} (${engine})`);
   }
+}
+
+export function incVerificationRun(verdict: 'pass'|'warn'|'fail') {
+  const v = verdict || 'fail';
+  verificationRuns[v] = (verificationRuns[v] ?? 0) + 1;
+  counterVerificationRuns?.inc({ verdict: v });
+}
+
+export function incWebAllowlistBlock(host: string) {
+  const h = (host || 'unknown').toLowerCase();
+  webAllowlistBlocks[h] = (webAllowlistBlocks[h] ?? 0) + 1;
+  counterWebAllowlistBlock?.inc({ host: h });
+}
+
+export function addSanitizationAction(type: string) {
+  const t = (type || 'unknown').toLowerCase();
+  sanitizationActions[t] = (sanitizationActions[t] ?? 0) + 1;
+  counterSanitizationActions?.inc({ type: t });
+}
+
+export function addCitationDomain(domain: string) {
+  const d = (domain || 'unknown').toLowerCase();
+  citationsByDomain[d] = (citationsByDomain[d] ?? 0) + 1;
+  counterCitationsByDomain?.inc({ domain: d });
 }
 
 export function incBreakerEvent(target: string, type: string) {

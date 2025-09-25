@@ -9,7 +9,7 @@ import { searchTravelInfo, getSearchCitation, getSearchSource } from '../../tool
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
-import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip } from '../../util/metrics.js';
+import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError } from '../../util/metrics.js';
 import { VectaraClient } from '../../tools/vectara.js';
 import { performDeepResearch } from '../../core/deep_research.js';
 import { DestinationEngine } from '../../core/destination_engine.js';
@@ -18,7 +18,6 @@ import { PNRSchema, DisruptionEventSchema, UserPreferencesSchema } from '../../s
 import { parsePNRFromText } from '../../tools/pnr_parser.js';
 import { deepResearchPages, extractPolicyWithCrawlee as extractPolicyPage } from '../../tools/crawlee_research.js';
 import { assessQueryComplexity } from '../../core/complexity.js';
-import * as metaMetrics from '../../metrics/meta.js';
 import { suggestPacking } from '../../tools/packing.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
@@ -699,6 +698,16 @@ export async function callChatWithTools(args: {
               error: String(error),
               isAbortError: error instanceof Error && error.name === 'AbortError'
             }, '🔧 CHAT_TOOLS: Tool execution failed');
+            try {
+              const s = String(error).toLowerCase();
+              let cat = 'other';
+              if (s.includes('abort') || s.includes('timeout')) cat = 'timeout';
+              else if (/\b429\b/.test(s)) cat = 'http_429';
+              else if (/\b403\b/.test(s)) cat = 'http_403';
+              else if (/\b5\d\d\b/.test(s)) cat = 'http_5xx';
+              else if (/\b4\d\d\b/.test(s)) cat = 'http_4xx';
+              incMetaToolError(tool.name, cat);
+            } catch {}
             executed.add(sig);
             // Rough HTTP code extraction if present in error string
             const m = String(error).match(/\b(403|429)\b/);
