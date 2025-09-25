@@ -13,6 +13,25 @@ Architecture focuses on AI‑first planning (OpenAI‑style tools), strict JSON
 parsing via Zod, non‑blocking async I/O with explicit timeouts/signals, and a
 verification pipeline that stores receipts and artifacts for `/why`.
 
+**Testing**
+
+- Layers
+  - Unit: pure modules (schemas, parsers, helpers). No network.
+  - Integration: tool adapters and API routes with HTTP mocked.
+  - Golden: real meta‑agent conversations that persist receipts, then call the
+    verifier (verify.md) via an LLM pass‑through; assertions read the stored
+    verification artifact (no re‑verify on `/why`).
+
+- Commands
+  - `cd root && npm run test:unit`
+  - `cd root && npm run test:integration`
+  - `cd root && VERIFY_LLM=1 AUTO_VERIFY_REPLIES=true npm run test:golden`
+
+- Golden prerequisites
+  - Provide `LLM_PROVIDER_BASEURL` + `LLM_API_KEY` or `OPENROUTER_API_KEY`.
+  - Golden tests are skipped unless `VERIFY_LLM=1`.
+
+
 **Agent Decision Flow**
 
 ```mermaid

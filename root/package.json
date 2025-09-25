@@ -93,6 +93,7 @@
     "test:integration:api": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/integration/ --testNamePattern=\"crawlee|ner|date\"",
     "test:integration:date": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/integration/date_formatting.test.ts",
     "test:edge": "jest --runInBand --config jest.config.cjs --testNamePattern=\"typos|emojis|thread|leakage|non-existent|long messages\"",
+    "test:golden": "jest --runInBand --config jest.config.cjs --testPathPattern=tests/golden/",
     "generate-deliverables": "npm run test:transcripts",
     "lint": "eslint .",
     "format": "prettier -w ."

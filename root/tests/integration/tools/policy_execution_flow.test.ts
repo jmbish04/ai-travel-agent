@@ -1,7 +1,8 @@
 import pino from 'pino';
+import { setupHttpMocks, teardownHttpMocks } from '../../helpers/http.js';
 
 // Mock LLM tool-calling API to simulate plan → echo → tool_call → final
-jest.mock('../../src/core/llm', () => {
+jest.mock('../../../src/core/llm', () => {
   const seq: any[] = [];
   const makePlan = () => ({
     route: 'policy',
@@ -40,24 +41,24 @@ jest.mock('../../src/core/llm', () => {
 });
 
 // Mock search tool module to avoid loading ESM deps
-jest.mock('../../src/tools/search', () => ({
+jest.mock('../../../src/tools/search', () => ({
   searchTravelInfo: async (q: string, deep?: boolean) => ({ ok: true, summary: 'stub search', source: 'web', results: [] }),
   getSearchCitation: () => 'https://example.com',
   getSearchSource: () => 'web',
 }));
 
 // Mock packing tool to avoid ESM and import.meta issues
-jest.mock('../../src/tools/packing', () => ({
+jest.mock('../../../src/tools/packing', () => ({
   suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
 }));
 
 // Mock query complexity to avoid network
-jest.mock('../../src/core/complexity', () => ({
+jest.mock('../../../src/core/complexity', () => ({
   assessQueryComplexity: async () => ({ isComplex: false, confidence: 0.8, reasoning: 'simple' }),
 }));
 
 // Mock Vectara client
-jest.mock('../../src/tools/vectara', () => ({
+jest.mock('../../../src/tools/vectara', () => ({
   VectaraClient: class VectaraClient {
     async query(q: string, opts: any) {
       return {
@@ -69,9 +70,11 @@ jest.mock('../../src/tools/vectara', () => ({
   }
 }));
 
-import { callChatWithTools } from '../../src/agent/tools/index';
+import { callChatWithTools } from '../../../src/agent/tools/index.js';
 
 describe('Policy planning transitions to execution (Vectara + search)', () => {
+  beforeAll(() => setupHttpMocks());
+  afterAll(() => teardownHttpMocks());
   it('executes planned vectaraQuery even if the model echoes planning JSON first', async () => {
     const { result, facts, citations } = await callChatWithTools({
       system: 'You are a meta agent.',

@@ -1,12 +1,15 @@
 import pino from 'pino';
+import { setupHttpMocks, teardownHttpMocks } from '../../helpers/http.js';
 
 describe('Policy execution fallback on LLM timeout uses facts + sources', () => {
+  beforeAll(() => setupHttpMocks());
+  afterAll(() => teardownHttpMocks());
   beforeEach(() => {
     jest.resetModules();
   });
 
   it('returns minimal grounded reply with Sources when final LLM times out', async () => {
-    jest.doMock('../../src/core/llm', () => {
+    jest.doMock('../../../src/core/llm', () => {
       const makePlan = () => ({
         route: 'policy',
         confidence: 0.8,
@@ -42,23 +45,23 @@ describe('Policy execution fallback on LLM timeout uses facts + sources', () => 
       return { chatWithToolsLLM, callLLM };
     });
 
-    jest.doMock('../../src/tools/vectara', () => ({
+    jest.doMock('../../../src/tools/vectara', () => ({
       VectaraClient: class VectaraClient {
         async query() {
           return { summary: '24 hours window; after that one night penalty.', hits: [], citations: [{ url: 'https://www.marriott.com/terms' }] } as any;
         }
       }
     }));
-    jest.doMock('../../src/tools/search', () => ({
+    jest.doMock('../../../src/tools/search', () => ({
       searchTravelInfo: async () => ({ ok: true, summary: '48 hours in some cases; otherwise 24 hours.', source: 'Tavily Search', results: [] }),
       getSearchCitation: () => 'https://example.com',
       getSearchSource: () => 'web',
     }));
-    jest.doMock('../../src/tools/packing', () => ({
+    jest.doMock('../../../src/tools/packing', () => ({
       suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
     }));
 
-    const { callChatWithTools } = await import('../../src/agent/tools/index');
+    const { callChatWithTools } = await import('../../../src/agent/tools/index.js');
     const { result, citations, facts } = await callChatWithTools({
       system: 'You are a meta agent.',
       user: 'What is Marriott cancellation window and penalty?',
@@ -74,4 +77,3 @@ describe('Policy execution fallback on LLM timeout uses facts + sources', () => 
     expect(joined).toMatch(/marriott|Tavily|vectara:doc|example\.com/i);
   });
 });
-
