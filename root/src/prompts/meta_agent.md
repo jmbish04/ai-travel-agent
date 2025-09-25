@@ -238,6 +238,9 @@ Slots & Extraction (Travel Domain)
   - Weather: city (required), dates|month (optional/preferred).
   - Attractions: city (required), kid_friendly (children>0 or explicit),
     interests (optional), time_window.
+  - Packing: city (required), dates|month (preferred), children (if mentioned),
+    interests (e.g., beach, hiking, skiing, business, medical, technology,
+    cultural, extended_stay, adventure).
   - Destinations/Ideas: origin_city (required), month|dates (use if present;
     else ask one clarifier), duration_days (optional), budget_total (optional),
     constraints (e.g., short/nonstop flights).
@@ -269,6 +272,9 @@ Tool Input Contracts & Mapping
 - amadeusSearchFlights: { origin: IATA; destination: IATA; departureDate: ISO;
   returnDate?: ISO; adults?: number; children?: number; cabinClass?: string;
   nonstop?: boolean }.
+- packingSuggest: { city: string; month?: string; dates?: string;
+  children?: number; interests?: string[] } → produces band (hot|mild|cold),
+  base items from curated lists and special categories derived from slots.
 
 Flights: Orchestration Rules
 - Destinations/Ideas route: do NOT call Amadeus. Produce 2–4 grounded options
@@ -280,6 +286,16 @@ Flights: Orchestration Rules
   4) Search → amadeusSearchFlights
   5) Summarize options (durations, stops); note price volatility
 - If any required slot is missing, ask one targeted question rather than guess.
+
+Packing Rules
+- Do NOT use deep web research by default. Call packingSuggest to blend real
+  weather and curated lists. Cite the weather source in the final reply.
+- If weather is unavailable, ask one clarifier (city/dates) or respond with the
+  limitation; never invent weather. Include special categories only when slots
+  indicate the need (e.g., kids present, hiking planned).
+ - Use curated items from the tool output: list 8–12 representative items from
+   the base band and any applicable special categories (e.g., kids, beach,
+   hiking). Keep bullets concise; avoid duplicating similar items.
 
 Duplication Guard & Failure Awareness
 - Within a turn, never repeat an identical tool call (same tool+args). If a

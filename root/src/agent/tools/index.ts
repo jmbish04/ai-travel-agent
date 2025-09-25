@@ -19,6 +19,7 @@ import { parsePNRFromText } from '../../tools/pnr_parser.js';
 import { deepResearchPages, extractPolicyWithCrawlee as extractPolicyPage } from '../../tools/crawlee_research.js';
 import { assessQueryComplexity } from '../../core/complexity.js';
 import * as metaMetrics from '../../metrics/meta.js';
+import { suggestPacking } from '../../tools/packing.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
 
@@ -41,6 +42,32 @@ const str = (desc?: string) => ({ type: 'string', description: desc });
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
 export const tools: ToolSpec[] = [
+  {
+    name: 'packingSuggest',
+    description: 'Weather-grounded packing list blended with curated categories.',
+    schema: z.object({
+      city: z.string().min(1),
+      month: z.string().optional(),
+      dates: z.string().optional(),
+      children: z.number().int().min(0).max(10).optional(),
+      interests: z.array(z.string()).max(8).optional(),
+    }),
+    spec: { type: 'function', function: { name: 'packingSuggest', description: 'Packing list by city + dates/month', parameters: obj({ city: str('City'), month: str('Month (if known)'), dates: str('Dates (ISO or text)'), children: { type: 'integer', minimum: 0, maximum: 10 }, interests: { type: 'array', items: { type: 'string' } } }, ['city']) } },
+    async call(args: unknown) {
+      const input = this.schema.parse(args) as { city: string; month?: string; dates?: string; children?: number; interests?: string[] };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort('timeout'), 9000);
+      try {
+        const out = await suggestPacking({ ...input }, controller.signal);
+        if (out.ok) {
+          const countBase = out.items.base.length;
+          const countSpecial = Object.values(out.items.special).reduce((a, b) => a + b.length, 0);
+          return { ok: true, summary: `${out.summary} (${out.band}) — ${countBase}+${countSpecial} items`, source: out.source, items: out.items, band: out.band };
+        }
+        return { ok: false, reason: out.reason };
+      } finally { clearTimeout(timeout); }
+    }
+  },
   {
     name: 'extractPolicyWithCrawlee',
     description: 'Crawl a specific URL with Crawlee Playwright and extract an official policy clause with receipts.',
@@ -331,6 +358,10 @@ function allowedToolsForRoute(route?: string): string[] {
   const lower = route.toLowerCase();
   if (lower === 'destinations' || lower === 'web' || lower === 'policy' || lower === 'visas') {
     return all.filter(n => !n.startsWith('amadeus'));
+  }
+  if (lower === 'packing') {
+    // Packing must be tool-first (weather + curated). Do not deepResearch by default.
+    return all.filter(n => n !== 'deepResearch');
   }
   return all;
 }

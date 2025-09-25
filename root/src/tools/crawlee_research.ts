@@ -117,12 +117,9 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
     requestHandlerTimeoutSecs: 15,
     maxRequestRetries: 1,
     useSessionPool: true,
-    // treat 401/403/429 as blocked to retire session quickly
-    isBlockedResponseFunction: ({ response }) => {
-      try {
-        const sc = (response as any)?.statusCode || (response as any)?.status();
-        return sc === 401 || sc === 403 || sc === 429;
-      } catch { return false; }
+    retryOnBlocked: true,
+    sessionPoolOptions: {
+      blockedStatusCodes: [401, 403, 429],
     },
     async requestHandler({ $, request }) {
       try {
@@ -499,13 +496,21 @@ export async function extractPolicyWithCrawlee(params: {
   try {
     const raw = await callLLM(confPrompt, { responseFormat: 'text' });
     const m = raw.match(/(\d+(?:\.\d+)?)/);
-    confidence = Math.max(0, Math.min(1, (m && parseFloat(m[1])) > 1 ? parseFloat(m![1]) / 100 : (m ? parseFloat(m[1]) : 0)));
+    if (m && m[1]) {
+      const val = parseFloat(m[1]);
+      confidence = Math.max(0, Math.min(1, val > 1 ? val / 100 : val));
+    }
   } catch { confidence = 0; }
 
   // Domain authenticity score
   let domainAuthenticity: DomainScore | undefined;
-  if (params.airlineName) {
-    try { domainAuthenticity = await scoreDomainAuthenticity(new URL(url).hostname, params.airlineName, undefined, clause); } catch {}
+  if (params.airlineName && clause) {
+    try { 
+      const hostname = new URL(url).hostname;
+      if (hostname) {
+        domainAuthenticity = await scoreDomainAuthenticity(hostname, params.airlineName, undefined, clause); 
+      }
+    } catch {}
   }
 
   const hash = crypto.createHash('sha256').update(`${url}\n${cleaned}`).digest('hex');
