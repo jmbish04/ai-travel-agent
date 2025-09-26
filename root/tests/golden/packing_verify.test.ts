@@ -3,7 +3,8 @@ import pino from 'pino';
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
 
-(ALLOW ? describe : describe.skip)('GOLDEN: weather→packing receipts + verification', () => {
+const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
+(ALLOW && KEY ? describe : describe.skip)('GOLDEN: weather→packing receipts + verification', () => {
   beforeAll(async () => {
     process.env.AUTO_VERIFY_REPLIES = 'true';
     jest.resetModules();
@@ -25,7 +26,7 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
         missing: [],
         consent: false,
         calls: [
-          { tool: 'suggestPacking', args: { band: 'mild' } },
+          { tool: 'packingSuggest', args: { band: 'mild' } },
         ],
         blend: 'concise',
         verify: true,

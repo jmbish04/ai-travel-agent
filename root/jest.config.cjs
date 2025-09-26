@@ -17,8 +17,8 @@ module.exports = {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         target: 'ES2022',
-        module: 'CommonJS',
-        moduleResolution: 'node',
+        module: 'ES2022',
+        moduleResolution: 'bundler',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
         strict: false,

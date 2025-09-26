@@ -2,8 +2,9 @@ import pino from 'pino';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
+const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
 
-(ALLOW ? describe : describe.skip)('GOLDEN: policy receipts + verification', () => {
+(ALLOW && KEY ? describe : describe.skip)('GOLDEN: policy receipts + verification', () => {
   beforeAll(async () => {
     process.env.AUTO_VERIFY_REPLIES = 'true';
     jest.resetModules();
