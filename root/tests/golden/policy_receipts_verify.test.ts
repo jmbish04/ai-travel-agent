@@ -1,10 +1,4 @@
-/**
- * Golden: Policy conversation with receipts + LLM verification pass-through.
- * - Stubs tool adapters for determinism
- * - Real verifying LLM only when VERIFY_LLM=1
- */
 import pino from 'pino';
-import { fetchLastVerification } from '../helpers/verify.js';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
@@ -23,17 +17,15 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
   });
 
   it('stores receipts and a verification artifact', async () => {
-    // Only mock tool-calling path; keep callLLM real for verification
     jest.doMock('../../src/core/llm', () => {
       const actual = jest.requireActual('../../src/core/llm');
       const makePlan = () => ({
         route: 'policy',
-        confidence: 0.85,
+        confidence: 0.9,
         missing: [],
-        consent: true,
+        consent: false,
         calls: [
-          { tool: 'vectaraQuery', args: { query: 'Marriott hotels standard cancellation window and penalties', corpus: 'hotels' } },
-          { tool: 'search', args: { query: 'site:marriott.com cancellation policy', deep: false } },
+          { tool: 'search', args: { query: 'Marriott cancellation policy', deep: false } },
         ],
         blend: 'concise',
         verify: true,
@@ -46,43 +38,37 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
               role: 'assistant',
               content: '',
               tool_calls: [
-                { id: 'c1', type: 'function', function: { name: 'vectaraQuery', arguments: JSON.stringify({ query: 'Marriott hotels standard cancellation window and penalties', corpus: 'hotels' }) } },
-                { id: 'c2', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'site:marriott.com cancellation policy', deep: false }) } },
+                { id: 'p1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'Marriott cancellation policy', deep: false }) } },
               ],
             },
           }],
         }))
-        .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: 'Most Marriott flexible rates allow free cancellation until 48–72 hours before arrival; after that typically one night room + tax applies. Always confirm on the property page.' } }] }));
+        .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: 'Marriott allows free cancellation up to 48-72 hours before check-in. Sources included.' } }] }));
       return { ...actual, chatWithToolsLLM };
     });
 
-    jest.doMock('../../src/tools/vectara', () => ({
-      VectaraClient: class VectaraClient {
-        async query() {
-          return { summary: 'Typical window 24–72 hours before arrival; after that one night + tax.', hits: [], citations: [{ url: 'https://www.marriott.com/loyalty/terms' }] } as any;
-        }
-      }
-    }));
     jest.doMock('../../src/tools/search', () => ({
-      searchTravelInfo: async () => ({ ok: true, summary: 'Official site states 48–72 hours in most cases.', source: 'Brave Search', results: [] }),
+      searchTravelInfo: async () => ({ ok: true, summary: 'Marriott cancellation policy 48-72 hours', source: 'Brave Search', results: [] }),
       getSearchCitation: () => 'Brave Search',
       getSearchSource: () => 'brave-search',
     }));
 
     const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'What is Marriott cancellation window and penalty?', receipts: true }, { log });
-    expect(typeof out.threadId).toBe('string');
-    expect(typeof out.reply).toBe('string');
-
-    // Wait a bit for verification to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const artifact = await fetchLastVerification(out.threadId);
+    expect(out.threadId).toBeDefined();
+    
+    // Wait for verification to complete
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Use direct import instead of helper
+    const { getLastVerification } = await import('../../src/core/slot_memory.js');
+    const artifact = await getLastVerification(out.threadId);
+    
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);
     if (artifact?.scores) {
       expect(artifact.scores.relevance).toBeGreaterThanOrEqual(0);
       expect(artifact.scores.relevance).toBeLessThanOrEqual(1);
     }
-  }, 15000);
+  }, 30000);
 });

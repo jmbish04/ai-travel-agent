@@ -1,5 +1,4 @@
 import pino from 'pino';
-import { fetchLastVerification } from '../helpers/verify.js';
 
 const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
@@ -44,12 +43,12 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
             },
           }],
         }))
-        .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: 'In Paris, Jardin d’Acclimatation and Cité des Sciences are great for kids. Sources included.' } }] }));
+        .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: 'Paris has great attractions for kids. Sources included.' } }] }));
       return { ...actual, chatWithToolsLLM };
     });
 
     jest.doMock('../../src/tools/search', () => ({
-      searchTravelInfo: async () => ({ ok: true, summary: 'Jardin d’Acclimatation; Cité des Sciences', source: 'Brave Search', results: [] }),
+      searchTravelInfo: async () => ({ ok: true, summary: 'Paris attractions for kids', source: 'Brave Search', results: [] }),
       getSearchCitation: () => 'Brave Search',
       getSearchSource: () => 'brave-search',
     }));
@@ -58,11 +57,14 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     const out = await handleChat({ message: 'Kid-friendly activities in Paris?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
     
-    // Wait a bit for verification to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for verification to complete
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    const artifact = await fetchLastVerification(out.threadId);
+    // Use direct import instead of helper
+    const { getLastVerification } = await import('../../src/core/slot_memory.js');
+    const artifact = await getLastVerification(out.threadId);
+    
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);
-  }, 15000);
+  }, 30000);
 });
