@@ -114,12 +114,17 @@ async function runCheerioCrawler(urls: string[], maxPages: number, results: Craw
 
   const crawler = new CheerioCrawler({
     maxRequestsPerCrawl: maxPages,
-    requestHandlerTimeoutSecs: 15,
-    maxRequestRetries: 1,
+    requestHandlerTimeoutSecs: 30, // Increased timeout
+    navigationTimeoutSecs: 30,
+    maxRequestRetries: 2,
     useSessionPool: true,
     retryOnBlocked: true,
+    // Removed blockedStatusCodes to fix conflict with retryOnBlocked
     sessionPoolOptions: {
-      blockedStatusCodes: [401, 403, 429],
+      maxPoolSize: 10,
+      sessionOptions: {
+        maxUsageCount: 50,
+      }
     },
     async requestHandler({ $, request }) {
       try {

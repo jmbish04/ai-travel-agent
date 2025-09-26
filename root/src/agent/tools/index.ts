@@ -527,7 +527,7 @@ export async function callChatWithTools(args: {
   const timeout = setTimeout(() => {
     log?.error?.('🔧 CHAT_TOOLS: Timeout reached, aborting');
     controller.abort('meta_timeout');
-  }, Math.max(2000, args.timeoutMs ?? 20000));
+  }, Math.max(2000, args.timeoutMs ?? 45000)); // Increased from 20s to 45s for crawling
   try {
 
     // Heuristic numeric normalization removed — rely on AI-first prompt + verify
