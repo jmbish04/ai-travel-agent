@@ -35,5 +35,13 @@ export async function makeTestApp() {
     warn: () => void 0,
     error: () => void 0,
   } as any));
+  
+  // Add cleanup method to app
+  (app as any).cleanup = () => {
+    if (store && typeof (store as any).cleanup === 'function') {
+      (store as any).cleanup();
+    }
+  };
+  
   return app;
 }

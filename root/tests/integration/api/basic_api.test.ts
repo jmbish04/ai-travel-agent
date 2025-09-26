@@ -2,8 +2,16 @@ import request from 'supertest';
 import { makeTestApp, setupHttpMocks, teardownHttpMocks } from '../../helpers/http.js';
 
 describe('API basic endpoints', () => {
+  let app: any;
+  
   beforeAll(() => setupHttpMocks());
   afterAll(() => teardownHttpMocks());
+  
+  afterEach(() => {
+    if (app && typeof app.cleanup === 'function') {
+      app.cleanup();
+    }
+  });
 
   it('metrics endpoint responds in JSON mode', async () => {
     jest.doMock('../../../src/tools/search', () => ({
@@ -14,7 +22,7 @@ describe('API basic endpoints', () => {
     jest.doMock('../../../src/tools/packing', () => ({
       suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
     }));
-    const app = await makeTestApp();
+    app = await makeTestApp();
     const res = await request(app).get('/metrics');
     expect(res.status).toBe(200);
     // JSON mode by default
@@ -31,7 +39,6 @@ describe('API basic endpoints', () => {
     jest.doMock('../../../src/tools/packing', () => ({
       suggestPacking: async () => ({ ok: true, summary: 'stub packing', source: 'stub', band: 'mild', items: { base: [], special: {} } })
     }));
-    let app;
     try {
       app = await makeTestApp();
     } catch (err) {
