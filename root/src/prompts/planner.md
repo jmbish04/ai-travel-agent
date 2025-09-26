@@ -18,6 +18,9 @@ General rules
 - Respect user constraints and context. Prefer minimal sufficient calls.
 
 Routing guidance
+- Weather: set route="weather". Plan a single call to `weather { city, month?, dates? }`.
+  Do NOT use generic `search` for weather unless the dedicated tool fails — the
+  tool already contains its own safe fallback. Keep blend.style="short".
 - Ideas/Destinations (no specific city): set route="destinations". If a region/continent is mentioned (e.g., "Europe", "Southeast Asia", "Caribbean"), prefer deep discovery over a single search. For multi‑constraint requests (budget + dates/window + family/seniors + short flights), schedule `deepResearch { query }` as the first call. Use a basic `search { query, deep:false }` only for simple lookups or as a complement.
 - Flights: set route="flights". Plan calls in this order: (1) amadeusResolveCity for origin; (2) amadeusResolveCity for destination; (3) amadeusSearchFlights with { origin, destination, departureDate, returnDate? }. Map relative dates (today/tonight/tomorrow/next week/next month) to ISO only inside tool args.
 - Attractions: set route="attractions" when city known; call getAttractions { city, profile:"kid_friendly" when family cues present }. If destination unknown, add it to missing and avoid tools.

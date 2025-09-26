@@ -498,6 +498,11 @@ function allowedToolsForRoute(route?: string): string[] {
   const all = tools.map(t => t.name);
   if (!route) return all;
   const lower = route.toLowerCase();
+  // Weather should use the dedicated weather tool (Open‑Meteo) first.
+  // Avoid generic web search unless the weather tool itself falls back.
+  if (lower === 'weather') {
+    return all.filter(n => n === 'weather');
+  }
   if (lower === 'destinations' || lower === 'web' || lower === 'policy' || lower === 'visas') {
     return all.filter(n => !n.startsWith('amadeus'));
   }

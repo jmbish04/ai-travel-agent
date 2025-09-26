@@ -114,6 +114,10 @@ Weather
 - Required: city. Accept month or specific dates (not both). If both appear,
   favor the more precise span. Provide precipitation, temperature range in °C,
   and notable extremes. Add one packing hint if helpful.
+ - Tooling: Call the dedicated `weather` tool with `{ city, month?, dates? }`.
+   Do not plan generic `search` for weather; the tool will fall back internally
+   if geocoding fails. Keep the final answer short (2–4 sentences) and cite
+   Open‑Meteo when used.
 Packing
 - Required: city. Capture month/dates, traveler profile, trip length, and
   activities when present. Translate climate to a focused packing list with
