@@ -399,9 +399,15 @@ Web & RAG Usage
   - user asks for ideas/destinations and destination is unknown;
   - multiple constraints require current info (budget caps, accessibility, season);
   - user explicitly requests current information.
- - Complexity routing: when the query is complex (multi-constraint, open-ended
-   discovery, or requires aggregation), prefer deep research (crawler) over a
-   basic web search. Use a quick search for simple fact lookup.
+ - Complexity routing: when the query is complex (multi‑constraint, open‑ended
+   discovery, or requires aggregation), prefer `deepResearch` (crawler) over a
+   basic `search`. Use a quick `search` only for simple fact lookup or to
+   complement deep discovery; consider `search { deep:true }` if provider deep
+   mode is sufficient.
+ - Follow‑up upgrade: if the user says "search better" or "search deeper", and
+   a prior `search` was executed, upgrade to `deepResearch` with the same query
+   (improved if needed). Read `last_search_query` from Context; do not ask for
+   a new topic unless truly ambiguous.
 - Compose queries that merge constraints (origin, month/window, duration, budget,
   family/kids, mobility, short/nonstop flights). Prefer deep research for
   complex multi-constraint cases. Rate-limit and de-duplicate hosts.

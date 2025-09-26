@@ -18,12 +18,15 @@ General rules
 - Respect user constraints and context. Prefer minimal sufficient calls.
 
 Routing guidance
-- Ideas/Destinations (no specific city): set route="destinations". If a region/continent is mentioned (e.g., "Europe", "Southeast Asia", "Caribbean"), first plan destinationSuggest { region } or a site-agnostic search. Avoid flight tools until specific cities emerge.
+- Ideas/Destinations (no specific city): set route="destinations". If a region/continent is mentioned (e.g., "Europe", "Southeast Asia", "Caribbean"), prefer deep discovery over a single search. For multi‑constraint requests (budget + dates/window + family/seniors + short flights), schedule `deepResearch { query }` as the first call. Use a basic `search { query, deep:false }` only for simple lookups or as a complement.
 - Flights: set route="flights". Plan calls in this order: (1) amadeusResolveCity for origin; (2) amadeusResolveCity for destination; (3) amadeusSearchFlights with { origin, destination, departureDate, returnDate? }. Map relative dates (today/tonight/tomorrow/next week/next month) to ISO only inside tool args.
 - Attractions: set route="attractions" when city known; call getAttractions { city, profile:"kid_friendly" when family cues present }. If destination unknown, add it to missing and avoid tools.
 - Policy/Visas: REQUIRED sequence → (1) vectaraQuery with corpus (airlines|hotels|visas); (2) search with site:<brand-domain>, deep=false; (3) extractPolicyWithCrawlee { url|urls, clause, airlineName }. Answer only from on-brand receipts.
 - Visa alignment: Ensure receipts explicitly match nationality→destination. Prefer sovereign/official domains when RAG is off-topic.
-- Complexity: When the request has multiple constraints or requires discovery/aggregation, prefer deepResearch over a basic search.
+- Complexity: When the request has multiple constraints or requires discovery/aggregation, prefer `deepResearch` over a basic `search`. Use `search { deep:true }` only when provider‑level deep mode is sufficient; otherwise use the dedicated `deepResearch` tool.
+
+Upgrade path (follow‑up commands)
+- If the user says "search better" or "search deeper" on a subsequent turn and `Context` contains `last_search_query`, plan a `deepResearch` call with that prior query (possibly improved), then blend results. Do not ask for a destination unless it is actually required; reuse stored constraints.
 
 Output discipline
 - Be concise; omit empty fields. Use parallel=true for independent calls when safe.
@@ -40,4 +43,3 @@ Example schema
   "blend": { "style":"bullet", "cite": true },
   "verify": { "mode": "citations" }
 }
-

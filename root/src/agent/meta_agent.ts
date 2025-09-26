@@ -73,6 +73,7 @@ export async function runMetaAgentTurn(
     timeoutMs: 60000,
     log,
     onStatus,
+    threadId,
   });
 
   log.debug({ 

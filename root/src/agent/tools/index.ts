@@ -22,7 +22,7 @@ import { assessQueryComplexity } from '../../core/complexity.js';
 import { suggestPacking } from '../../tools/packing.js';
 import type { PipelineStatusUpdate, PipelineStageKey } from '../../core/pipeline_status.js';
 
-export type ToolCallContext = { signal?: AbortSignal };
+export type ToolCallContext = { signal?: AbortSignal; threadId?: string };
 
 export type ToolSpec = {
   name: string;
@@ -252,7 +252,7 @@ export const tools: ToolSpec[] = [
       deep: z.boolean().optional()
     }),
     spec: { type: 'function', function: { name: 'search', description: 'Search the web for travel information', parameters: obj({ query: str('Search query string'), deep: { type: 'boolean', description: 'Enable deep research crawl' } }, ['query']) } },
-    async call(args: unknown) {
+    async call(args: unknown, ctx: ToolCallContext) {
       const input = this.schema.parse(args) as { query: string; deep?: boolean };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort('timeout'), 9000);
@@ -261,7 +261,13 @@ export const tools: ToolSpec[] = [
         if (out && out.ok) {
           // Normalize to include a summary + source so receipts capture facts
           const summary = out.deepSummary || `Search results (${getSearchSource()}): ${out.results?.length ?? 0} hits`;
-          return { ...out, summary, source: getSearchCitation() };
+          // Provide the original query for follow-up commands like "search better"
+          const enriched = { ...out, summary, source: getSearchCitation(), query: input.query, deep: !!input.deep };
+          // Persist last search query into slots as a convenience
+          if (ctx?.threadId) {
+            try { const { updateThreadSlots } = await import('../../core/slot_memory.js'); await updateThreadSlots(ctx.threadId, { last_search_query: input.query }); } catch {}
+          }
+          return enriched;
         }
         return out;
       } finally { clearTimeout(timeout); }
@@ -511,6 +517,7 @@ export async function callChatWithTools(args: {
   timeoutMs?: number;
   log?: pino.Logger;
   onStatus?: (update: PipelineStatusUpdate) => void;
+  threadId?: string;
 }): Promise<{ result: string; facts: Array<{ key: string; value: string; source?: string }>; decisions: Array<string>; citations: string[] }>
 {
   const log = args.log;
@@ -809,7 +816,7 @@ export async function callChatWithTools(args: {
           onStatus?.(describeToolCall(tool.name, parsed));
 
           try {
-            const out = await tool.call(parsed, { signal: controller.signal });
+            const out = await tool.call(parsed, { signal: controller.signal, threadId: args.threadId });
             const latency = Date.now() - t0;
             observeMetaToolLatency(tool.name, latency);
             addMetaTokens(inTok, 0);
@@ -838,6 +845,13 @@ export async function callChatWithTools(args: {
                     for (const c of o.citations) {
                       if (typeof c === 'string') citations.push(c);
                     }
+                  }
+                  // Persist last search query into slots for follow-up commands like "search better"
+                  if (tool.name === 'search' && typeof (parsed as any)?.query === 'string' && args.threadId) {
+                    try {
+                      const { updateThreadSlots } = await import('../../core/slot_memory.js');
+                      await updateThreadSlots(args.threadId, { last_search_query: String((parsed as any).query) });
+                    } catch {}
                   }
                   // Enrich facts for packingSuggest so blending & verification can ground in curated items
                   if (tool.name === 'packingSuggest') {
