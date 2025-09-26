@@ -81,7 +81,7 @@ const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
     expect(['pass','warn','fail']).toContain(artifact!.verdict);
   }, 25000);
 
-  it('attractions → search receipts, verification ok', async () => {
+  it('attractions → tools-first (getAttractions), receipts ok', async () => {
     jest.doMock('../../src/core/llm', () => {
       const actual = jest.requireActual('../../src/core/llm');
       const plan = {
@@ -89,7 +89,7 @@ const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
         confidence: 0.85,
         missing: [],
         consent: { required: false },
-        calls: [ { tool: 'search', args: { query: 'kid friendly attractions in Berlin', deep: false } } ],
+        calls: [ { tool: 'getAttractions', args: { city: 'Berlin', profile: 'kid_friendly' } } ],
         blend: { style: 'bullet', cite: true },
         verify: { mode: 'citations' },
       };
@@ -100,10 +100,8 @@ const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
       return { ...actual, chatWithToolsLLM };
     });
 
-    jest.doMock('../../src/tools/search', () => ({
-      searchTravelInfo: async () => ({ ok: true, summary: 'Tierpark; LEGOLAND; Labyrinth Kindermuseum', source: 'Brave Search', results: [] }),
-      getSearchCitation: () => 'Brave Search',
-      getSearchSource: () => 'brave-search',
+    jest.doMock('../../src/tools/attractions', () => ({
+      getAttractions: async () => ({ ok: true, summary: 'Tierpark; LEGOLAND; Labyrinth Kindermuseum', source: 'OpenTripMap' }),
     }));
 
     const { handleChat } = await import('../../src/core/blend.js');
@@ -170,16 +168,16 @@ const KEY = process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY;
     expect(['pass','warn','fail']).toContain(artifact!.verdict);
   }, 25000);
 
-  it('destinations in Europe → deep research', async () => {
+  it('destinations in Europe → tools-first (destinationSuggest)', async () => {
     jest.doMock('../../src/core/llm', () => {
       const actual = jest.requireActual('../../src/core/llm');
-      const plan = { route: 'destinations', confidence: 0.9, missing: [], consent: { required: false }, calls: [ { tool: 'deepResearch', args: { query: 'destinations in Europe' } } ], blend: { style: 'bullet', cite: true }, verify: { mode: 'citations' } };
+      const plan = { route: 'destinations', confidence: 0.9, missing: [], consent: { required: false }, calls: [ { tool: 'destinationSuggest', args: { region: 'Europe' } } ], blend: { style: 'bullet', cite: true }, verify: { mode: 'citations' } };
       const chatWithToolsLLM = jest.fn()
         .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: JSON.stringify(plan) } }] }))
         .mockImplementationOnce(() => ({ choices: [{ message: { role: 'assistant', content: 'Portugal, Spain, Greece. Sources included.' } }] }));
       return { ...actual, chatWithToolsLLM };
     });
-    jest.doMock('../../src/core/deep_research', () => ({ performDeepResearch: async () => ({ summary: 'Portugal; Spain; Greece', citations: [{ source: 'example.com' }] }) }));
+    jest.doMock('../../src/core/destination_engine', () => ({ DestinationEngine: { getRecommendations: async () => ([ { name: { common: 'Portugal' } }, { name: { common: 'Spain' } }, { name: { common: 'Greece' } } ]) } }));
     const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'Tell me about destinations in Europe', receipts: true }, { log });
     expect(out.threadId).toBeDefined();

@@ -503,8 +503,19 @@ function allowedToolsForRoute(route?: string): string[] {
   if (lower === 'weather') {
     return all.filter(n => n === 'weather');
   }
-  if (lower === 'destinations' || lower === 'web' || lower === 'policy' || lower === 'visas') {
-    return all.filter(n => !n.startsWith('amadeus'));
+  if (lower === 'web') {
+    return all.filter(n => n === 'search' || n === 'deepResearch');
+  }
+  if (lower === 'policy' || lower === 'visas') {
+    return all.filter(n => n === 'vectaraQuery' || n === 'search' || n === 'extractPolicyWithCrawlee');
+  }
+  if (lower === 'attractions') {
+    // Prefer dedicated attractions tool; allow web search as fallback.
+    return all.filter(n => n === 'getAttractions' || n === 'search');
+  }
+  if (lower === 'destinations') {
+    // Tools-first for destinations; allow deep research if needed.
+    return all.filter(n => n === 'destinationSuggest' || n === 'getCountry' || n === 'search' || n === 'deepResearch');
   }
   if (lower === 'packing') {
     // Packing must be tool-first (weather + curated). Do not deepResearch by default.
@@ -967,7 +978,77 @@ export async function callChatWithTools(args: {
           content:
             'Reminder: Execute the planned tool calls now using tool_calls. Do not output the planning JSON. After tools finish, produce the final grounded answer with citations.',
         });
-        // Continue the loop to give the model another chance to issue tool_calls
+        // If the model still refuses to issue tool_calls after a couple of nudges,
+        // deterministically execute the planned calls to ensure receipts exist.
+        if (planEchoCount >= 2 && lastPlan && Array.isArray(lastPlan.calls) && !toolsExecutedAtLeastOnce) {
+          try {
+            const planned: Array<{ tool: string; args: unknown; timeoutMs?: number }> = lastPlan.calls;
+            log?.debug?.({ count: planned.length }, '🔧 CHAT_TOOLS: Executing planned calls deterministically');
+            for (let i = 0; i < planned.length; i++) {
+              const call = planned[i]!;
+              const toolName = String(call.tool);
+              if (!activeToolNames.includes(toolName)) {
+                incMetaToolGatedSkip(toolName, String(lastPlan?.route || 'unknown'));
+                continue;
+              }
+              const tool = tools.find(t => t.name === toolName);
+              if (!tool) continue;
+              const sig = `${toolName}:${stableHash(call.args)}`;
+              if (ledger.shouldSkip(toolName, call.args)) {
+                incMetaToolSkippedByLedger(toolName);
+                continue;
+              }
+              incMetaToolCall(toolName);
+              const t0 = Date.now();
+              try {
+                onStatus?.(describeToolCall(toolName, call.args));
+                const out: any = await policy.execute(() => limiter.schedule(() => tool.call(call.args, { signal: controller.signal, threadId: args.threadId })));
+                const latency = Date.now() - t0;
+                observeMetaToolLatency(toolName, latency);
+                ledger.finish(toolName, call.args, { ok: !!out?.ok });
+                executed.add(sig);
+                // Extract receipts/facts similar to tool_calls branch
+                const o = out ?? {};
+                const hasSummary = typeof o.summary === 'string' && o.summary.trim().length > 0;
+                const hasSource = typeof o.source === 'string' && o.source.trim().length > 0;
+                if (hasSummary) {
+                  const value = String(o.summary);
+                  facts.push({ key: toolName, value, source: hasSource ? String(o.source) : undefined });
+                  if (hasSource) citations.push(String(o.source));
+                  // Special enrichers (packing/search/vectara) copied from main path
+                  if (toolName === 'search') {
+                    try { const enriched = o as any; if (enriched.query) facts.push({ key: 'searchQuery', value: String(enriched.query), source: enriched.source }); } catch {}
+                  } else if (toolName === 'vectaraQuery') {
+                    try { const enriched = o as any; if (Array.isArray(enriched.citations)) for (const c of enriched.citations) { if (typeof c === 'string') citations.push(c); } } catch {}
+                  } else if (toolName === 'packingSuggest') {
+                    try {
+                      const enriched = o as any;
+                      if (enriched.band) facts.push({ key: 'packingBand', value: String(enriched.band), source: enriched.source });
+                      if (enriched.items && enriched.items.base) {
+                        const basePreview = Array.isArray(enriched.items.base) ? enriched.items.base.slice(0, 8) : [];
+                        if (basePreview.length > 0) facts.push({ key: 'packingItemsBase', value: basePreview.join(', '), source: 'curated' });
+                      }
+                    } catch {}
+                  }
+                  log?.debug?.({ toolName, factAdded: true, summary: value.substring(0, 100), source: o.source }, '🔧 CHAT_TOOLS: Fact extracted from planned call');
+                }
+                // Attach tool message so the model can read it in the next step
+                msgs.push({ role: 'tool', name: tool.name, tool_call_id: `plan-${i}`, content: JSON.stringify(out ?? {}) });
+              } catch (error) {
+                const latency = Date.now() - t0;
+                observeMetaToolLatency(toolName, latency);
+                ledger.finish(toolName, call.args, { ok: false, err: String(error) });
+                executed.add(sig);
+                msgs.push({ role: 'tool', name: tool.name, tool_call_id: `plan-${i}`, content: JSON.stringify({ ok: false, error: String(error) }) });
+                log?.error?.({ toolName, error: String(error) }, '🔧 CHAT_TOOLS: Planned call failed');
+              }
+            }
+            toolsExecutedAtLeastOnce = true;
+          } catch (e) {
+            log?.error?.({ error: String(e) }, '🔧 CHAT_TOOLS: Failed executing planned calls deterministically');
+          }
+        }
+        // Continue the loop (either after nudging or after deterministic execution)
         continue;
       }
       
