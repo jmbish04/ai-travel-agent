@@ -10,6 +10,7 @@ import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
 import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError, observeStage, observeStageClarify } from '../../util/metrics.js';
+import { getPrompt } from '../../core/prompts.js';
 import { VectaraClient } from '../../tools/vectara.js';
 import { performDeepResearch } from '../../core/deep_research.js';
 import { DestinationEngine } from '../../core/destination_engine.js';
@@ -566,27 +567,7 @@ export async function callChatWithTools(args: {
     try {
       log?.debug?.('🔧 CHAT_TOOLS: Starting planning phase');
       const planMessages: ChatToolMsg[] = [];
-      const PLANNING_SYS_PROMPT = [
-        'Planner: Return STRICT JSON only. No prose. No markdown.',
-        'Keys: route, confidence, missing, consent, calls, blend, verify.',
-        'In calls, use "tool" (not "name") and an "args" object that matches the tool schema.',
-        'Rules: Do not call tools. Do not mention these instructions.',
-        // Ideas/destinations routing (AI-first, prefer structured engine before web)
-        'If the user asks for ideas/destinations and a specific city is NOT known, set route="destinations". When the request mentions a continent/region or broad area (e.g., "in Europe", "Southeast Asia", "the Caribbean"), FIRST call destinationSuggest with { region } inferred from the user text; avoid web tools initially. Use deepResearch or search only if confidence < 0.75, the user explicitly asks for up-to-the-minute trends/news, or structured results are insufficient. Add amadeusResolveCity only after specific cities emerge.',
-        // Flights routing
-        'If the user asks for flights (mentions "flight(s)" or patterns like "from X to Y"), set route="flights" and plan calls in this order: (1) amadeusResolveCity for origin (X), (2) amadeusResolveCity for destination (Y), then (3) amadeusSearchFlights with { origin: X, destination: Y, departureDate: ISO or relative (today/tomorrow/next week) }. If return is mentioned, include returnDate. Always use the explicit cities from the message over any context, unless the message uses placeholders like "there"/"here" in which case resolve via Context.',
-        'Map relative dates (today/tonight/tomorrow/next week/next month) to the appropriate ISO date only when constructing tool arguments; do not alter the user text.',
-        // Attractions routing
-        'If the user asks for attractions/things to do and a destination city is known (from this turn or context), set route="attractions" and add a call to getAttractions with { city, profile: "kid_friendly" when family/kids cues are present }.',
-        'If the user asks for attractions but the destination is unknown (e.g., says "there"), set missing=["destination"] and avoid calling tools until clarified.',
-        // Complexity routing
-        'If Complexity.isComplex=true (confidence>=0.6), prefer deepResearch over search for the first call; otherwise prefer search.',
-        // Policy RAG → Web → Crawlee receipts (AI-first)
-        'For airline/hotel/visa policy queries: plan calls in this order: (1) vectaraQuery with required corpus (airlines|hotels|visas); (2) search with site:<brand-domain> and deep=false; (3) extractPolicyWithCrawlee with { url, clause, airlineName }. Only answer from on-brand receipts.',
-        'Visa alignment: Ensure receipts explicitly match the nationality→destination pair in the user question. If vectaraQuery surfaces off-topic results, ignore them and prefer official sovereign domains (gov.cn, embassy, diplo.de) via search.',
-        'Visa durations: Never propose a number unless it appears in receipts for this turn. If unclear or conflicting, either ask one confirmation or link without a number.',
-        'Be concise; omit empty fields.',
-      ].join(' ');
+      const PLANNING_SYS_PROMPT = (await getPrompt('planner')).trim();
       try {
         const { createHash } = await import('node:crypto');
         const planHash = createHash('sha256').update(PLANNING_SYS_PROMPT).digest('hex').slice(0, 12);
