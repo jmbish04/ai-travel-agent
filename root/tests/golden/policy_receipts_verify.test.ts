@@ -74,6 +74,9 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     expect(typeof out.threadId).toBe('string');
     expect(typeof out.reply).toBe('string');
 
+    // Wait a bit for verification to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     const artifact = await fetchLastVerification(out.threadId);
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);

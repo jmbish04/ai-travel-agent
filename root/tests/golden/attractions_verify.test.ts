@@ -57,6 +57,10 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'Kid-friendly activities in Paris?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
+    
+    // Wait a bit for verification to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     const artifact = await fetchLastVerification(out.threadId);
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);

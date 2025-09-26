@@ -56,10 +56,14 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     const out = await handleChat({ message: 'I am going to London next week, what should I pack?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
     
-    // Wait a bit for verification to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for verification to complete and be stored
+    let artifact;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      artifact = await fetchLastVerification(out.threadId);
+      if (artifact) break;
+    }
     
-    const artifact = await fetchLastVerification(out.threadId);
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);
   }, 15000);
