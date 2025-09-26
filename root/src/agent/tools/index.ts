@@ -19,6 +19,7 @@ import { parsePNRFromText } from '../../tools/pnr_parser.js';
 import { deepResearchPages, extractPolicyWithCrawlee as extractPolicyPage } from '../../tools/crawlee_research.js';
 import { assessQueryComplexity } from '../../core/complexity.js';
 import { suggestPacking } from '../../tools/packing.js';
+import type { PipelineStatusUpdate, PipelineStageKey } from '../../core/pipeline_status.js';
 
 export type ToolCallContext = { signal?: AbortSignal };
 
@@ -39,6 +40,123 @@ const policy = retry(handleAll, { backoff: new ExponentialBackoff({ initialDelay
 // Minimal JSON Schema builders for our inputs (avoid extra deps)
 const str = (desc?: string) => ({ type: 'string', description: desc });
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
+
+function safeString(value: unknown, max = 60): string {
+  if (value === undefined || value === null) return '';
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length > max) return `${normalized.slice(0, max - 3)}...`;
+  return normalized;
+}
+
+function describeToolCall(toolName: string, args: unknown): PipelineStatusUpdate {
+  const record = typeof args === 'object' && args !== null
+    ? (args as Record<string, unknown>)
+    : {};
+  const pick = (key: string) => safeString(record[key]);
+  const meta: Record<string, unknown> = {};
+  const build = (stage: PipelineStageKey, message: string) => ({
+    stage,
+    message,
+    meta: Object.keys(meta).length > 0 ? meta : undefined,
+  });
+
+  switch (toolName) {
+    case 'search': {
+      const query = pick('query');
+      if (query) meta.query = query;
+      return build('web-search', query
+        ? `Searching the web for "${query}"...`
+        : 'Searching the web...');
+    }
+    case 'deepResearch': {
+      const query = pick('query');
+      if (query) meta.query = query;
+      return build('web-search', query
+        ? `Running deep research for "${query}"...`
+        : 'Running deep research...');
+    }
+    case 'vectaraQuery': {
+      const query = pick('query');
+      const corpus = pick('corpus');
+      if (query) meta.query = query;
+      if (corpus) meta.corpus = corpus;
+      const label = corpus ? `corpus ${corpus}` : 'policy corpus';
+      return build('tool', query
+        ? `Querying ${label} for "${query}"...`
+        : `Querying ${label}...`);
+    }
+    case 'amadeusResolveCity': {
+      const city = pick('city') || pick('keyword');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Resolving city "${city}" via Amadeus...`
+        : 'Resolving city via Amadeus...');
+    }
+    case 'amadeusAirportsForCity': {
+      const city = pick('city');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Fetching airports for "${city}" via Amadeus...`
+        : 'Fetching airports via Amadeus...');
+    }
+    case 'amadeusSearchFlights': {
+      const origin = pick('origin');
+      const destination = pick('destination');
+      const depart = pick('departureDate');
+      const ret = pick('returnDate');
+      if (origin) meta.origin = origin;
+      if (destination) meta.destination = destination;
+      if (depart) meta.departureDate = depart;
+      if (ret) meta.returnDate = ret;
+      const route = [origin || 'origin', destination || 'destination'].join(' -> ');
+      const datePart = ret ? `${depart || '?'} / ${ret}` : depart || '';
+      const suffix = datePart ? ` (${datePart})` : '';
+      return build('tool', `Searching flights ${route}${suffix} via Amadeus...`);
+    }
+    case 'destinationSuggest': {
+      const region = pick('region') || pick('country') || pick('theme');
+      if (region) meta.region = region;
+      return build('tool', region
+        ? `Generating destination ideas for ${region}...`
+        : 'Generating destination ideas...');
+    }
+    case 'getAttractions': {
+      const city = pick('city');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Looking up attractions in ${city}...`
+        : 'Looking up attractions...');
+    }
+    case 'getWeather': {
+      const city = pick('city');
+      const start = pick('startDate');
+      const end = pick('endDate');
+      if (city) meta.city = city;
+      if (start) meta.startDate = start;
+      if (end) meta.endDate = end;
+      const range = start && end ? `${start} -> ${end}` : start || end || '';
+      const suffix = range ? ` (${range})` : '';
+      return build('tool', city
+        ? `Checking weather for ${city}${suffix}...`
+        : 'Checking weather...');
+    }
+    case 'packingSuggest': {
+      const city = pick('city');
+      const month = pick('month') || pick('dates');
+      if (city) meta.city = city;
+      if (month) meta.dateHint = month;
+      const suffix = month ? ` for ${month}` : '';
+      return build('tool', city
+        ? `Building packing list for ${city}${suffix}...`
+        : 'Building packing list...');
+    }
+    default: {
+      return build('tool', `Calling tool "${toolName}"...`);
+    }
+  }
+}
 
 export const tools: ToolSpec[] = [
   {
@@ -391,9 +509,11 @@ export async function callChatWithTools(args: {
   maxSteps?: number;
   timeoutMs?: number;
   log?: pino.Logger;
+  onStatus?: (update: PipelineStatusUpdate) => void;
 }): Promise<{ result: string; facts: Array<{ key: string; value: string; source?: string }>; decisions: Array<string>; citations: string[] }>
 {
   const log = args.log;
+  const onStatus = args.onStatus;
   log?.debug?.({ 
     userMessage: args.user,
     contextKeys: Object.keys(args.context || {}),
@@ -419,6 +539,17 @@ export async function callChatWithTools(args: {
     try {
       complexity = await assessQueryComplexity(args.user, log as any);
       log?.debug?.({ complexity }, '🔧 CHAT_TOOLS: Query complexity assessed');
+      if (complexity) {
+        const level = complexity.isComplex ? 'complex' : 'standard';
+        const conf = Number.isFinite(complexity.confidence)
+          ? ` (confidence ${complexity.confidence.toFixed(2)})`
+          : '';
+        onStatus?.({
+          stage: 'plan',
+          message: `Detected ${level} request${conf}...`,
+          meta: complexity as unknown as Record<string, unknown>,
+        });
+      }
     } catch {}
 
     const msgs: ChatToolMsg[] = [];
@@ -533,6 +664,12 @@ export async function callChatWithTools(args: {
                 observeStage('route', dur, true, routeIntent);
               }
             } catch {}
+            const confMsg = plan.confidence.toFixed(2);
+            onStatus?.({
+              stage: 'plan',
+              message: `Routing intent "${plan.route}" (confidence ${confMsg})...`,
+              meta: { route: plan.route, confidence: plan.confidence },
+            });
           }
           // Persist planner output in the conversation so the model can reference it.
           msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
@@ -549,6 +686,7 @@ export async function callChatWithTools(args: {
             const dur = Date.now() - planStart;
             observeStage('route', dur, false, 'unknown');
           } catch {}
+          onStatus?.({ stage: 'plan', message: 'Planner returned unusable plan, retrying...' });
         }
       } else {
         log?.debug?.('🔧 CHAT_TOOLS: No planning message content received');
@@ -556,6 +694,7 @@ export async function callChatWithTools(args: {
           const dur = Date.now() - planStart;
           observeStage('route', dur, false, 'unknown');
         } catch {}
+        onStatus?.({ stage: 'plan', message: 'Planner did not respond; attempting fallback...' });
       }
     } catch (error) {
       log?.error?.({ error: String(error) }, '🔧 CHAT_TOOLS: Planning phase failed');
@@ -563,6 +702,7 @@ export async function callChatWithTools(args: {
         const dur = Date.now() - planStart;
         observeStage('route', dur, false, 'unknown');
       } catch {}
+      onStatus?.({ stage: 'plan', message: 'Planner failed; falling back to direct execution...' });
     }
 
     // Add the actual user message for action
@@ -685,7 +825,8 @@ export async function callChatWithTools(args: {
           const inTok = Math.ceil(JSON.stringify(msgs).length / 4);
           const t0 = Date.now();
           incMetaToolCall(tool.name);
-          
+          onStatus?.(describeToolCall(tool.name, parsed));
+
           try {
             const out = await tool.call(parsed, { signal: controller.signal });
             const latency = Date.now() - t0;
@@ -786,6 +927,11 @@ export async function callChatWithTools(args: {
             const http = m ? Number(m[1]) : undefined;
             ledger.finish(tool.name, parsed, { ok: false, http, err: String(error) });
             msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: String(error) }) });
+            const errMessage = safeString(String(error), 40) || 'error';
+            onStatus?.({
+              stage: 'tool',
+              message: `Tool "${tool.name}" failed (${errMessage})...`,
+            });
           }
         }
         toolsExecutedAtLeastOnce = true;
@@ -838,6 +984,7 @@ export async function callChatWithTools(args: {
       } catch {}
       const dedupCites = Array.from(new Set(citations)).slice(0, 8);
       const finalContent = content || '';
+      onStatus?.({ stage: 'compose', message: 'Synthesizing grounded answer...' });
       try {
         // High-level alignment log only; no regex parsing or normalization
         log?.debug?.({ route: (lastPlan?.route || lastPlan?.intent || ''), factsCount: facts.length, citations: dedupCites }, 'blend_summary');

@@ -27,8 +27,12 @@ import {
   observeConfidenceOutcome,
   getMetaRouteConfidence,
 } from '../util/metrics.js';
+import type { PipelineStatusUpdate } from './pipeline_status.js';
 
-type BlendContext = { log: pino.Logger; onStatus?: (status: string) => void };
+type BlendContext = {
+  log: pino.Logger;
+  onStatus?: (update: PipelineStatusUpdate) => void;
+};
 
 const FORMAT_DECISION = (decision: string | Decision): string => {
   if (typeof decision === 'string') return decision;
@@ -55,6 +59,8 @@ export async function handleChat(
     isWhy: /^\s*\/why\b/i.test(trimmed)
   }, '🔧 BLEND: Starting handleChat');
 
+  ctx.onStatus?.({ stage: 'guard', message: 'Running entry guardrails...' });
+
   if (!trimmed) {
     return ChatOutput.parse({
       reply: "I'm a travel assistant. Please share a travel question (weather, destinations, packing, attractions, flights, or policies).",
@@ -66,6 +72,10 @@ export async function handleChat(
 
   if (isWhy) {
     ctx.log.debug({ threadId }, '🔧 BLEND: Processing /why command');
+    ctx.onStatus?.({
+      stage: 'context',
+      message: 'Retrieving stored receipts for explanation...'
+    });
     const stored = (await getLastReceipts(threadId)) || {};
     const facts = stored.facts || [];
     const decisions = stored.decisions || [];
@@ -91,6 +101,10 @@ export async function handleChat(
         .replace(/&gt;/g, '>');
 
       incGeneratedAnswer();
+      ctx.onStatus?.({
+        stage: 'finalize',
+        message: 'Sharing stored receipts summary...'
+      });
       return ChatOutput.parse({ reply: receiptsReply, threadId, sources: receipts.sources, receipts: safe });
     } catch (error) {
       ctx.log.warn({ error: String(error), threadId }, 'why_command_failed');
@@ -100,16 +114,27 @@ export async function handleChat(
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>');
       incGeneratedAnswer();
+      ctx.onStatus?.({
+        stage: 'finalize',
+        message: 'Receipts retrieval failed; returning cached summary.'
+      });
       return ChatOutput.parse({ reply: fallback, threadId, sources: receipts.sources });
     }
   }
 
-  ctx.onStatus?.('Processing your travel request...');
+  ctx.onStatus?.({
+    stage: 'parse',
+    message: 'Parsing your request for travel slots and intent...'
+  });
   await pushMessage(threadId, { role: 'user', content: trimmed });
   await setLastUserMessage(threadId, trimmed);
 
   ctx.log.debug({ threadId }, '🔧 BLEND: Getting slots before meta agent');
   const slotsBefore = await getThreadSlots(threadId);
+  ctx.onStatus?.({
+    stage: 'context',
+    message: 'Merging recent slots and preferences...'
+  });
   
   ctx.log.debug({ 
     threadId, 
@@ -117,7 +142,11 @@ export async function handleChat(
     slotsCount: Object.keys(slotsBefore).length
   }, '🔧 BLEND: Calling meta agent');
   
-  const out = await runMetaAgentTurn(trimmed, threadId, { log: ctx.log });
+  ctx.onStatus?.({ stage: 'plan', message: 'Invoking meta-agent planner...' });
+  const out = await runMetaAgentTurn(trimmed, threadId, {
+    log: ctx.log,
+    onStatus: ctx.onStatus,
+  });
   
   ctx.log.debug({ 
     threadId,
@@ -134,11 +163,14 @@ export async function handleChat(
     try { incAnswerUsingExternal(); } catch {}
   }
 
+  ctx.onStatus?.({ stage: 'compose', message: 'Drafting final answer...' });
+
   // Auto-verify when requested (best-effort)
   const autoVerify = process.env.AUTO_VERIFY_REPLIES === 'true';
   let finalReply = out.reply;
   if (autoVerify) {
     ctx.log.debug({ threadId }, '🔧 BLEND: Starting auto-verification');
+    ctx.onStatus?.({ stage: 'verify', message: 'Running automatic verification...' });
     try {
       const receiptsData = (await getLastReceipts(threadId)) || {};
       let facts = (receiptsData.facts || []) as Fact[];
@@ -270,6 +302,7 @@ export async function handleChat(
   }
 
   observeE2E(Date.now() - t0);
+  ctx.onStatus?.({ stage: 'finalize', message: 'Finalizing and returning answer...' });
   
   ctx.log.debug({ 
     threadId,

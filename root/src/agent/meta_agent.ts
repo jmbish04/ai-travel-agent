@@ -5,6 +5,7 @@ import { setLastReceipts, getThreadSlots, setLastUserMessage } from '../core/slo
 import { observeMetaTurnLatency, incReceiptsWrittenTotal, addMetaCitationsCount, addCitationDomain, observeStage } from '../util/metrics.js';
 import { getLastIntent } from '../core/slot_memory.js';
 import { callChatWithTools } from './tools/index.js';
+import type { PipelineStatusUpdate } from '../core/pipeline_status.js';
 
 export type MetaAgentOutput = {
   reply: string;
@@ -18,9 +19,10 @@ export type MetaAgentOutput = {
 export async function runMetaAgentTurn(
   message: string,
   threadId: string,
-  opts: { log?: pino.Logger } = {},
+  opts: { log?: pino.Logger; onStatus?: (update: PipelineStatusUpdate) => void } = {},
 ): Promise<MetaAgentOutput> {
   const log = opts.log || pino({ level: process.env.LOG_LEVEL || 'info' });
+  const onStatus = opts.onStatus;
   
   log.debug({ 
     message: message.substring(0, 200),
@@ -61,6 +63,7 @@ export async function runMetaAgentTurn(
     timeoutMs: 20000
   }, '🔧 META_AGENT: Calling callChatWithTools');
   
+  onStatus?.({ stage: 'plan', message: 'Generating tool execution plan...' });
   const { result, facts, decisions, citations } = await callChatWithTools({
     system: meta,
     user: message,
@@ -69,6 +72,7 @@ export async function runMetaAgentTurn(
     // Policy/search flows may need extra time for tool calls + final synthesis
     timeoutMs: 60000,
     log,
+    onStatus,
   });
 
   log.debug({ 
@@ -134,6 +138,8 @@ export async function runMetaAgentTurn(
     finalReplyLength: result?.length || 0,
     finalCitationsCount: citations?.length || 0
   }, '🔧 META_AGENT: runMetaAgentTurn completed');
+
+  onStatus?.({ stage: 'compose', message: 'Polishing answer for delivery...' });
 
   return { reply: result, citations };
 }
