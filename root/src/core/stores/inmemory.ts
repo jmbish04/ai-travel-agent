@@ -8,7 +8,7 @@ interface Entry {
   expiresAt: number;
 }
 
-export function createInMemoryStore(cfg: SessionConfig): SessionStore {
+export function createInMemoryStore(cfg: SessionConfig): SessionStore & { cleanup: () => void } {
   const store = new Map<string, Entry>();
   const ttlMs = cfg.ttlSec * 1000;
 
@@ -22,8 +22,12 @@ export function createInMemoryStore(cfg: SessionConfig): SessionStore {
     }
   }, 60_000);
 
+  const cleanup = () => clearInterval(sweepInterval);
+
   // Cleanup on process exit
-  process.on('exit', () => clearInterval(sweepInterval));
+  process.on('exit', cleanup);
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 
   function getEntry(id: string): Entry {
     const entry = store.get(id);
@@ -102,5 +106,7 @@ export function createInMemoryStore(cfg: SessionConfig): SessionStore {
     async clear(id: string): Promise<void> {
       store.delete(id);
     },
+
+    cleanup,
   };
 }

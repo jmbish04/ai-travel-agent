@@ -10,6 +10,7 @@ import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
 import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError, observeStage, observeStageClarify } from '../../util/metrics.js';
+import { getPrompt } from '../../core/prompts.js';
 import { VectaraClient } from '../../tools/vectara.js';
 import { performDeepResearch } from '../../core/deep_research.js';
 import { DestinationEngine } from '../../core/destination_engine.js';
@@ -19,8 +20,9 @@ import { parsePNRFromText } from '../../tools/pnr_parser.js';
 import { deepResearchPages, extractPolicyWithCrawlee as extractPolicyPage } from '../../tools/crawlee_research.js';
 import { assessQueryComplexity } from '../../core/complexity.js';
 import { suggestPacking } from '../../tools/packing.js';
+import type { PipelineStatusUpdate, PipelineStageKey } from '../../core/pipeline_status.js';
 
-export type ToolCallContext = { signal?: AbortSignal };
+export type ToolCallContext = { signal?: AbortSignal; threadId?: string };
 
 export type ToolSpec = {
   name: string;
@@ -39,6 +41,123 @@ const policy = retry(handleAll, { backoff: new ExponentialBackoff({ initialDelay
 // Minimal JSON Schema builders for our inputs (avoid extra deps)
 const str = (desc?: string) => ({ type: 'string', description: desc });
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
+
+function safeString(value: unknown, max = 60): string {
+  if (value === undefined || value === null) return '';
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length > max) return `${normalized.slice(0, max - 3)}...`;
+  return normalized;
+}
+
+function describeToolCall(toolName: string, args: unknown): PipelineStatusUpdate {
+  const record = typeof args === 'object' && args !== null
+    ? (args as Record<string, unknown>)
+    : {};
+  const pick = (key: string) => safeString(record[key]);
+  const meta: Record<string, unknown> = {};
+  const build = (stage: PipelineStageKey, message: string) => ({
+    stage,
+    message,
+    meta: Object.keys(meta).length > 0 ? meta : undefined,
+  });
+
+  switch (toolName) {
+    case 'search': {
+      const query = pick('query');
+      if (query) meta.query = query;
+      return build('web-search', query
+        ? `Searching the web for "${query}"...`
+        : 'Searching the web...');
+    }
+    case 'deepResearch': {
+      const query = pick('query');
+      if (query) meta.query = query;
+      return build('web-search', query
+        ? `Running deep research for "${query}"...`
+        : 'Running deep research...');
+    }
+    case 'vectaraQuery': {
+      const query = pick('query');
+      const corpus = pick('corpus');
+      if (query) meta.query = query;
+      if (corpus) meta.corpus = corpus;
+      const label = corpus ? `corpus ${corpus}` : 'policy corpus';
+      return build('tool', query
+        ? `Querying ${label} for "${query}"...`
+        : `Querying ${label}...`);
+    }
+    case 'amadeusResolveCity': {
+      const city = pick('city') || pick('keyword');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Resolving city "${city}" via Amadeus...`
+        : 'Resolving city via Amadeus...');
+    }
+    case 'amadeusAirportsForCity': {
+      const city = pick('city');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Fetching airports for "${city}" via Amadeus...`
+        : 'Fetching airports via Amadeus...');
+    }
+    case 'amadeusSearchFlights': {
+      const origin = pick('origin');
+      const destination = pick('destination');
+      const depart = pick('departureDate');
+      const ret = pick('returnDate');
+      if (origin) meta.origin = origin;
+      if (destination) meta.destination = destination;
+      if (depart) meta.departureDate = depart;
+      if (ret) meta.returnDate = ret;
+      const route = [origin || 'origin', destination || 'destination'].join(' -> ');
+      const datePart = ret ? `${depart || '?'} / ${ret}` : depart || '';
+      const suffix = datePart ? ` (${datePart})` : '';
+      return build('tool', `Searching flights ${route}${suffix} via Amadeus...`);
+    }
+    case 'destinationSuggest': {
+      const region = pick('region') || pick('country') || pick('theme');
+      if (region) meta.region = region;
+      return build('tool', region
+        ? `Generating destination ideas for ${region}...`
+        : 'Generating destination ideas...');
+    }
+    case 'getAttractions': {
+      const city = pick('city');
+      if (city) meta.city = city;
+      return build('tool', city
+        ? `Looking up attractions in ${city}...`
+        : 'Looking up attractions...');
+    }
+    case 'getWeather': {
+      const city = pick('city');
+      const start = pick('startDate');
+      const end = pick('endDate');
+      if (city) meta.city = city;
+      if (start) meta.startDate = start;
+      if (end) meta.endDate = end;
+      const range = start && end ? `${start} -> ${end}` : start || end || '';
+      const suffix = range ? ` (${range})` : '';
+      return build('tool', city
+        ? `Checking weather for ${city}${suffix}...`
+        : 'Checking weather...');
+    }
+    case 'packingSuggest': {
+      const city = pick('city');
+      const month = pick('month') || pick('dates');
+      if (city) meta.city = city;
+      if (month) meta.dateHint = month;
+      const suffix = month ? ` for ${month}` : '';
+      return build('tool', city
+        ? `Building packing list for ${city}${suffix}...`
+        : 'Building packing list...');
+    }
+    default: {
+      return build('tool', `Calling tool "${toolName}"...`);
+    }
+  }
+}
 
 export const tools: ToolSpec[] = [
   {
@@ -133,7 +252,7 @@ export const tools: ToolSpec[] = [
       deep: z.boolean().optional()
     }),
     spec: { type: 'function', function: { name: 'search', description: 'Search the web for travel information', parameters: obj({ query: str('Search query string'), deep: { type: 'boolean', description: 'Enable deep research crawl' } }, ['query']) } },
-    async call(args: unknown) {
+    async call(args: unknown, ctx: ToolCallContext) {
       const input = this.schema.parse(args) as { query: string; deep?: boolean };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort('timeout'), 9000);
@@ -142,7 +261,13 @@ export const tools: ToolSpec[] = [
         if (out && out.ok) {
           // Normalize to include a summary + source so receipts capture facts
           const summary = out.deepSummary || `Search results (${getSearchSource()}): ${out.results?.length ?? 0} hits`;
-          return { ...out, summary, source: getSearchCitation() };
+          // Provide the original query for follow-up commands like "search better"
+          const enriched = { ...out, summary, source: getSearchCitation(), query: input.query, deep: !!input.deep };
+          // Persist last search query into slots as a convenience
+          if (ctx?.threadId) {
+            try { const { updateThreadSlots } = await import('../../core/slot_memory.js'); await updateThreadSlots(ctx.threadId, { last_search_query: input.query }); } catch {}
+          }
+          return enriched;
         }
         return out;
       } finally { clearTimeout(timeout); }
@@ -373,8 +498,24 @@ function allowedToolsForRoute(route?: string): string[] {
   const all = tools.map(t => t.name);
   if (!route) return all;
   const lower = route.toLowerCase();
-  if (lower === 'destinations' || lower === 'web' || lower === 'policy' || lower === 'visas') {
-    return all.filter(n => !n.startsWith('amadeus'));
+  // Weather should use the dedicated weather tool (Open‑Meteo) first.
+  // Avoid generic web search unless the weather tool itself falls back.
+  if (lower === 'weather') {
+    return all.filter(n => n === 'weather');
+  }
+  if (lower === 'web') {
+    return all.filter(n => n === 'search' || n === 'deepResearch');
+  }
+  if (lower === 'policy' || lower === 'visas') {
+    return all.filter(n => n === 'vectaraQuery' || n === 'search' || n === 'extractPolicyWithCrawlee');
+  }
+  if (lower === 'attractions') {
+    // Prefer dedicated attractions tool; allow web search as fallback.
+    return all.filter(n => n === 'getAttractions' || n === 'search');
+  }
+  if (lower === 'destinations') {
+    // Tools-first for destinations; allow deep research if needed.
+    return all.filter(n => n === 'destinationSuggest' || n === 'getCountry' || n === 'search' || n === 'deepResearch');
   }
   if (lower === 'packing') {
     // Packing must be tool-first (weather + curated). Do not deepResearch by default.
@@ -391,9 +532,12 @@ export async function callChatWithTools(args: {
   maxSteps?: number;
   timeoutMs?: number;
   log?: pino.Logger;
+  onStatus?: (update: PipelineStatusUpdate) => void;
+  threadId?: string;
 }): Promise<{ result: string; facts: Array<{ key: string; value: string; source?: string }>; decisions: Array<string>; citations: string[] }>
 {
   const log = args.log;
+  const onStatus = args.onStatus;
   log?.debug?.({ 
     userMessage: args.user,
     contextKeys: Object.keys(args.context || {}),
@@ -407,7 +551,7 @@ export async function callChatWithTools(args: {
   const timeout = setTimeout(() => {
     log?.error?.('🔧 CHAT_TOOLS: Timeout reached, aborting');
     controller.abort('meta_timeout');
-  }, Math.max(2000, args.timeoutMs ?? 20000));
+  }, Math.max(2000, args.timeoutMs ?? 45000)); // Increased from 20s to 45s for crawling
   try {
 
     // Heuristic numeric normalization removed — rely on AI-first prompt + verify
@@ -419,6 +563,17 @@ export async function callChatWithTools(args: {
     try {
       complexity = await assessQueryComplexity(args.user, log as any);
       log?.debug?.({ complexity }, '🔧 CHAT_TOOLS: Query complexity assessed');
+      if (complexity) {
+        const level = complexity.isComplex ? 'complex' : 'standard';
+        const conf = Number.isFinite(complexity.confidence)
+          ? ` (confidence ${complexity.confidence.toFixed(2)})`
+          : '';
+        onStatus?.({
+          stage: 'plan',
+          message: `Detected ${level} request${conf}...`,
+          meta: complexity as unknown as Record<string, unknown>,
+        });
+      }
     } catch {}
 
     const msgs: ChatToolMsg[] = [];
@@ -435,27 +590,7 @@ export async function callChatWithTools(args: {
     try {
       log?.debug?.('🔧 CHAT_TOOLS: Starting planning phase');
       const planMessages: ChatToolMsg[] = [];
-      const PLANNING_SYS_PROMPT = [
-        'Planner: Return STRICT JSON only. No prose. No markdown.',
-        'Keys: route, confidence, missing, consent, calls, blend, verify.',
-        'In calls, use "tool" (not "name") and an "args" object that matches the tool schema.',
-        'Rules: Do not call tools. Do not mention these instructions.',
-        // Ideas/destinations routing
-        'If the user asks for ideas/destinations and destination is unknown, set route="destinations" and include a first call to deepResearch with a composed query (e.g., "popular coastal destinations in Asia"). For trips with constraints, also include a search call with deep=true. Add destinationSuggest only when user mentions a region and we want a safe, quick list. Add amadeusResolveCity only after specific cities emerge.',
-        // Flights routing
-        'If the user asks for flights (mentions "flight(s)" or patterns like "from X to Y"), set route="flights" and plan calls in this order: (1) amadeusResolveCity for origin (X), (2) amadeusResolveCity for destination (Y), then (3) amadeusSearchFlights with { origin: X, destination: Y, departureDate: ISO or relative (today/tomorrow/next week) }. If return is mentioned, include returnDate. Always use the explicit cities from the message over any context, unless the message uses placeholders like "there"/"here" in which case resolve via Context.',
-        'Map relative dates (today/tonight/tomorrow/next week/next month) to the appropriate ISO date only when constructing tool arguments; do not alter the user text.',
-        // Attractions routing
-        'If the user asks for attractions/things to do and a destination city is known (from this turn or context), set route="attractions" and add a call to getAttractions with { city, profile: "kid_friendly" when family/kids cues are present }.',
-        'If the user asks for attractions but the destination is unknown (e.g., says "there"), set missing=["destination"] and avoid calling tools until clarified.',
-        // Complexity routing
-        'If Complexity.isComplex=true (confidence>=0.6), prefer deepResearch over search for the first call; otherwise prefer search.',
-        // Policy RAG → Web → Crawlee receipts (AI-first)
-        'For airline/hotel/visa policy queries: plan calls in this order: (1) vectaraQuery with required corpus (airlines|hotels|visas); (2) search with site:<brand-domain> and deep=false; (3) extractPolicyWithCrawlee with { url, clause, airlineName }. Only answer from on-brand receipts.',
-        'Visa alignment: Ensure receipts explicitly match the nationality→destination pair in the user question. If vectaraQuery surfaces off-topic results, ignore them and prefer official sovereign domains (gov.cn, embassy, diplo.de) via search.',
-        'Visa durations: Never propose a number unless it appears in receipts for this turn. If unclear or conflicting, either ask one confirmation or link without a number.',
-        'Be concise; omit empty fields.',
-      ].join(' ');
+      const PLANNING_SYS_PROMPT = (await getPrompt('planner')).trim();
       try {
         const { createHash } = await import('node:crypto');
         const planHash = createHash('sha256').update(PLANNING_SYS_PROMPT).digest('hex').slice(0, 12);
@@ -533,6 +668,12 @@ export async function callChatWithTools(args: {
                 observeStage('route', dur, true, routeIntent);
               }
             } catch {}
+            const confMsg = plan.confidence.toFixed(2);
+            onStatus?.({
+              stage: 'plan',
+              message: `Routing intent "${plan.route}" (confidence ${confMsg})...`,
+              meta: { route: plan.route, confidence: plan.confidence },
+            });
           }
           // Persist planner output in the conversation so the model can reference it.
           msgs.push({ role: 'assistant', content: JSON.stringify(plan) });
@@ -549,6 +690,7 @@ export async function callChatWithTools(args: {
             const dur = Date.now() - planStart;
             observeStage('route', dur, false, 'unknown');
           } catch {}
+          onStatus?.({ stage: 'plan', message: 'Planner returned unusable plan, retrying...' });
         }
       } else {
         log?.debug?.('🔧 CHAT_TOOLS: No planning message content received');
@@ -556,6 +698,7 @@ export async function callChatWithTools(args: {
           const dur = Date.now() - planStart;
           observeStage('route', dur, false, 'unknown');
         } catch {}
+        onStatus?.({ stage: 'plan', message: 'Planner did not respond; attempting fallback...' });
       }
     } catch (error) {
       log?.error?.({ error: String(error) }, '🔧 CHAT_TOOLS: Planning phase failed');
@@ -563,6 +706,7 @@ export async function callChatWithTools(args: {
         const dur = Date.now() - planStart;
         observeStage('route', dur, false, 'unknown');
       } catch {}
+      onStatus?.({ stage: 'plan', message: 'Planner failed; falling back to direct execution...' });
     }
 
     // Add the actual user message for action
@@ -685,9 +829,10 @@ export async function callChatWithTools(args: {
           const inTok = Math.ceil(JSON.stringify(msgs).length / 4);
           const t0 = Date.now();
           incMetaToolCall(tool.name);
-          
+          onStatus?.(describeToolCall(tool.name, parsed));
+
           try {
-            const out = await tool.call(parsed, { signal: controller.signal });
+            const out = await tool.call(parsed, { signal: controller.signal, threadId: args.threadId });
             const latency = Date.now() - t0;
             observeMetaToolLatency(tool.name, latency);
             addMetaTokens(inTok, 0);
@@ -716,6 +861,13 @@ export async function callChatWithTools(args: {
                     for (const c of o.citations) {
                       if (typeof c === 'string') citations.push(c);
                     }
+                  }
+                  // Persist last search query into slots for follow-up commands like "search better"
+                  if (tool.name === 'search' && typeof (parsed as any)?.query === 'string' && args.threadId) {
+                    try {
+                      const { updateThreadSlots } = await import('../../core/slot_memory.js');
+                      await updateThreadSlots(args.threadId, { last_search_query: String((parsed as any).query) });
+                    } catch {}
                   }
                   // Enrich facts for packingSuggest so blending & verification can ground in curated items
                   if (tool.name === 'packingSuggest') {
@@ -786,6 +938,11 @@ export async function callChatWithTools(args: {
             const http = m ? Number(m[1]) : undefined;
             ledger.finish(tool.name, parsed, { ok: false, http, err: String(error) });
             msgs.push({ role: 'tool', name: tool.name, tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: String(error) }) });
+            const errMessage = safeString(String(error), 40) || 'error';
+            onStatus?.({
+              stage: 'tool',
+              message: `Tool "${tool.name}" failed (${errMessage})...`,
+            });
           }
         }
         toolsExecutedAtLeastOnce = true;
@@ -821,7 +978,77 @@ export async function callChatWithTools(args: {
           content:
             'Reminder: Execute the planned tool calls now using tool_calls. Do not output the planning JSON. After tools finish, produce the final grounded answer with citations.',
         });
-        // Continue the loop to give the model another chance to issue tool_calls
+        // If the model still refuses to issue tool_calls after a couple of nudges,
+        // deterministically execute the planned calls to ensure receipts exist.
+        if (planEchoCount >= 2 && lastPlan && Array.isArray(lastPlan.calls) && !toolsExecutedAtLeastOnce) {
+          try {
+            const planned: Array<{ tool: string; args: unknown; timeoutMs?: number }> = lastPlan.calls;
+            log?.debug?.({ count: planned.length }, '🔧 CHAT_TOOLS: Executing planned calls deterministically');
+            for (let i = 0; i < planned.length; i++) {
+              const call = planned[i]!;
+              const toolName = String(call.tool);
+              if (!activeToolNames.includes(toolName)) {
+                incMetaToolGatedSkip(toolName, String(lastPlan?.route || 'unknown'));
+                continue;
+              }
+              const tool = tools.find(t => t.name === toolName);
+              if (!tool) continue;
+              const sig = `${toolName}:${stableHash(call.args)}`;
+              if (ledger.shouldSkip(toolName, call.args)) {
+                incMetaToolSkippedByLedger(toolName);
+                continue;
+              }
+              incMetaToolCall(toolName);
+              const t0 = Date.now();
+              try {
+                onStatus?.(describeToolCall(toolName, call.args));
+                const out: any = await policy.execute(() => limiter.schedule(() => tool.call(call.args, { signal: controller.signal, threadId: args.threadId })));
+                const latency = Date.now() - t0;
+                observeMetaToolLatency(toolName, latency);
+                ledger.finish(toolName, call.args, { ok: !!out?.ok });
+                executed.add(sig);
+                // Extract receipts/facts similar to tool_calls branch
+                const o = out ?? {};
+                const hasSummary = typeof o.summary === 'string' && o.summary.trim().length > 0;
+                const hasSource = typeof o.source === 'string' && o.source.trim().length > 0;
+                if (hasSummary) {
+                  const value = String(o.summary);
+                  facts.push({ key: toolName, value, source: hasSource ? String(o.source) : undefined });
+                  if (hasSource) citations.push(String(o.source));
+                  // Special enrichers (packing/search/vectara) copied from main path
+                  if (toolName === 'search') {
+                    try { const enriched = o as any; if (enriched.query) facts.push({ key: 'searchQuery', value: String(enriched.query), source: enriched.source }); } catch {}
+                  } else if (toolName === 'vectaraQuery') {
+                    try { const enriched = o as any; if (Array.isArray(enriched.citations)) for (const c of enriched.citations) { if (typeof c === 'string') citations.push(c); } } catch {}
+                  } else if (toolName === 'packingSuggest') {
+                    try {
+                      const enriched = o as any;
+                      if (enriched.band) facts.push({ key: 'packingBand', value: String(enriched.band), source: enriched.source });
+                      if (enriched.items && enriched.items.base) {
+                        const basePreview = Array.isArray(enriched.items.base) ? enriched.items.base.slice(0, 8) : [];
+                        if (basePreview.length > 0) facts.push({ key: 'packingItemsBase', value: basePreview.join(', '), source: 'curated' });
+                      }
+                    } catch {}
+                  }
+                  log?.debug?.({ toolName, factAdded: true, summary: value.substring(0, 100), source: o.source }, '🔧 CHAT_TOOLS: Fact extracted from planned call');
+                }
+                // Attach tool message so the model can read it in the next step
+                msgs.push({ role: 'tool', name: tool.name, tool_call_id: `plan-${i}`, content: JSON.stringify(out ?? {}) });
+              } catch (error) {
+                const latency = Date.now() - t0;
+                observeMetaToolLatency(toolName, latency);
+                ledger.finish(toolName, call.args, { ok: false, err: String(error) });
+                executed.add(sig);
+                msgs.push({ role: 'tool', name: tool.name, tool_call_id: `plan-${i}`, content: JSON.stringify({ ok: false, error: String(error) }) });
+                log?.error?.({ toolName, error: String(error) }, '🔧 CHAT_TOOLS: Planned call failed');
+              }
+            }
+            toolsExecutedAtLeastOnce = true;
+          } catch (e) {
+            log?.error?.({ error: String(e) }, '🔧 CHAT_TOOLS: Failed executing planned calls deterministically');
+          }
+        }
+        // Continue the loop (either after nudging or after deterministic execution)
         continue;
       }
       
@@ -838,6 +1065,7 @@ export async function callChatWithTools(args: {
       } catch {}
       const dedupCites = Array.from(new Set(citations)).slice(0, 8);
       const finalContent = content || '';
+      onStatus?.({ stage: 'compose', message: 'Synthesizing grounded answer...' });
       try {
         // High-level alignment log only; no regex parsing or normalization
         log?.debug?.({ route: (lastPlan?.route || lastPlan?.intent || ''), factsCount: facts.length, citations: dedupCites }, 'blend_summary');

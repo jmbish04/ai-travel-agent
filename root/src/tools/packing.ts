@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getWeather } from './weather.js';
 
 type PackingData = {
@@ -14,12 +13,12 @@ let cache: { data?: PackingData } = {};
 
 async function loadPacking(): Promise<PackingData> {
   if (cache.data) return cache.data;
-  const here = fileURLToPath(new URL('.', import.meta.url));
   const candidates = [
     process.env.PACKING_DATA_PATH,
     path.join(process.cwd(), 'root', 'src', 'data', 'packing.json'),
     path.join(process.cwd(), 'src', 'data', 'packing.json'),
-    path.join(here, '..', 'data', 'packing.json'),
+    path.resolve('root/src/data/packing.json'),
+    path.resolve('src/data/packing.json'),
   ].filter((p): p is string => !!p);
   let lastErr: unknown;
   for (const p of candidates) {
@@ -59,7 +58,10 @@ export async function suggestPacking(
   const data = await loadPacking();
 
   const wx = await getWeather({ city: input.city, month: input.month, dates: input.dates });
-  if (!wx.ok) return { ok: false, reason: wx.reason };
+  if (!wx.ok) {
+    const reason = (wx as { ok: false; reason: string }).reason || 'weather_unavailable';
+    return { ok: false, reason };
+  }
 
   const maxC = wx.maxC ?? 22;
   const minC = wx.minC ?? 12;

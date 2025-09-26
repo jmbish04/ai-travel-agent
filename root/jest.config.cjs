@@ -14,8 +14,23 @@ module.exports = {
   maxWorkers: 1,
   setupFilesAfterEnv: ['<rootDir>/tests/setup/jest.setup.ts'],
   transform: {
-    '^.+\\.ts$': 'ts-jest',
+    '^.+\\.ts$': ['ts-jest', {
+      tsconfig: {
+        target: 'ES2022',
+        module: 'ES2022',
+        moduleResolution: 'bundler',
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
+        strict: false,
+        noEmit: true,
+        skipLibCheck: true,
+        types: ['jest', 'node']
+      }
+    }],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(tavily|brave-search)/)'
+  ],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
@@ -36,21 +51,6 @@ module.exports = {
       functions: 60,
       lines: 60,
       statements: 60
-    }
-  },
-  globals: {
-    'ts-jest': {
-      tsconfig: {
-        target: 'ES2022',
-        module: 'CommonJS',
-        moduleResolution: 'node',
-        esModuleInterop: true,
-        allowSyntheticDefaultImports: true,
-        strict: false,
-        noEmit: true,
-        skipLibCheck: true,
-        types: ['jest', 'node']
-      }
     }
   }
 };

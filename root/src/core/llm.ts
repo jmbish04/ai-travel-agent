@@ -579,7 +579,7 @@ export async function optimizeSearchQuery(
     let optimized = response.trim();
     
     // Remove quotes that LLM might add
-    optimized = optimized.replace(/^["']|["']$/g, '');
+    optimized = optimized.replace(/^(?:["'])|(?:["'])$/g, '');
     
     // Ensure current location is included if not already present
     if (currentLocation && !optimized.toLowerCase().includes(currentLocation.toLowerCase())) {
@@ -589,13 +589,9 @@ export async function optimizeSearchQuery(
     // Validate length constraint (≤12 words)
     const wordCount = optimized.split(/\s+/).filter(Boolean).length;
     if (wordCount > 12) {
-      // Truncate to first 12 words, preserving location if possible
+      // Truncate to first 12 words (branches were identical)
       const words = optimized.split(/\s+/).filter(Boolean);
-      if (currentLocation && words.length > 0 && words[0]?.toLowerCase() === currentLocation.toLowerCase()) {
-        optimized = words.slice(0, 12).join(' ');
-      } else {
-        optimized = words.slice(0, 12).join(' ');
-      }
+      optimized = words.slice(0, 12).join(' ');
     }
     
     // Cache the result

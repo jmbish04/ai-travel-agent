@@ -13,6 +13,7 @@ import { createStore, initSessionStore } from './core/session_store.js';
 import { clearThreadSlots } from './core/slot_memory.js';
 import type { Decision } from './core/receipts.js';
 import { incMessages, observeE2E } from './util/metrics.js';
+import type { PipelineStageKey, PipelineStatusUpdate } from './core/pipeline_status.js';
 
 // Start standalone metrics server for dashboard access
 if (process.env.METRICS !== 'off') {
@@ -106,124 +107,105 @@ async function streamText(text: string, delayMs = STREAMING_DELAY_MS) {
 }
 
 class Spinner {
-  private frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private readonly frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private readonly stageOrder: PipelineStageKey[] = [
+    'guard',
+    'parse',
+    'context',
+    'plan',
+    'tool',
+    'web-search',
+    'compose',
+    'verify',
+    'finalize',
+  ];
+  private readonly stageLabels: Record<PipelineStageKey, string> = {
+    guard: 'Running safety checks...',
+    parse: 'Parsing your request...',
+    context: 'Retrieving recent context...',
+    plan: 'Planning next steps...',
+    tool: 'Gathering data from tools...',
+    'web-search': 'Searching the web...',
+    compose: 'Drafting your answer...',
+    verify: 'Verifying answer quality...',
+    finalize: 'Finalizing recommendations...',
+  };
   private interval: NodeJS.Timeout | null = null;
   private currentFrame = 0;
-  private currentStatus = 'Analyzing your request...';
+  private currentStage: PipelineStageKey = 'guard';
   private customStatus: string | null = null;
-  private customStatusTime: number = 0;
+  private customStatusTime = 0;
   private readonly CUSTOM_STATUS_TIMEOUT = 3000; // 3 seconds
-  private processingStage = 0;
-
-  // Processing stages that reflect actual system flow
-  private stageMessages = {
-    0: 'Analyzing your request...',           // Guard stage - fast checks
-    1: 'Extracting travel details...',        // Extract stage - NER/entities
-    2: 'Routing to travel service...',        // Route stage - intent detection
-    3: 'Checking weather data...',            // Weather action
-    4: 'Finding destinations...',             // Destinations action
-    5: 'Searching for attractions...',        // Attractions action
-    6: 'Preparing packing list...',           // Packing action
-    7: 'Checking travel policies...',         // Policy action
-    8: 'Searching for flights...',            // Flights action
-    9: 'Searching the web...',                // Web search action
-    10: 'Preparing your response...',         // Final composition
-    11: 'Finalizing recommendations...'       // Verification and completion
-  };
-
-  // Fallback random messages for variety
-  private statusMessages = [
-    'Gathering travel information...',
-    'Processing travel data...',
-    'Verifying details...',
-    'Cross-referencing information...',
-    'Calculating travel options...'
-  ];
 
   start() {
-    this.resetStage();
+    this.currentFrame = 0;
+    this.customStatus = null;
+    this.customStatusTime = 0;
+    this.currentStage = 'guard';
+    if (this.interval) clearInterval(this.interval);
     this.interval = setInterval(() => {
-      // Get current display status (prefer custom status over stage status)
       const displayStatus = this.getCurrentDisplayStatus();
-
-      // Clear the line and move cursor to beginning before writing new message
-      process.stdout.write(`\r\x1b[2K${chalk.yellow(this.frames[this.currentFrame])} ${chalk.gray(displayStatus)}`);
+      const frame = chalk.yellow(this.frames[this.currentFrame]);
+      const text = chalk.gray(displayStatus);
+      process.stdout.write(`\r\x1b[2K${frame} ${text}`);
       this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-
-      // Progress through stages automatically if no custom status is active
-      if (this.currentFrame % 19 === 0 && !this.customStatus) {
-        this.processingStage = (this.processingStage + 1) % 12;
-        this.currentStatus = this.getStageStatus();
-      }
     }, 80);
   }
 
-  setStatus(status: string) {
-    const newStatus = status || 'Processing...';
-
-    // Set custom status with timestamp
-    this.customStatus = newStatus;
-    this.customStatusTime = Date.now();
-
-    // Update the display immediately if spinner is running
-    if (this.interval) {
-      process.stdout.write(`\r\x1b[2K${chalk.yellow(this.frames[this.currentFrame])} ${chalk.gray(newStatus)}`);
+  handlePipelineUpdate(update: PipelineStatusUpdate | string) {
+    if (typeof update === 'string') {
+      this.setStatus(update);
+      return;
     }
+    if (update.stage) this.setStage(update.stage);
+    if (update.message) this.setStatus(update.message);
   }
 
-  // Set processing stage to reflect actual system progress
-  setStage(stage: number) {
-    if (stage >= 0 && stage <= 11) {
-      this.processingStage = stage;
-      this.currentStatus = this.getStageStatus();
-
-      // Update display immediately if spinner is running
-      if (this.interval) {
-        process.stdout.write(`\r\x1b[2K${chalk.yellow(this.frames[this.currentFrame])} ${chalk.gray(this.currentStatus)}`);
+  private setStage(stage: PipelineStageKey) {
+    if (this.stageOrder.includes(stage)) {
+      this.currentStage = stage;
+      if (this.interval && !this.customStatus) {
+        const frame = chalk.yellow(this.frames[this.currentFrame]);
+        const text = chalk.gray(this.getStageStatus());
+        process.stdout.write(`\r\x1b[2K${frame} ${text}`);
       }
     }
   }
 
-  // Get status message for current processing stage
+  private setStatus(status: string) {
+    const newStatus = status || 'Processing...';
+    this.customStatus = newStatus;
+    this.customStatusTime = Date.now();
+    if (this.interval) {
+      const frame = chalk.yellow(this.frames[this.currentFrame]);
+      const text = chalk.gray(newStatus);
+      process.stdout.write(`\r\x1b[2K${frame} ${text}`);
+    }
+  }
+
   private getStageStatus(): string {
-    return this.stageMessages[this.processingStage as keyof typeof this.stageMessages] || 'Processing...';
+    return this.stageLabels[this.currentStage] || 'Processing...';
   }
 
   private getCurrentDisplayStatus(): string {
-    // If we have a custom status and it's not timed out, use it
-    if (this.customStatus && (Date.now() - this.customStatusTime) < this.CUSTOM_STATUS_TIMEOUT) {
+    if (this.customStatus && Date.now() - this.customStatusTime < this.CUSTOM_STATUS_TIMEOUT) {
       return this.customStatus;
     }
-
-    // Custom status timed out, clear it
     if (this.customStatus) {
       this.customStatus = null;
     }
-
-    // Return current random status
-    return this.currentStatus;
-  }
-
-  private getRandomStatus(): string {
-    if (this.statusMessages.length === 0) return 'Processing...';
-    return this.statusMessages[Math.floor(Math.random() * this.statusMessages.length)] || 'Processing...';
-  }
-
-  // Reset processing stage when starting
-  resetStage() {
-    this.processingStage = 0;
-    this.currentStatus = this.getStageStatus();
+    return this.getStageStatus();
   }
 
   stop() {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
-      // Clear custom status when stopping
       this.customStatus = null;
       this.customStatusTime = 0;
-      process.stdout.write('\r'.padEnd(50, ' ') + '\r'); // clear the line
+      process.stdout.write('\r'.padEnd(50, ' ') + '\r');
     }
+    this.currentStage = 'guard';
   }
 }
 
@@ -296,6 +278,10 @@ async function main() {
     log.debug({ message: q, threadId }, 'Processing user message');
     
     spinner.start();
+    spinner.handlePipelineUpdate({
+      stage: 'guard',
+      message: 'Running safety checks before planning...'
+    });
     const t0 = Date.now();
     const wantReceipts = /^\s*\/why\b/i.test(q);
     
@@ -306,7 +292,7 @@ async function main() {
         { message: q, threadId, receipts: wantReceipts }, 
         { 
           log,
-          onStatus: (status: string) => spinner.setStatus(status)
+          onStatus: (update) => spinner.handlePipelineUpdate(update)
         }
       );
       // e2e latency (best-effort)

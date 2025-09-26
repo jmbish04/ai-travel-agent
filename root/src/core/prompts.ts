@@ -5,6 +5,7 @@ import path from 'node:path';
 type PromptName =
   | 'meta_agent'
   | 'verify'
+  | 'planner'
   | 'consent_detector'
   | 'complexity_assessor'
   | 'city_parser'
@@ -23,15 +24,12 @@ type PromptName =
   | 'attractions_summarizer'
   | 'preference_extractor'
   | 'origin_destination_extractor'
-  | 'policy_classifier'
   | 'policy_confidence'
   | 'policy_extractor'
-  | 'policy_page_relevance'
   | 'flight_slot_extractor'
   | 'domain_authenticity_classifier'
   | 'crawlee_page_summary'
   | 'crawlee_overall_summary'
-  | 'iata_code_generator'
   | 'llm_test_evaluator';
 
 let loaded = false;
@@ -64,6 +62,7 @@ export async function preloadPrompts(): Promise<void> {
 
   await Promise.all([
     assign('meta_agent', 'meta_agent.md'),
+    assign('planner', 'planner.md'),
     assign('verify', 'verify.md'),
     assign('consent_detector', 'consent_detector.md'),
     assign('complexity_assessor', 'complexity_assessor.md'),
@@ -83,15 +82,12 @@ export async function preloadPrompts(): Promise<void> {
     assign('attractions_summarizer', 'attractions_summarizer.md'),
     assign('preference_extractor', 'preference_extractor.md'),
     assign('origin_destination_extractor', 'origin_destination_extractor.md'),
-    assign('policy_classifier', 'policy_classifier.md'),
     assign('policy_confidence', 'policy_confidence.md'),
     assign('policy_extractor', 'policy_extractor.md'),
-    assign('policy_page_relevance', 'policy_page_relevance.md'),
     assign('flight_slot_extractor', 'flight_slot_extractor.md'),
     assign('domain_authenticity_classifier', 'domain_authenticity_classifier.md'),
     assign('crawlee_page_summary', 'crawlee_page_summary.md'),
     assign('crawlee_overall_summary', 'crawlee_overall_summary.md'),
-    assign('iata_code_generator', 'iata_code_generator.md'),
     assign('llm_test_evaluator', 'llm_test_evaluator.md'),
   ]);
 
@@ -105,4 +101,3 @@ export async function getPrompt(name: PromptName): Promise<string> {
   memo.set(name, text);
   return text;
 }
-
