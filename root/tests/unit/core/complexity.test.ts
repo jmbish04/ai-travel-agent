@@ -1,27 +1,33 @@
-import { calculateComplexity } from '../../../src/core/complexity.js';
+import { assessQueryComplexity } from '../../../src/core/complexity.js';
+
+// Mock the LLM module before importing
+jest.mock('../../../src/core/llm', () => ({
+  callLLM: jest.fn()
+}));
 
 describe('Complexity', () => {
-  it('should calculate complexity for simple message', () => {
-    const complexity = calculateComplexity('Hello world');
-    expect(complexity).toBeGreaterThan(0);
-    expect(complexity).toBeLessThan(1);
+  beforeEach(() => {
+    jest.clearAllMocks();
   });
 
-  it('should calculate higher complexity for complex message', () => {
-    const simpleComplexity = calculateComplexity('Hi');
-    const complexComplexity = calculateComplexity('I need to book a flight from New York to London with specific dates and preferences for hotels and restaurants');
-    
-    expect(complexComplexity).toBeGreaterThan(simpleComplexity);
+  it('should assess complexity for simple message', async () => {
+    const { callLLM } = await import('../../../src/core/llm.js');
+    (callLLM as jest.Mock).mockResolvedValue('{"isComplex": false, "confidence": 0.8, "reasoning": "Simple greeting"}');
+
+    const assessment = await assessQueryComplexity('Hello world');
+    expect(assessment).toBeDefined();
+    expect(typeof assessment.isComplex).toBe('boolean');
+    expect(typeof assessment.confidence).toBe('number');
+    expect(typeof assessment.reasoning).toBe('string');
   });
 
-  it('should handle empty message', () => {
-    const complexity = calculateComplexity('');
-    expect(complexity).toBe(0);
-  });
+  it('should handle LLM errors gracefully', async () => {
+    const { callLLM } = await import('../../../src/core/llm.js');
+    (callLLM as jest.Mock).mockRejectedValue(new Error('LLM error'));
 
-  it('should handle very long message', () => {
-    const longMessage = 'word '.repeat(1000);
-    const complexity = calculateComplexity(longMessage);
-    expect(complexity).toBeGreaterThan(0);
+    const assessment = await assessQueryComplexity('Test message');
+    expect(assessment.isComplex).toBe(false);
+    expect(assessment.confidence).toBe(0);
+    expect(assessment.reasoning).toBe('llm_error');
   });
 });

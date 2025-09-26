@@ -1,4 +1,4 @@
-import { pushMessage, getMessages } from '../../../src/core/memory.js';
+import { pushMessage, getContext } from '../../../src/core/memory.js';
 import { createStore, initSessionStore } from '../../../src/core/session_store.js';
 import { loadSessionConfig } from '../../../src/config/session.js';
 
@@ -10,12 +10,12 @@ describe('Memory', () => {
   });
 
   it('should push and retrieve messages', async () => {
-    const threadId = 'test-thread-1';
+    const threadId = 'test-thread-' + Math.random().toString(36).slice(2);
     
     await pushMessage(threadId, { role: 'user', content: 'Hello' });
     await pushMessage(threadId, { role: 'assistant', content: 'Hi there!' });
     
-    const messages = await getMessages(threadId);
+    const messages = await getContext(threadId);
     
     expect(messages).toHaveLength(2);
     expect(messages[0]).toEqual({ role: 'user', content: 'Hello' });
@@ -23,7 +23,8 @@ describe('Memory', () => {
   });
 
   it('should handle empty thread', async () => {
-    const messages = await getMessages('empty-thread');
+    const threadId = 'empty-thread-' + Math.random().toString(36).slice(2);
+    const messages = await getContext(threadId);
     expect(messages).toHaveLength(0);
   });
 });

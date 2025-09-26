@@ -10,13 +10,28 @@ describe('Logging', () => {
     expect(typeof logger.warn).toBe('function');
   });
 
-  it('should create logger with custom level', () => {
-    const logger = createLogger('debug');
+  it('should create logger with debug level', () => {
+    const originalLevel = process.env.LOG_LEVEL;
+    process.env.LOG_LEVEL = 'debug';
+    
+    const logger = createLogger();
     expect(logger).toBeDefined();
+    
+    // Restore original level
+    if (originalLevel) {
+      process.env.LOG_LEVEL = originalLevel;
+    } else {
+      delete process.env.LOG_LEVEL;
+    }
   });
 
-  it('should handle invalid log level', () => {
-    const logger = createLogger('invalid' as any);
-    expect(logger).toBeDefined();
+  it('should handle logging with PII redaction', () => {
+    const logger = createLogger();
+    
+    // Should not throw when logging
+    expect(() => {
+      logger.info('Test message');
+      logger.debug({ key: 'value' }, 'Debug message');
+    }).not.toThrow();
   });
 });

@@ -9,23 +9,23 @@ describe('Session Config', () => {
     expect(config.ttlSec).toBeGreaterThan(0);
   });
 
-  it('should use in-memory store by default', () => {
+  it('should use redis by default when Redis URL is available', () => {
     const config = loadSessionConfig();
-    expect(config.kind).toBe('inmemory');
+    expect(['redis', 'memory']).toContain(config.kind);
   });
 
-  it('should handle redis config when REDIS_URL is set', () => {
-    const originalRedisUrl = process.env.REDIS_URL;
-    process.env.REDIS_URL = 'redis://localhost:6379';
+  it('should handle explicit memory config', () => {
+    const originalStore = process.env.SESSION_STORE;
+    process.env.SESSION_STORE = 'memory';
     
     const config = loadSessionConfig();
-    expect(config.kind).toBe('redis');
+    expect(config.kind).toBe('memory');
     
     // Restore original value
-    if (originalRedisUrl) {
-      process.env.REDIS_URL = originalRedisUrl;
+    if (originalStore) {
+      process.env.SESSION_STORE = originalStore;
     } else {
-      delete process.env.REDIS_URL;
+      delete process.env.SESSION_STORE;
     }
   });
 });

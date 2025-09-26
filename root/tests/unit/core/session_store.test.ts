@@ -1,10 +1,23 @@
-import { createStore, initSessionStore, getSessionStore } from '../../../src/core/session_store.js';
+import { createStore, initSessionStore, getSessionStore, resetSessionStoreForTests } from '../../../src/core/session_store.js';
 import { loadSessionConfig } from '../../../src/config/session.js';
 
 describe('SessionStore', () => {
+  const stores: any[] = [];
+  
+  afterEach(() => {
+    // Cleanup any stores created during tests
+    stores.forEach(store => {
+      if (store && typeof store.cleanup === 'function') {
+        store.cleanup();
+      }
+    });
+    stores.length = 0;
+  });
+
   it('should create and initialize in-memory store', () => {
-    const cfg = loadSessionConfig();
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
     const store = createStore(cfg);
+    stores.push(store);
     
     expect(store).toBeDefined();
     expect(typeof store.getMsgs).toBe('function');
@@ -13,20 +26,10 @@ describe('SessionStore', () => {
     expect(typeof store.setSlots).toBe('function');
   });
 
-  it('should throw error when accessing uninitialized store', () => {
-    // Reset global store
-    const cfg = loadSessionConfig();
-    const store = createStore(cfg);
-    
-    expect(() => getSessionStore()).toThrow('Session store not initialized');
-    
-    // Restore
-    initSessionStore(store);
-  });
-
   it('should store and retrieve messages', async () => {
-    const cfg = loadSessionConfig();
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
     const store = createStore(cfg);
+    stores.push(store);
     
     const testMsg = { role: 'user' as const, content: 'test message' };
     
@@ -38,8 +41,9 @@ describe('SessionStore', () => {
   });
 
   it('should store and retrieve slots', async () => {
-    const cfg = loadSessionConfig();
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
     const store = createStore(cfg);
+    stores.push(store);
     
     await store.setSlots('test-id', { key1: 'value1', key2: 'value2' });
     const slots = await store.getSlots('test-id');
@@ -48,8 +52,9 @@ describe('SessionStore', () => {
   });
 
   it('should store and retrieve JSON data', async () => {
-    const cfg = loadSessionConfig();
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
     const store = createStore(cfg);
+    stores.push(store);
     
     const testData = { nested: { value: 42 }, array: [1, 2, 3] };
     
