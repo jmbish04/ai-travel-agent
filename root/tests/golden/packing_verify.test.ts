@@ -5,9 +5,16 @@ const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
 
 (ALLOW ? describe : describe.skip)('GOLDEN: weather→packing receipts + verification', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.AUTO_VERIFY_REPLIES = 'true';
     jest.resetModules();
+    
+    // Initialize session store after module reset
+    const { createStore, initSessionStore } = await import('../../src/core/session_store.js');
+    const { loadSessionConfig } = await import('../../src/config/session.js');
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
+    const store = createStore(cfg);
+    initSessionStore(store);
   });
 
   it('verifies packing suggestions grounded in curated items', async () => {
@@ -48,6 +55,10 @@ const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true
     const { handleChat } = await import('../../src/core/blend.js');
     const out = await handleChat({ message: 'I am going to London next week, what should I pack?', receipts: true }, { log });
     expect(out.threadId).toBeDefined();
+    
+    // Wait a bit for verification to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     const artifact = await fetchLastVerification(out.threadId);
     expect(artifact).toBeDefined();
     expect(['pass', 'warn', 'fail']).toContain(artifact!.verdict);

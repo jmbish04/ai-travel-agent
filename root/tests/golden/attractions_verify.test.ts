@@ -5,9 +5,16 @@ const log = pino({ level: (process.env.LOG_LEVEL as any) || 'silent' });
 const ALLOW = process.env.VERIFY_LLM === '1' || process.env.VERIFY_LLM === 'true';
 
 (ALLOW ? describe : describe.skip)('GOLDEN: attractions receipts + verification', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.AUTO_VERIFY_REPLIES = 'true';
     jest.resetModules();
+    
+    // Initialize session store after module reset
+    const { createStore, initSessionStore } = await import('../../src/core/session_store.js');
+    const { loadSessionConfig } = await import('../../src/config/session.js');
+    const cfg = { ...loadSessionConfig(), kind: 'memory' as const };
+    const store = createStore(cfg);
+    initSessionStore(store);
   });
 
   it('verifies a kid-friendly attractions reply grounded in stubbed sources', async () => {
