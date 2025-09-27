@@ -22,6 +22,11 @@ if (process.env.METRICS !== 'off') {
   });
 }
 
+// For banner testing, exit early if BANNER_TEST env var is set
+if (process.env.BANNER_TEST) {
+  process.exit(0);
+}
+
 // Default push URL so CLI metrics appear on the metrics server dashboard
 if (!process.env.METRICS_PUSH_URL) {
   process.env.METRICS_PUSH_URL = 'http://localhost:3001/metrics/ingest';
@@ -36,7 +41,7 @@ const sessionConfig = loadSessionConfig();
 const sessionStore = createStore(sessionConfig);
 initSessionStore(sessionStore);
 
-log.info({ sessionStore: sessionConfig.kind, ttlSec: sessionConfig.ttlSec }, 'Session store initialized');
+log.debug({ sessionStore: sessionConfig.kind, ttlSec: sessionConfig.ttlSec }, 'Session store initialized');
 
 // Rate limiter for CLI commands
 const cliRateLimiter = new RateLimiter(RATE_LIMITER_CONFIG);
@@ -225,40 +230,24 @@ async function main() {
   
   // Display banner and intro
   console.log(chalk.cyan(`
-██╗   ██╗ ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗
-██║   ██║██╔═══██╗╚██╗ ██╔╝██╔══██╗████╗  ██║╚══██╔══╝
-██║   ██║██║   ██║ ╚████╔╝ ███████║██╔██╗ ██║   ██║
-╚██╗ ██╔╝██║   ██║  ╚██╔╝  ██╔══██║██║╚██╗██║   ██║
- ╚████╔╝ ╚██████╔╝   ██║   ██║  ██║██║ ╚████║   ██║
-  ╚═══╝   ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝
+               ▐
+▌ ▌▞▀▖▌ ▌▝▀▖▛▀▖▜▀
+▐▐ ▌ ▌▚▄▌▞▀▌▌ ▌▐ ▖
+ ▘ ▝▀ ▗▄▘▝▀▘▘ ▘ ▀
 
 `));
-  console.log(chalk.yellow.bold('✈️  VOYANT Travel Agent CLI'));
+  console.log(chalk.yellow.bold('✈️  VOYANT Travel Agent CLI — Ask any travel question!'));
   console.log(chalk.gray('─'.repeat(60)));
-  console.log(chalk.white('Ask travel questions. I answer in concise English.'));
-  console.log(chalk.gray('You can ask in any language; I will reply in English.'));
-  console.log(chalk.gray('─'.repeat(60)));
-  console.log(chalk.white.bold('What I can help with:'));
-  console.log(chalk.green('  • Weather — "Weather in London this week?"'));
-  console.log(chalk.green('  • Packing — "What to pack for Tokyo in March?"'));
-  console.log(chalk.green('  • Attractions — "Kid‑friendly things to do in SF in late Aug"'));
-  console.log(chalk.green('  • Destinations — "Where to go from Tel Aviv in August?"'));
-  console.log(chalk.green('  • Flights — "Flights from NYC to London March 15" (live search via Amadeus)'));
-  console.log(chalk.green('  • Policies (RAG) — "United baggage allowance", "Marriott cancellation"'));
-  console.log(chalk.green('    and visas — "Do I need a visa for Japan with a US passport?"'));
-  console.log(chalk.green('  • Web search on consent — events, flights, live info'));
-  console.log(chalk.gray('─'.repeat(60)));
-  console.log(chalk.white.bold('How to ask:'));
-  console.log(chalk.white('  • Include city and month/dates when possible.'));
-  console.log(chalk.white('  • I may ask to use web search or deep research — reply "yes" to proceed.'));
-  console.log(chalk.white('  • I avoid prices/budgeting; I can still suggest options.'));
-  console.log(chalk.gray('─'.repeat(60)));
-  console.log(chalk.white.bold('Commands:'));
-  console.log(chalk.blue('  /why   Show how I got my answer (sources, reasoning, fact-checking)'));
-  console.log(chalk.red('  exit   Quit'));
-  console.log(chalk.gray('─'.repeat(60)));
-  // console.log(chalk.white.bold('Environment Variables:'));
-  // console.log(chalk.yellow('  CLI_STREAMING_DELAY_MS  Set text streaming delay (default: 2ms)'));
+  console.log(
+    chalk.white(
+      chalk.green('• Weather, packing, attractions, destinations\n' +
+                  '• Flights, policies, visas, web search\n') +
+      chalk.blue('Commands: /why (sources),\n ') +
+      // Add a tip line to encourage users to provide more context for better results
+      chalk.white('Tip: For better results, add more context to your question.\n') +
+      chalk.red('exit (quit)')
+    )
+  );
   console.log(chalk.gray('─'.repeat(60)));
   console.log();
 

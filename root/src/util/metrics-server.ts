@@ -41,5 +41,5 @@ app.post('/metrics/ingest', (req, res) => {
 });
 
 app.listen(port, () => {
-  log.info(`Metrics server running at http://localhost:${port}`);
+  log.debug(`Metrics server running at http://localhost:${port}`);
 });
