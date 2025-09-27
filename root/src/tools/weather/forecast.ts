@@ -66,8 +66,6 @@ export class ForecastWeatherProvider implements WeatherProvider {
     const forecastDays = this.calculateForecastDays(options?.targetDate);
     const url = `${WEATHER_URL}?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&forecast_days=${forecastDays}`;
     
-    console.log(`🌤️ FORECAST: Requesting ${url}`);
-    
     try {
       const json = await retryPolicy.execute(async () => {
         return await limiter.schedule(() => fetchJSON<unknown>(url, {
@@ -78,7 +76,6 @@ export class ForecastWeatherProvider implements WeatherProvider {
       
       const parsed = WeatherSchema.safeParse(json);
       if (!parsed.success) {
-        console.log(`🌤️ FORECAST: Schema validation failed:`, parsed.error);
         return null;
       }
       
@@ -88,14 +85,10 @@ export class ForecastWeatherProvider implements WeatherProvider {
       const min = data.daily.temperature_2m_min[0];
       
       if (code === undefined || max === undefined || min === undefined) {
-        console.log(`🌤️ FORECAST: Missing data in response`);
         return null;
       }
       
       const summary = `${weatherCodeToText(code)} with a high of ${max}°C and a low of ${min}°C`;
-      
-      console.log(`🌤️ FORECAST: Success - ${summary}`);
-      
       return {
         summary,
         source: 'forecast',
@@ -103,7 +96,6 @@ export class ForecastWeatherProvider implements WeatherProvider {
         minC: min,
       };
     } catch (error) {
-      console.log(`🌤️ FORECAST: Error:`, error);
       return null;
     }
   }

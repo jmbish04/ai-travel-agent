@@ -25,6 +25,7 @@
   "scripts": {
     "dev": "npm run start & sleep 2 && npm run cli",
     "cli": "tsx src/cli.ts",
+    "cli:debug": "LOG_LEVEL=debug tsx src/cli.ts",
     "build": "tsc -p tsconfig.json && cp -r src/prompts dist/ && mkdir -p dist/public && (cp ../docs/index.html dist/public/ || echo 'index.html not found') && (cp ../docs/llmchat.html dist/public/ || echo 'llmchat.html not found')",
     "start": "node dist/api/server.js",
     "start:prod": "NODE_ENV=production node dist/api/server.js",

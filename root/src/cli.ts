@@ -51,12 +51,73 @@ const md = new MarkdownIt({
   linkify: true,
 });
 
+const FRAME_BAR = '─'.repeat(44);
+const PIPELINE_BAR = '─'.repeat(40);
+const PIPELINE_TOP_TEXT = `┌─ PIPELINE ${PIPELINE_BAR}`;
+const PIPELINE_BOTTOM_TEXT = `└${'─'.repeat(Math.max(PIPELINE_TOP_TEXT.length - 1, 0))}`;
+const PIPELINE_TOP = chalk.gray(PIPELINE_TOP_TEXT);
+const PIPELINE_BOTTOM = chalk.gray(PIPELINE_BOTTOM_TEXT);
+
+type Styler = (value: string) => string;
+
+const identity: Styler = (value: string) => value;
+
+interface BlockParts {
+  top: string;
+  body: string;
+  bottom: string;
+}
+
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#34;': '"',
+    '&#39;': "'",
+    '&apos;': "'",
+    '&nbsp;': ' ',
+    '&ldquo;': '"',
+    '&rdquo;': '"',
+    '&lsquo;': "'",
+    '&rsquo;': "'",
+  };
+
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match: string, hex: string) => {
+      return String.fromCodePoint(parseInt(hex, 16));
+    })
+    .replace(/&#(\d+);/g, (_match: string, dec: string) => {
+      return String.fromCodePoint(Number.parseInt(dec, 10));
+    })
+    .replace(/&[a-z]+;|&#\d+;|&#x[0-9a-f]+;/gi, (entity: string): string => {
+      if (Object.prototype.hasOwnProperty.call(named, entity)) {
+        return named[entity]!;
+      }
+      return entity;
+    });
+}
+
+function createBlock(title: string, message: string, accent: Styler, body: Styler): BlockParts {
+  const lines = message.split('\n').map((line) => (line.length === 0 ? ' ' : line));
+  const topPlain = `┌─ ${title.toUpperCase()} ${FRAME_BAR}`;
+  const bottomPlain = `└${'─'.repeat(Math.max(topPlain.length - 1, 0))}`;
+  const prefixed = lines
+    .map((line) => `${accent('│')} ${body(line)}`)
+    .join('\n');
+  return {
+    top: accent(topPlain),
+    body: prefixed,
+    bottom: accent(bottomPlain),
+  };
+}
+
 function renderMarkdownToTerminal(markdown: string): string {
-  // Parse markdown into HTML-like structure
+  // Parse markdown into HTML-like structure for easier styling
   const html = md.render(markdown);
 
-  // Convert HTML to ANSI escape sequences for terminal
-  return html
+  const formatted = html
     // Headers
     .replace(/<h1>(.*?)<\/h1>/gi, chalk.bold.blue('\n$1\n') + '='.repeat(50))
     .replace(/<h2>(.*?)<\/h2>/gi, chalk.bold.cyan('\n$1\n') + '-'.repeat(30))
@@ -99,6 +160,8 @@ function renderMarkdownToTerminal(markdown: string): string {
     // Normalize whitespace and line breaks
     .replace(/\n\s*\n/g, '\n\n')
     .trim();
+
+  return decodeHtmlEntities(formatted);
 }
 
 // Get streaming delay from environment or use default
@@ -151,8 +214,9 @@ class Spinner {
     this.interval = setInterval(() => {
       const displayStatus = this.getCurrentDisplayStatus();
       const frame = chalk.yellow(this.frames[this.currentFrame]);
+      const prefix = chalk.gray('│');
       const text = chalk.gray(displayStatus);
-      process.stdout.write(`\r\x1b[2K${frame} ${text}`);
+      process.stdout.write(`\r\x1b[2K${prefix} ${frame} ${text}`);
       this.currentFrame = (this.currentFrame + 1) % this.frames.length;
     }, 80);
   }
@@ -171,8 +235,9 @@ class Spinner {
       this.currentStage = stage;
       if (this.interval && !this.customStatus) {
         const frame = chalk.yellow(this.frames[this.currentFrame]);
+        const prefix = chalk.gray('│');
         const text = chalk.gray(this.getStageStatus());
-        process.stdout.write(`\r\x1b[2K${frame} ${text}`);
+        process.stdout.write(`\r\x1b[2K${prefix} ${frame} ${text}`);
       }
     }
   }
@@ -183,8 +248,9 @@ class Spinner {
     this.customStatusTime = Date.now();
     if (this.interval) {
       const frame = chalk.yellow(this.frames[this.currentFrame]);
+      const prefix = chalk.gray('│');
       const text = chalk.gray(newStatus);
-      process.stdout.write(`\r\x1b[2K${frame} ${text}`);
+      process.stdout.write(`\r\x1b[2K${prefix} ${frame} ${text}`);
     }
   }
 
@@ -258,14 +324,23 @@ async function main() {
     const q = await rl.question(chalk.blue.bold('You> '));
     if (q.trim().toLowerCase() === 'exit') break;
 
-    // Check rate limit
     if (!(await cliRateLimiter.acquire())) {
       console.log(chalk.red('⚠️  Rate limit exceeded. Please wait a moment before trying again.'));
       continue;
     }
 
     log.debug({ message: q, threadId }, 'Processing user message');
-    
+
+    const userBlock = createBlock('You', q, chalk.blueBright, chalk.white);
+    console.log();
+    console.log(userBlock.top);
+    if (userBlock.body.length > 0) console.log(userBlock.body);
+    console.log(userBlock.bottom);
+
+    let pipelineOpen = false;
+    console.log(PIPELINE_TOP);
+    pipelineOpen = true;
+
     spinner.start();
     spinner.handlePipelineUpdate({
       stage: 'guard',
@@ -273,56 +348,71 @@ async function main() {
     });
     const t0 = Date.now();
     const wantReceipts = /^\s*\/why\b/i.test(q);
-    
+    let res: Awaited<ReturnType<typeof handleChat>> | null = null;
+    let errorMessage: string | null = null;
+
     try {
-      // Count CLI messages to include in dashboard via push-ingest (if configured)
       incMessages();
-      const res = await handleChat(
-        { message: q, threadId, receipts: wantReceipts }, 
-        { 
+      res = await handleChat(
+        { message: q, threadId, receipts: wantReceipts },
+        {
           log,
-          onStatus: (update) => spinner.handlePipelineUpdate(update)
+          onStatus: (update) => spinner.handlePipelineUpdate(update),
         }
       );
-      // e2e latency (best-effort)
       try { observeE2E(Date.now() - t0); } catch {}
-      spinner.stop();
-
-      // Update threadId if returned
-      if (res.threadId && res.threadId !== threadId) {
-        threadId = res.threadId;
-      }
-
-      log.debug({ threadId, responseThreadId: res.threadId }, 'cli_thread_debug');
-
-      process.stdout.write(chalk.green.bold('Assistant> '));
-      let outputText = res.reply;
-      
-      // Only append receipts if this isn't a /why command (which already includes receipts in reply)
-      if (res.receipts && !wantReceipts) {
-        outputText += '\n\n--- RECEIPTS ---\n';
-        outputText += `Sources: ${(res.sources || []).join(', ')}\n`;
-        outputText += `Decisions: ${res.receipts.decisions.map(d => {
-          if (typeof d === 'string') return d;
-          return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
-        }).join(' ')}\n`;
-        outputText += `Self-Check: ${res.receipts.selfCheck.verdict}`;
-        if (res.receipts.selfCheck.notes.length > 0) {
-          outputText += ` (${res.receipts.selfCheck.notes.join(', ')})`;
-        }
-        outputText += '\n';
-        outputText += `Budget: ${res.receipts.budgets.ext_api_latency_ms || 0}ms API, ~${res.receipts.budgets.token_estimate || 0} tokens`;
-      }
-      const renderedReply = renderMarkdownToTerminal(outputText);
-      await streamText(renderedReply);
-      console.log(); // new line after completion
     } catch (error) {
-      spinner.stop();
-      console.log(chalk.red('❌ Error processing request:', error instanceof Error ? error.message : String(error)));
+      const details = error instanceof Error ? error.message : String(error);
+      errorMessage = `❌ Error processing request: ${details}`;
     } finally {
-      // Release rate limiter
+      spinner.stop();
+      if (pipelineOpen) {
+        console.log(PIPELINE_BOTTOM);
+        pipelineOpen = false;
+      }
       cliRateLimiter.release();
     }
+
+    if (errorMessage) {
+      console.log(chalk.red(errorMessage));
+    }
+
+    if (!res) {
+      continue;
+    }
+
+    if (res.threadId && res.threadId !== threadId) {
+      threadId = res.threadId;
+    }
+
+    log.debug({ threadId, responseThreadId: res.threadId }, 'cli_thread_debug');
+
+    let outputText = res.reply;
+
+    if (res.receipts && !wantReceipts) {
+      outputText += '\n\n--- RECEIPTS ---\n';
+      outputText += `Sources: ${(res.sources || []).join(', ')}\n`;
+      outputText += `Decisions: ${res.receipts.decisions.map(d => {
+        if (typeof d === 'string') return d;
+        return `${d.action} (rationale: ${d.rationale}${d.alternatives ? `, alternatives: ${d.alternatives.join(', ')}` : ''}${d.confidence ? `, confidence: ${d.confidence}` : ''})`;
+      }).join(' ')}\n`;
+      outputText += `Self-Check: ${res.receipts.selfCheck.verdict}`;
+      if (res.receipts.selfCheck.notes.length > 0) {
+        outputText += ` (${res.receipts.selfCheck.notes.join(', ')})`;
+      }
+      outputText += '\n';
+      outputText += `Budget: ${res.receipts.budgets.ext_api_latency_ms || 0}ms API, ~${res.receipts.budgets.token_estimate || 0} tokens`;
+    }
+
+    const renderedReply = renderMarkdownToTerminal(outputText);
+    const assistantBlock = createBlock('Assistant', renderedReply, chalk.greenBright, identity);
+    console.log();
+    console.log(assistantBlock.top);
+    if (assistantBlock.body.length > 0) {
+      await streamText(`${assistantBlock.body}\n`);
+    }
+    console.log(assistantBlock.bottom);
+    console.log();
   }
   rl.close();
 }

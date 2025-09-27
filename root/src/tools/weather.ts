@@ -8,6 +8,7 @@ import { HistoricalWeatherProvider } from './weather/historical.js';
 import { observeExternal } from '../util/metrics.js';
 import { parseDate } from '../core/parsers.js';
 import { isTemporalReference } from '../core/slot_memory.js';
+import type pino from 'pino';
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
@@ -52,9 +53,11 @@ const RELATIVE_TIME_TOKENS = new Set([
   'this morning'
 ]);
 
-async function getGeocode(city: string): Promise<{ lat: string; lon: string } | null> {
+type ToolLogger = Pick<pino.Logger, 'debug' | 'info' | 'warn' | 'error'>;
+
+async function getGeocode(city: string, log?: ToolLogger): Promise<{ lat: string; lon: string } | null> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}`;
-  console.log(`🌍 GEOCODE: Requesting ${url}`);
+  log?.debug?.({ city, url }, 'weather.geocode.request');
   try {
     const json = await retryPolicy.execute(async () => {
       return await limiter.schedule(() => fetchJSON<unknown>(url, {
@@ -62,35 +65,37 @@ async function getGeocode(city: string): Promise<{ lat: string; lon: string } | 
         headers: { 'Accept': 'application/json' },
       }));
     });
-    console.log(`🌍 GEOCODE: Raw response:`, JSON.stringify(json, null, 2));
     const parsed = GeocodeSchema.safeParse(json);
     if (!parsed.success) {
-      console.log(`🌍 GEOCODE: Schema validation failed:`, parsed.error);
+      log?.warn?.({ city, error: parsed.error.message }, 'weather.geocode.schema_failed');
       return null;
     }
     if (parsed.data.results.length === 0) {
-      console.log(`🌍 GEOCODE: No results found for ${city}`);
+      log?.debug?.({ city }, 'weather.geocode.no_results');
       return null;
     }
     const result = parsed.data.results[0];
     if (!result) {
-      console.log(`🌍 GEOCODE: No results found for ${city}`);
+      log?.debug?.({ city }, 'weather.geocode.no_primary_result');
       return null;
     }
-    console.log(`🌍 GEOCODE: Success - lat: ${result.latitude}, lon: ${result.longitude}`);
+    log?.debug?.({ city, lat: result.latitude, lon: result.longitude }, 'weather.geocode.success');
     return { lat: result.latitude.toString(), lon: result.longitude.toString() };
   } catch (error) {
-    console.log(`🌍 GEOCODE: Error:`, error);
+    log?.warn?.({ city, error: error instanceof Error ? error.message : String(error) }, 'weather.geocode.error');
     return null;
   }
 }
 
-export async function getWeather(input: { city: string; datesOrMonth?: string; month?: string; dates?: string }): Promise<
+export async function getWeather(
+  input: { city: string; datesOrMonth?: string; month?: string; dates?: string },
+  log?: ToolLogger,
+): Promise<
   | { ok: true; summary: string; source?: string; maxC?: number; minC?: number }
   | { ok: false; reason: string; source?: string }
 > {
   const start = Date.now();
-  console.log(`🌍 WEATHER: Starting weather lookup for ${input.city}`);
+  log?.debug?.({ input }, 'weather.lookup.start');
   
   // Use pre-extracted slots from NLP pipeline
   const city = input.city;
@@ -106,20 +111,20 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
   // Determine query type for metrics
   const queryType = dates ? 'forecast' : month ? 'climate' : 'current';
   
-  console.log(`🌍 WEATHER: Using slots - city: ${city}, month: ${month}, dates: ${dates}`);
+  log?.debug?.({ city, month, dates }, 'weather.lookup.slots');
   
   try {
-    const geocode = await getGeocode(city);
-    console.log(`🗺️ Geocode result:`, geocode);
+    const geocode = await getGeocode(city, log);
+    log?.debug?.({ city, geocode }, 'weather.lookup.geocode_result');
     
     if (!geocode) {
-      console.log(`🌍 WEATHER: Geocoding failed, falling back to search`);
+      log?.debug?.({ city }, 'weather.lookup.geocode_missing');
       // Fallback to search if geocode fails
-      const search = await searchTravelInfo(`weather in ${city}`, null as any);
+      const search = await searchTravelInfo(`weather in ${city}`, log as any);
       if (search.ok && search.results.length > 0) {
         const first = search.results[0];
         if (first) {
-          console.log(`🌍 WEATHER: Search fallback successful`);
+          log?.debug?.({ city }, 'weather.lookup.search_fallback.success');
           observeExternal({
             target: 'weather',
             status: 'ok',
@@ -129,7 +134,7 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
           return { ok: true, summary: `${first.title} - ${first.description}`, source: getSearchSource() };
         }
       }
-      console.log(`🌍 WEATHER: Both geocoding and search failed`);
+      log?.warn?.({ city }, 'weather.lookup.fallback_failed');
       observeExternal({
         target: 'weather',
         status: 'error',
@@ -141,7 +146,7 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
     
     // Determine which provider to use based on whether we have future month queries
     const isFutureMonth = month && !dates; // Month without specific dates suggests future climate query
-    console.log(`🌍 WEATHER: Using ${isFutureMonth ? 'historical' : 'forecast'} provider for ${isFutureMonth ? 'climate' : 'forecast'} data`);
+    log?.debug?.({ city, isFutureMonth }, 'weather.lookup.provider');
     
     let weatherResult;
     if (isFutureMonth) {
@@ -155,10 +160,8 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
       weatherResult = await forecastProvider.getWeather(geocode.lat, geocode.lon, {});
     }
     
-    console.log(`🌤️ Weather result:`, weatherResult);
-    
     if (!weatherResult) {
-      console.log(`🌍 WEATHER: Weather API failed`);
+      log?.warn?.({ city, isFutureMonth }, 'weather.lookup.provider_failed');
       observeExternal({
         target: 'weather',
         status: 'error',
@@ -174,7 +177,7 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
       historical: 'archive-api.open-meteo.com',
     };
     
-    console.log(`🌍 WEATHER: Success with ${weatherResult.source} provider`);
+    log?.debug?.({ city, provider: weatherResult.source }, 'weather.lookup.success');
     observeExternal({
       target: 'weather',
       status: 'ok',
@@ -196,6 +199,7 @@ export async function getWeather(input: { city: string; datesOrMonth?: string; m
       query_type: queryType,
       location: city.slice(0, 20)
     }, Date.now() - start);
+    log?.error?.({ city, error: error instanceof Error ? error.message : String(error) }, 'weather.lookup.exception');
     throw error;
   }
 }

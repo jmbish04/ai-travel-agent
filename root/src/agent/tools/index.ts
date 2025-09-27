@@ -22,7 +22,7 @@ import { assessQueryComplexity } from '../../core/complexity.js';
 import { suggestPacking } from '../../tools/packing.js';
 import type { PipelineStatusUpdate, PipelineStageKey } from '../../core/pipeline_status.js';
 
-export type ToolCallContext = { signal?: AbortSignal; threadId?: string };
+export type ToolCallContext = { signal?: AbortSignal; threadId?: string; log?: pino.Logger };
 
 export type ToolSpec = {
   name: string;
@@ -376,12 +376,16 @@ export const tools: ToolSpec[] = [
     description: 'Get weather summary for a city (current, forecast, or month climate).',
     schema: z.object({ city: z.string().min(1), month: z.string().optional(), dates: z.string().optional() }),
     spec: { type: 'function', function: { name: 'weather', description: 'Weather by city with optional month or dates', parameters: obj({ city: str('City name'), month: str('Travel month (e.g., March)'), dates: str('Specific dates or relative (today/tomorrow)') }, ['city']) } },
-    async call(args: unknown) {
+    async call(args: unknown, ctx: ToolCallContext) {
       const input = this.schema.parse(args) as { city: string; month?: string; dates?: string };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort('timeout'), 7000);
       try {
-        return await policy.execute(() => limiter.schedule(() => getWeather({ city: input.city, month: input.month, dates: input.dates })));
+        return await policy.execute(() =>
+          limiter.schedule(() =>
+            getWeather({ city: input.city, month: input.month, dates: input.dates }, ctx?.log)
+          )
+        );
       } finally { clearTimeout(timeout); }
     }
   },
@@ -832,7 +836,7 @@ export async function callChatWithTools(args: {
           onStatus?.(describeToolCall(tool.name, parsed));
 
           try {
-            const out = await tool.call(parsed, { signal: controller.signal, threadId: args.threadId });
+            const out = await tool.call(parsed, { signal: controller.signal, threadId: args.threadId, log });
             const latency = Date.now() - t0;
             observeMetaToolLatency(tool.name, latency);
             addMetaTokens(inTok, 0);

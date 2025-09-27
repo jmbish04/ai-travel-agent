@@ -50,8 +50,6 @@ export class HistoricalWeatherProvider implements WeatherProvider {
       
       const url = `${HISTORICAL_URL}?latitude=${lat}&longitude=${lon}&start_date=${startYear}-01-01&end_date=${endYear}-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum`;
       
-      console.log(`🌡️ HISTORICAL: Requesting ${url}`);
-      
       const json = await retryPolicy.execute(async () => {
         return await limiter.schedule(() => fetchJSON<unknown>(url, {
           target: 'archive-api.open-meteo.com',
@@ -70,14 +68,10 @@ export class HistoricalWeatherProvider implements WeatherProvider {
         }),
       }).safeParse(json);
       
-      if (!parsed.success) {
-        console.log(`🌡️ HISTORICAL: Schema validation failed:`, parsed.error);
-        return null;
-      }
+      if (!parsed.success) return null;
       
       return this.aggregateByMonth(parsed.data, month);
     } catch (error) {
-      console.log(`🌡️ HISTORICAL: Error:`, error);
       return null;
     }
   }
