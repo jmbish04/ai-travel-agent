@@ -129,7 +129,18 @@ export async function withResilience<T>(
     try {
       return await fn();
     } catch (error) {
-      log.debug({ service, error: error instanceof Error ? error.message : String(error) }, 'External call failed');
+      try {
+        const resp: any = (error as any)?.response;
+        const details = resp ? {
+          status: resp.status,
+          body: (() => {
+            try { return typeof resp.result !== 'undefined' ? resp.result : (typeof resp.body === 'string' ? resp.body.slice(0, 500) : resp.body); } catch { return undefined; }
+          })()
+        } : undefined;
+        log.debug({ service, error: error instanceof Error ? error.message : String(error), ...details }, 'External call failed');
+      } catch {
+        log.debug({ service, error: error instanceof Error ? error.message : String(error) }, 'External call failed');
+      }
       throw error;
     }
   };

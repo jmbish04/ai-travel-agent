@@ -35,11 +35,26 @@ export async function hotelOffersSearch(
   try {
     return await withPolicies(async () => {
       const amadeus = await getAmadeusClient();
-      
-      const params = {
-        checkInDate: query.checkInDate,
-        checkOutDate: query.checkOutDate,
-        adults: query.adults,
+      // Normalize dates (support relative keywords) using shared converter
+      const { convertToAmadeusDate } = await import('./amadeus_flights.js');
+      let checkInIso = await convertToAmadeusDate(query.checkInDate);
+      let checkOutIso = await convertToAmadeusDate(query.checkOutDate);
+      // If planner supplied a past date, bump to next week by default
+      const todayIso = new Date().toISOString().split('T')[0]!;
+      if (checkInIso < todayIso) {
+        checkInIso = await convertToAmadeusDate('next week');
+      }
+      // Ensure at least 2 nights when dates collapse to same day
+      if (checkOutIso <= checkInIso) {
+        const d = new Date(checkInIso);
+        d.setUTCDate(d.getUTCDate() + 2);
+        checkOutIso = d.toISOString().split('T')[0]!;
+      }
+
+      const params: Record<string, unknown> = {
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
+        adults: String(query.adults),
         ...(query.cityCode && { cityCode: query.cityCode }),
         ...(query.latitude && query.longitude && {
           latitude: query.latitude,
@@ -58,11 +73,45 @@ export async function hotelOffersSearch(
         ...(query.hotelSource && { hotelSource: query.hotelSource }),
       };
       
-      const response = await amadeus.shopping.hotelOffersSearch.get(params);
-      return response.data;
+      try {
+        const response = await amadeus.shopping.hotelOffersSearch.get(params);
+        const data = response?.data ?? response?.result?.data ?? [];
+        if (Array.isArray(data) && data.length > 0) return data;
+      } catch (err) {
+        // Fall through to byCity → hotelIds fallback
+        const e: any = err as any;
+        if (process.env.LOG_LEVEL === 'debug') {
+          console.debug('Hotel offers by city failed; attempting hotelIds fallback', { status: e?.response?.status, body: e?.response?.result || e?.response?.body });
+        }
+      }
+
+      // Fallback: enumerate hotels in city then query offers by hotelIds
+      if (query.cityCode) {
+        const list = await amadeus.referenceData.locations.hotels.byCity.get({ cityCode: query.cityCode });
+        const hotels = Array.isArray(list?.data) ? list.data : [];
+        const ids = hotels.map((h: any) => h?.hotelId).filter(Boolean).slice(0, 20);
+        if (ids.length > 0) {
+          const resp2 = await amadeus.shopping.hotelOffersSearch.get({
+            hotelIds: ids.join(','),
+            checkInDate: checkInIso,
+            checkOutDate: checkOutIso,
+            adults: String(query.adults),
+            ...(query.roomQuantity ? { roomQuantity: String(query.roomQuantity) } : {}),
+          });
+          return resp2?.data ?? resp2?.result?.data ?? [];
+        }
+      }
+      return [];
     }, signal, 8000);
   } catch (error) {
     const stdError = toStdError(error, 'hotelOffersSearch');
+    // Attach extra details for easier debugging in debug mode
+    if (process.env.LOG_LEVEL === 'debug') {
+      try {
+        const resp: any = (error as any)?.response;
+        console.debug('hotelOffersSearch error details', { status: resp?.status, body: resp?.result || resp?.body });
+      } catch {}
+    }
     throw new Error(`${stdError.code}: ${stdError.message}`);
   }
 }
