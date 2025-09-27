@@ -4,7 +4,7 @@ Return STRICT JSON only. No prose. No markdown. Do not call tools while
 handling this request. Keys and rules:
 
 Required keys
-- route: "weather" | "packing" | "attractions" | "destinations" | "flights" | "policy" | "web" | "irrops" | "system"
+- route: "weather" | "packing" | "attractions" | "destinations" | "flights" | "hotels" | "policy" | "web" | "irrops" | "system"
 - confidence: number in [0,1]
 - missing: array of missing or uncertain slots (e.g., ["city","dates"])
 - consent: { required: true|false, type?: "web"|"deep"|"web_after_rag" }
@@ -33,6 +33,14 @@ Routing guidance (Tools‑First)
   for origin; (2) amadeusResolveCity for destination; (3) amadeusSearchFlights
   with { origin, destination, departureDate, returnDate? }. Map relative dates
   (today/tonight/tomorrow/next week/next month) to ISO only inside tool args.
+- Hotels: when the user specifies a location and a timeframe (exact dates or
+  relative terms like today/tomorrow/this weekend/next week/next month), set
+  route="hotels". Plan calls in this order: (1) amadeusResolveCity for city;
+  (2) amadeusSearchHotels with { cityCode, checkInDate, checkOutDate, adults?, roomQuantity? }.
+  Map relative timeframes to ISO dates inside tool args (e.g., next week → next
+  Monday as checkIn and two nights by default unless the user states otherwise).
+  If the query is general (no dates/timeframe), prefer route="web" and use
+  search/vectaraQuery for recommendations.
 - Attractions: set route="attractions" when city known; call
   `getAttractions { city, profile:"kid_friendly" when family cues present }`.
   Avoid generic `search` unless `getAttractions` fails to produce usable data.

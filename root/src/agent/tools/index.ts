@@ -9,6 +9,7 @@ import { searchTravelInfo, getSearchCitation, getSearchSource } from '../../tool
 import { chatWithToolsLLM } from '../../core/llm.js';
 import { resolveCity as amadeusResolveCityFn, airportsForCity as amadeusAirportsForCityFn } from '../../tools/amadeus_locations.js';
 import { searchFlights as amadeusSearchFlights } from '../../tools/amadeus_flights.js';
+import { hotelOffersSearch as amadeusHotelOffersSearch } from '../../tools/amadeus_hotels.js';
 import { incMetaToolCall, observeMetaToolLatency, incMetaParseFailure, addMetaTokens, setMetaRouteConfidence, noteMetaRoutingDecision, incMetaToolLedgerHit, incMetaToolSkippedByLedger, incMetaToolGatedSkip, incMetaToolError, observeStage, observeStageClarify } from '../../util/metrics.js';
 import { getPrompt } from '../../core/prompts.js';
 import { VectaraClient } from '../../tools/vectara.js';
@@ -115,6 +116,18 @@ function describeToolCall(toolName: string, args: unknown): PipelineStatusUpdate
       const datePart = ret ? `${depart || '?'} / ${ret}` : depart || '';
       const suffix = datePart ? ` (${datePart})` : '';
       return build('tool', `Searching flights ${route}${suffix} via Amadeus...`);
+    }
+    case 'amadeusSearchHotels': {
+      const cityCode = pick('cityCode');
+      const checkIn = pick('checkInDate');
+      const checkOut = pick('checkOutDate');
+      if (cityCode) meta.cityCode = cityCode;
+      if (checkIn) meta.checkInDate = checkIn;
+      if (checkOut) meta.checkOutDate = checkOut;
+      const range = [checkIn || '?', checkOut || '?'].join(' → ');
+      return build('tool', cityCode
+        ? `Searching hotels in ${cityCode} (${range}) via Amadeus...`
+        : `Searching hotels (${range}) via Amadeus...`);
     }
     case 'destinationSuggest': {
       const region = pick('region') || pick('country') || pick('theme');
@@ -462,6 +475,48 @@ export const tools: ToolSpec[] = [
       } finally { clearTimeout(timeout); }
     }
   }
+  ,
+  {
+    name: 'amadeusSearchHotels',
+    description: 'Search hotel offers for a city (IATA city code) and dates.',
+    schema: z.object({
+      cityCode: z.string().regex(/^[A-Z]{3}$/),
+      checkInDate: z.string().min(1),
+      checkOutDate: z.string().min(1),
+      adults: z.number().int().min(1).max(9),
+      roomQuantity: z.number().int().min(1).max(9).optional(),
+    }),
+    spec: { type: 'function', function: { name: 'amadeusSearchHotels', description: 'Search hotels; requires IATA city code and dates', parameters: obj({ cityCode: str('IATA city code (e.g., PAR)'), checkInDate: str('Check-in date (YYYY-MM-DD)'), checkOutDate: str('Check-out date (YYYY-MM-DD)'), adults: { type: 'integer', minimum: 1, maximum: 9 }, roomQuantity: { type: 'integer', minimum: 1, maximum: 9 } }, ['cityCode','checkInDate','checkOutDate','adults']) } },
+    async call(args: unknown) {
+      const input = this.schema.parse(args) as { cityCode: string; checkInDate: string; checkOutDate: string; adults: number; roomQuantity?: number };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort('timeout'), 12000);
+      try {
+        const data: any[] = await policy.execute(() => limiter.schedule(() => amadeusHotelOffersSearch({
+          cityCode: input.cityCode,
+          checkInDate: input.checkInDate,
+          checkOutDate: input.checkOutDate,
+          adults: input.adults,
+          roomQuantity: input.roomQuantity,
+        })));
+        const items = Array.isArray(data) ? data : [];
+        const offersTotal = items.reduce((sum, it: any) => sum + (Array.isArray(it?.offers) ? it.offers.length : 0), 0);
+        const top = items.slice(0, 3).map((it: any, i: number) => {
+          const name = it?.hotel?.name || it?.hotel?.hotelId || 'Hotel';
+          const price = it?.offers?.[0]?.price?.total;
+          const currency = it?.offers?.[0]?.price?.currency || '';
+          return `${i + 1}. ${name}${price ? ` — ${price}${currency ? ' ' + currency : ''}` : ''}`;
+        });
+        const topLine = top.length > 0 ? `\nTop options:\n${top.join('\n')}` : '';
+        const extra = items.length > 3 ? `\n\n...and ${items.length - 3} more hotels.` : '';
+        const summary = `Found ${offersTotal || items.length} hotel option(s) in ${input.cityCode} for ${input.checkInDate} → ${input.checkOutDate}${topLine}${extra}`;
+        return { ok: true, source: 'amadeus', offers: items, count: offersTotal || items.length, summary };
+      } catch (error) {
+        incMetaToolError?.('amadeusSearchHotels', String(error));
+        return { ok: false, reason: 'amadeus_error' };
+      } finally { clearTimeout(timeout); }
+    }
+  }
 ];
 
 type ChatToolMsg = { role: 'system'|'user'|'assistant'|'tool'; content: string; name?: string; tool_call_id?: string };
@@ -520,6 +575,10 @@ function allowedToolsForRoute(route?: string): string[] {
   if (lower === 'packing') {
     // Packing must be tool-first (weather + curated). Do not deepResearch by default.
     return all.filter(n => n !== 'deepResearch');
+  }
+  if (lower === 'hotels') {
+    // Hotels: prefer Amadeus city resolver + hotel offers
+    return all.filter(n => n === 'amadeusResolveCity' || n === 'amadeusSearchHotels');
   }
   return all;
 }
