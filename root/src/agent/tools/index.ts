@@ -408,12 +408,16 @@ export const tools: ToolSpec[] = [
     description: 'Get attractions summary for a city',
     schema: z.object({ city: z.string().min(1), limit: z.number().int().min(1).max(10).optional(), profile: z.enum(['default', 'kid_friendly']).optional() }),
     spec: { type: 'function', function: { name: 'getAttractions', description: 'Attractions for a city', parameters: obj({ city: str('City name'), limit: { type: 'integer', minimum: 1, maximum: 10 }, profile: { type: 'string', enum: ['default','kid_friendly'] } }, ['city']) } },
-    async call(args: unknown) {
+    async call(args: unknown, ctx: ToolCallContext) {
       const input = this.schema.parse(args) as { city: string; limit?: number; profile?: 'default'|'kid_friendly' };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort('timeout'), 8000);
       try {
-        return await policy.execute(() => limiter.schedule(() => getAttractions({ city: input.city, limit: input.limit, profile: input.profile })));
+        return await policy.execute(() =>
+          limiter.schedule(() =>
+            getAttractions({ city: input.city, limit: input.limit, profile: input.profile }, { signal: ctx?.signal ?? controller.signal, log: ctx?.log })
+          )
+        );
       } finally { clearTimeout(timeout); }
     }
   },
