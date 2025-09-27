@@ -307,13 +307,16 @@ export async function chatWithToolsLLM(opts: {
     return { choices: [{ message: { role: 'assistant', content: '' } }] };
   }
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-  const controller = new AbortController();
+  const internalController = new AbortController();
   const timeoutMs = Math.max(1000, opts.timeoutMs ?? 15000);
-  const t = setTimeout(() => {
+  const timeoutHandle = setTimeout(() => {
     opts.log?.error?.({ timeoutMs }, '🔧 LLM: Timeout reached, aborting request');
-    controller.abort(new Error('llm_tools_timeout'));
+    internalController.abort(new Error('llm_tools_timeout'));
   }, timeoutMs);
-  const signal = opts.signal;
+  // Combine caller signal with our internal timeout signal (Node 20 supports AbortSignal.any)
+  const combinedSignal: AbortSignal = (AbortSignal as any)?.any?.(
+    [internalController.signal, opts.signal].filter(Boolean)
+  ) || (opts.signal ?? internalController.signal);
   
   const gen = buildGenParams('text', 'tools');
   const requestBody: any = {
@@ -344,10 +347,11 @@ export async function chatWithToolsLLM(opts: {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(requestBody),
-      signal: signal ?? controller.signal,
+      signal: combinedSignal,
     });
+    // We have a response; cancel the timeout immediately to avoid stray aborts/logs
+    clearTimeout(timeoutHandle);
     const requestLatency = Date.now() - requestStart;
-    clearTimeout(t);
     try {
       const provider = ((): string => { try { return new URL(baseUrl).hostname || 'custom'; } catch { return 'custom'; } })();
       observeLLMRequest(provider, model, 'tool', requestLatency);
@@ -402,7 +406,7 @@ export async function chatWithToolsLLM(opts: {
     // Return explicit error envelope instead of empty content
     return { error: { message: String(e) }, choices: [] };
   } finally {
-    clearTimeout(t);
+    clearTimeout(timeoutHandle);
   }
 }
 

@@ -585,8 +585,12 @@ export async function callChatWithTools(args: {
     } catch {}
 
     const msgs: ChatToolMsg[] = [];
+    // Temporal context for resolving relative dates like "tomorrow"
+    const todayIso = new Date().toISOString().slice(0, 10);
     const sys = args.system.trim();
     if (sys) msgs.push({ role: 'system', content: sys });
+    // Provide current date explicitly to the model (LLM-first, no heuristics)
+    msgs.push({ role: 'system', content: `Temporal: Current date (YYYY-MM-DD): ${todayIso}` });
     // Do not attach large auxiliary content here; the meta-agent prompt is self-contained.
     if (args.context && Object.keys(args.context).length > 0) {
       msgs.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
@@ -605,6 +609,8 @@ export async function callChatWithTools(args: {
         log?.debug?.({ planPromptHash: planHash, planPromptLength: PLANNING_SYS_PROMPT.length }, '🔧 CHAT_TOOLS: Planning prompt version');
       } catch {}
       planMessages.push({ role: 'system', content: PLANNING_SYS_PROMPT });
+      // Inject explicit current date so the planner resolves relative dates correctly
+      planMessages.push({ role: 'system', content: `Temporal: Current date (YYYY-MM-DD): ${todayIso}` });
       if (complexity) planMessages.push({ role: 'system', content: `Complexity: ${JSON.stringify(complexity)}` });
       if (args.context && Object.keys(args.context).length > 0) {
         planMessages.push({ role: 'system', content: `Context: ${JSON.stringify(args.context)}` });
@@ -813,6 +819,33 @@ export async function callChatWithTools(args: {
             incMetaParseFailure();
             log?.error?.({ toolName, arguments: tc.function.arguments, error: String(e) }, '🔧 CHAT_TOOLS: Failed to parse tool arguments');
           }
+          // Normalize planner argument variants to match tool schemas
+          try {
+            if (tool?.name === 'amadeusResolveCity' && parsed && typeof parsed === 'object') {
+              const obj = { ...(parsed as Record<string, unknown>) };
+              if (!('query' in obj)) {
+                const cand = (obj.city || obj.keyword || obj.name || obj.origin || obj.destination) as unknown;
+                if (typeof cand === 'string' && cand.trim()) obj.query = cand.trim();
+              }
+              delete (obj as any).city;
+              parsed = obj;
+            } else if (tool?.name === 'amadeusSearchFlights' && parsed && typeof parsed === 'object') {
+              const obj = { ...(parsed as Record<string, unknown>) };
+              if (!('origin' in obj)) {
+                const cand = (obj.originLocationCode || obj.originCode || obj.from || obj.source) as unknown;
+                if (typeof cand === 'string' && cand.trim()) obj.origin = cand.trim();
+              }
+              if (!('destination' in obj)) {
+                const cand = (obj.destinationLocationCode || obj.destinationCode || obj.to || obj.dest) as unknown;
+                if (typeof cand === 'string' && cand.trim()) obj.destination = cand.trim();
+              }
+              if (!('departureDate' in obj)) {
+                const cand = (obj.date || obj.departOn || obj.when) as unknown;
+                if (typeof cand === 'string' && cand.trim()) obj.departureDate = cand.trim();
+              }
+              parsed = obj;
+            }
+          } catch {}
           // Route-based gating: if tool is not in active list, skip
           if (!activeToolNames.includes(tool.name)) {
             incMetaToolGatedSkip(tool.name, String(lastPlan?.route || ''));
