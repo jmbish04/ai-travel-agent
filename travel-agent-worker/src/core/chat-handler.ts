@@ -1,6 +1,8 @@
 import type { ChatInput, ChatOutput } from "../schemas/chat";
 import type { SessionMessage, SessionStore } from "../types/session";
 import type { WorkerEnv } from "../types/env";
+import type { QueueService } from "./queue-service";
+import type { ScrapingRequest } from "../types/queue-messages";
 import type { Logger } from "../utils/logger";
 
 interface ChatHandlerContext {
@@ -8,6 +10,7 @@ interface ChatHandlerContext {
         log: Logger;
         ctx: ExecutionContext;
         sessionStore: SessionStore;
+        queueService?: QueueService;
 }
 
 /**
@@ -15,7 +18,7 @@ interface ChatHandlerContext {
  * TODO: Migrate the actual chat logic from the original project
  */
 export async function handleChat(input: ChatInput, context: ChatHandlerContext): Promise<ChatOutput> {
-        const { sessionStore, log } = context;
+        const { sessionStore, log, queueService } = context;
 
         // Placeholder implementation
         // TODO: Integrate with Durable Objects for agent state
@@ -40,6 +43,24 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 session = (await sessionStore.getSession(sessionId))!;
         } else {
                 await sessionStore.touch(session.id);
+        }
+
+        if (queueService) {
+                const scrapeRequests = identifyScrapeRequests(input.message, {
+                        userId: input.userId,
+                        sessionId: session.id,
+                        threadId,
+                });
+
+                await Promise.all(
+                        scrapeRequests.map(async (request) => {
+                                try {
+                                        await queueService.enqueueScrapeRequest(request);
+                                } catch (error) {
+                                        log.error({ error, request }, "Failed to enqueue scrape request");
+                                }
+                        }),
+                );
         }
 
         // Simple echo response for now
@@ -75,4 +96,46 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 threadId,
                 sessionId: session.id,
         };
+}
+
+const URL_PATTERN = /(https?:\/\/[^\s]+)/gi;
+
+function identifyScrapeRequests(
+        message: string,
+        context: { userId?: string; sessionId: string; threadId: string },
+): ScrapingRequest[] {
+        const matches = message.match(URL_PATTERN) ?? [];
+
+        return matches.map((url) => {
+                const normalized = url.replace(/[).,]+$/, "");
+                return {
+                        url: normalized,
+                        scrapeType: inferScrapeType(normalized),
+                        options: {},
+                        context,
+                        metadata: {
+                                priority: message.toLowerCase().includes("urgent") ? "urgent" : "normal",
+                                scheduledAt: Date.now(),
+                                maxRetries: 3,
+                                timeoutMs: 30_000,
+                                correlationId: crypto.randomUUID(),
+                                userId: context.userId,
+                                sessionId: context.sessionId,
+                        },
+                } satisfies ScrapingRequest;
+        });
+}
+
+function inferScrapeType(url: string): ScrapingRequest["scrapeType"] {
+        const normalized = url.toLowerCase();
+        if (normalized.includes("flight") || normalized.includes("airlines")) {
+                return "flight";
+        }
+        if (normalized.includes("hotel") || normalized.includes("stay") || normalized.includes("booking")) {
+                return "hotel";
+        }
+        if (normalized.includes("tour") || normalized.includes("attraction")) {
+                return "attraction";
+        }
+        return "general";
 }
