@@ -11,11 +11,18 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { D1Repository } from "./core/d1-repository";
 import { handleChat } from "./core/chat-handler";
+import { KVService } from "./core/kv-service";
+import { R2StorageService } from "./core/r2-storage";
+import { SessionKvStore } from "./core/session-kv-store";
 import { Router } from "./router";
 import { ChatInput, ChatOutput } from "./schemas/chat";
+import type { ScrapedMetadata } from "./types/database";
+import type { CachePointer, R2BucketTarget } from "./types/r2";
 import { createLogger } from "./utils/logger";
 import { RateLimiter } from "./utils/rate-limiter";
+import { decodeBase64 } from "./utils/serialization";
 
 export default {
 	async fetch(
@@ -24,13 +31,26 @@ export default {
 		ctx: ExecutionContext,
 	): Promise<Response> {
 		const url = new URL(request.url);
-		const log = createLogger();
+                const log = createLogger();
 
-		// Initialize router
-		const router = new Router();
+                // Initialize router
+                const router = new Router();
 
-		// CORS headers
-		const corsHeaders = {
+                const rateLimiterKv = new KVService(env.CACHE, { prefix: "rate_limit:" });
+const RATE_LIMIT_PREFIX = "rate_limit:";
+const rateLimiterKv = new KVService(env.CACHE, { prefix: RATE_LIMIT_PREFIX });
+                const cacheMetadataKv = new KVService(env.CACHE, { prefix: "cache_pointer:" });
+                const sessionKv = new KVService(env.SESSIONS, { prefix: "session:" });
+                const sessionStore = new SessionKvStore(sessionKv);
+                const r2Storage = new R2StorageService({
+                        scrapedData: env.SCRAPED_DATA,
+                        userUploads: env.USER_UPLOADS,
+                        cache: env.CACHE_BUCKET,
+                });
+                const repository = new D1Repository(env.DB);
+
+                // CORS headers
+                const corsHeaders = {
 			"Access-Control-Allow-Origin": "*",
 			"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 			"Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -42,11 +62,10 @@ export default {
 		}
 
 		// Rate limiting (skip for health checks)
-		if (url.pathname !== "/healthz") {
-			const rateLimiter = new RateLimiter(env.CACHE);
-			const clientIp = request.headers.get("CF-Connecting-IP") || "anonymous";
+                if (url.pathname !== "/healthz") {
+                        const clientIp = request.headers.get("CF-Connecting-IP") || "anonymous";
 
-			if (!(await rateLimiter.acquire(clientIp))) {
+                        if (!(await rateLimiter.acquire(clientIp))) {
 				log.warn({ path: url.pathname, ip: clientIp }, "Rate limit exceeded");
 				return new Response(
 					JSON.stringify({
@@ -63,10 +82,10 @@ export default {
 
 		try {
 			// Route handlers
-			router.post("/chat", async (request: Request) => {
-				try {
-					const body = await request.json();
-					const parsed = ChatInput.safeParse(body);
+                        router.post("/chat", async (request: Request) => {
+                                try {
+                                        const body = await request.json();
+                                        const parsed = ChatInput.safeParse(body);
 
 					if (!parsed.success) {
 						return new Response(
@@ -79,7 +98,12 @@ export default {
 					}
 
 					const t0 = Date.now();
-					const result = await handleChat(parsed.data, { env, log, ctx });
+                                        const result = await handleChat(parsed.data, {
+                                                env,
+                                                log,
+                                                ctx,
+                                                sessionStore,
+                                        });
 
 					// Track e2e latency
 					const latency = Date.now() - t0;
@@ -97,7 +121,7 @@ export default {
 				}
 			});
 
-			router.get("/healthz", async () => {
+                        router.get("/healthz", async () => {
 				// Check various service health
 				const health = {
 					ok: true,
@@ -109,14 +133,13 @@ export default {
 					},
 				};
 
-				try {
-					// Quick KV health check
-					await env.CACHE.put("health-check", "ok", { expirationTtl: 60 });
-					await env.CACHE.get("health-check");
-				} catch {
-					health.services.kv = "degraded";
-					health.ok = false;
-				}
+                                try {
+                                        await rateLimiterKv.set("health-check", { ok: true }, 60);
+                                        await rateLimiterKv.get("health-check");
+                                } catch {
+                                        health.services.kv = "degraded";
+                                        health.ok = false;
+                                }
 
 				return new Response(JSON.stringify(health), {
 					headers: { "Content-Type": "application/json", ...corsHeaders },
@@ -179,3 +202,293 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+                        router.post("/scraped-data", async (request: Request) => {
+                                try {
+                                        const payload = await request.json();
+
+                                        const requiredFields = ["url", "scrapeType", "content"] as const;
+                                        for (const field of requiredFields) {
+                                                if (!payload[field]) {
+                                                        return new Response(
+                                                                JSON.stringify({
+                                                                        error: "validation_error",
+                                                                        message: `Missing required field: ${field}`,
+                                                                }),
+                                                                {
+                                                                        status: 400,
+                                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                                },
+                                                        );
+                                                }
+                                        }
+
+                                        const bytes = decodeBase64(payload.content);
+                                        const r2Metadata = payload.r2Metadata
+                                                ? Object.fromEntries(
+                                                          Object.entries(payload.r2Metadata as Record<string, unknown>).map(
+                                                                  ([key, value]) => [key, String(value)],
+                                                          ),
+                                                  )
+                                                : undefined;
+
+                                        const stored = await r2Storage.storeScrapedContent({
+                                                key: payload.key,
+                                                data: bytes,
+                                                size: bytes.byteLength,
+                                                contentType: payload.contentType ?? "text/html",
+                                                metadata: r2Metadata,
+                                        });
+
+                                        const metadata: ScrapedMetadata = {
+                                                ...(payload.metadata ?? {}),
+                                                size: stored.size,
+                                                contentType: stored.contentType,
+                                                bucket: stored.bucket,
+                                        };
+
+                                        const recordId = await repository.addScrapedDataRecord({
+                                                id: payload.id,
+                                                url: payload.url,
+                                                scrapeType: payload.scrapeType,
+                                                r2Key: stored.key,
+                                                metadata,
+                                                userId: payload.userId,
+                                                sessionId: payload.sessionId,
+                                        });
+
+                                        return new Response(
+                                                JSON.stringify({
+                                                        id: recordId,
+                                                        r2Key: stored.key,
+                                                        bucket: stored.bucket,
+                                                        size: stored.size,
+                                                }),
+                                                {
+                                                        status: 201,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                },
+                                        );
+                                } catch (error) {
+                                        log.error({ error }, "Failed to store scraped data");
+                                        return new Response(JSON.stringify({ error: "internal_error" }), {
+                                                status: 500,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                }
+                        });
+
+                        router.post("/uploads", async (request: Request) => {
+                                try {
+                                        const payload = await request.json();
+                                        if (!payload.data) {
+                                                return new Response(
+                                                        JSON.stringify({
+                                                                error: "validation_error",
+                                                                message: "Missing data field",
+                                                        }),
+                                                        {
+                                                                status: 400,
+                                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                        },
+                                                );
+                                        }
+
+                                        const bytes = decodeBase64(payload.data);
+                                        const r2Metadata = payload.metadata
+                                                ? Object.fromEntries(
+                                                          Object.entries(payload.metadata as Record<string, unknown>).map(
+                                                                  ([key, value]) => [key, String(value)],
+                                                          ),
+                                                  )
+                                                : undefined;
+
+                                        const stored = await r2Storage.storeUserUpload({
+                                                key: payload.key,
+                                                data: bytes,
+                                                size: bytes.byteLength,
+                                                contentType: payload.contentType ?? "application/octet-stream",
+                                                filename: payload.filename,
+                                                metadata: r2Metadata,
+                                        });
+
+                                        return new Response(JSON.stringify(stored), {
+                                                status: 201,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                } catch (error) {
+                                        log.error({ error }, "File upload failed");
+                                        return new Response(JSON.stringify({ error: "internal_error" }), {
+                                                status: 500,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                }
+                        });
+
+                        router.get("/storage", async (request: Request) => {
+                                const { searchParams } = new URL(request.url);
+                                const bucketParam = searchParams.get("bucket");
+                                const key = searchParams.get("key");
+
+                                const bucketMap: Record<string, R2BucketTarget> = {
+                                        scraped: "scrapedData",
+                                        uploads: "userUploads",
+                                        cache: "cache",
+                                };
+
+                                if (!bucketParam || !key || !bucketMap[bucketParam]) {
+                                        return new Response(
+                                                JSON.stringify({
+                                                        error: "validation_error",
+                                                        message: "bucket and key query parameters are required",
+                                                }),
+                                                {
+                                                        status: 400,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                },
+                                        );
+                                }
+
+                                try {
+                                        const result = await r2Storage.getObject(bucketMap[bucketParam], key);
+                                        if (!result) {
+                                                return new Response(JSON.stringify({ error: "not_found" }), {
+                                                        status: 404,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                });
+                                        }
+
+                                        const headers: HeadersInit = {
+                                                ...corsHeaders,
+                                        };
+                                        if (result.contentType) {
+                                                headers["Content-Type"] = result.contentType;
+                                        }
+                                        if (result.etag) {
+                                                headers["ETag"] = result.etag;
+                                        }
+
+                                        return new Response(result.body, { headers });
+                                } catch (error) {
+                                        log.error({ error }, "Failed to retrieve object from R2");
+                                        return new Response(JSON.stringify({ error: "internal_error" }), {
+                                                status: 500,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                }
+                        });
+
+                        router.post("/cache", async (request: Request) => {
+                                try {
+                                        const payload = await request.json();
+                                        if (!payload.data) {
+                                                return new Response(
+                                                        JSON.stringify({
+                                                                error: "validation_error",
+                                                                message: "Missing data field",
+                                                        }),
+                                                        {
+                                                                status: 400,
+                                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                        },
+                                                );
+                                        }
+
+                                        const cacheKey: string = payload.key ?? crypto.randomUUID();
+                                        const bytes = decodeBase64(payload.data);
+                                        const r2Metadata = payload.metadata
+                                                ? Object.fromEntries(
+                                                          Object.entries(payload.metadata as Record<string, unknown>).map(
+                                                                  ([key, value]) => [key, String(value)],
+                                                          ),
+                                                  )
+                                                : undefined;
+
+                                        const stored = await r2Storage.storeCacheEntry({
+                                                key: cacheKey,
+                                                data: bytes,
+                                                size: bytes.byteLength,
+                                                contentType: payload.contentType,
+                                                metadata: r2Metadata,
+                                                ttlSeconds: payload.ttlSeconds,
+                                        });
+
+                                        const pointer = await r2Storage.buildCachePointer(
+                                                stored,
+                                                payload.ttlSeconds,
+                                        );
+                                        await cacheMetadataKv.set<CachePointer>(
+                                                cacheKey,
+                                                pointer,
+                                                payload.ttlSeconds,
+                                        );
+
+                                        return new Response(
+                                                JSON.stringify({
+                                                        cacheKey,
+                                                        pointer,
+                                                }),
+                                                {
+                                                        status: 201,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                },
+                                        );
+                                } catch (error) {
+                                        log.error({ error }, "Failed to store cache entry");
+                                        return new Response(JSON.stringify({ error: "internal_error" }), {
+                                                status: 500,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                }
+                        });
+
+                        router.get("/cache", async (request: Request) => {
+                                const { searchParams } = new URL(request.url);
+                                const cacheKey = searchParams.get("key");
+
+                                if (!cacheKey) {
+                                        return new Response(
+                                                JSON.stringify({
+                                                        error: "validation_error",
+                                                        message: "key query parameter is required",
+                                                }),
+                                                {
+                                                        status: 400,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                },
+                                        );
+                                }
+
+                                try {
+                                        const pointer = await cacheMetadataKv.get<CachePointer>(cacheKey);
+                                        if (!pointer) {
+                                                return new Response(JSON.stringify({ error: "not_found" }), {
+                                                        status: 404,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                });
+                                        }
+
+                                        const result = await r2Storage.getObject(pointer.bucket, pointer.key);
+                                        if (!result) {
+                                                return new Response(JSON.stringify({ error: "not_found" }), {
+                                                        status: 404,
+                                                        headers: { "Content-Type": "application/json", ...corsHeaders },
+                                                });
+                                        }
+
+                                        const headers: HeadersInit = { ...corsHeaders };
+                                        if (result.contentType) {
+                                                headers["Content-Type"] = result.contentType;
+                                        }
+                                        if (result.etag) {
+                                                headers["ETag"] = result.etag;
+                                        }
+
+                                        return new Response(result.body, { headers });
+                                } catch (error) {
+                                        log.error({ error }, "Failed to retrieve cache entry");
+                                        return new Response(JSON.stringify({ error: "internal_error" }), {
+                                                status: 500,
+                                                headers: { "Content-Type": "application/json", ...corsHeaders },
+                                        });
+                                }
+                        });

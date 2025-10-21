@@ -7,11 +7,19 @@
  * Queue message structure for scraping tasks
  */
 export interface ScrapingMessage {
-	url: string;
-	type: 'hotel' | 'attraction' | 'flight' | 'general';
-	userId?: string;
-	sessionId?: string;
-	metadata?: Record<string, unknown>;
+        url: string;
+        type: 'hotel' | 'attraction' | 'flight' | 'general';
+        userId?: string;
+        sessionId?: string;
+        metadata?: Record<string, unknown>;
+}
+
+export interface WorkerEnv extends Env {
+        CACHE: KVNamespace;
+        SESSIONS: KVNamespace;
+        SCRAPED_DATA: R2Bucket;
+        USER_UPLOADS: R2Bucket;
+        CACHE_BUCKET: R2Bucket;
 }
 
 /**

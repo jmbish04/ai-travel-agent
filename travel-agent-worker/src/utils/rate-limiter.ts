@@ -1,46 +1,52 @@
+import { KVService } from "../core/kv-service";
+
+interface RateLimiterOptions {
+        windowSizeSeconds?: number;
+        maxRequests?: number;
+}
+
+interface RateLimitWindow {
+        timestamps: number[];
+}
+
 /**
- * Rate limiter using Cloudflare KV
+ * Sliding window rate limiter backed by Cloudflare KV.
  */
 export class RateLimiter {
-	private kv: KVNamespace;
-	private windowSizeSeconds: number;
-	private maxRequests: number;
+        private kv: KVService;
+        private windowSizeSeconds: number;
+        private maxRequests: number;
 
-	constructor(kv: KVNamespace, windowSizeSeconds = 60, maxRequests = 100) {
-		this.kv = kv;
-		this.windowSizeSeconds = windowSizeSeconds;
-		this.maxRequests = maxRequests;
-	}
+        constructor(kv: KVService, options: RateLimiterOptions = {}) {
+                this.kv = kv;
+                this.windowSizeSeconds = options.windowSizeSeconds ?? 60;
+                this.maxRequests = options.maxRequests ?? 100;
+        }
 
-	async acquire(key: string): Promise<boolean> {
-		const now = Math.floor(Date.now() / 1000);
-		const windowStart = now - this.windowSizeSeconds;
+        async acquire(key: string): Promise<boolean> {
+                const now = Math.floor(Date.now() / 1000);
+                const windowStart = now - this.windowSizeSeconds;
 
-		try {
-			// Get current request count for this key
-			const countKey = `rate_limit:${key}`;
-			const requestsStr = await this.kv.get(countKey);
-			const requests = requestsStr ? JSON.parse(requestsStr) : [];
+                try {
+                        const record = await this.kv.get<RateLimitWindow>(key);
+                        const validTimestamps = record ? record.timestamps.filter((timestamp) => timestamp > windowStart) : [];
+                        const validTimestamps = record.timestamps.filter((timestamp) => timestamp > windowStart);
 
-			// Filter out old requests
-			const validRequests = requests.filter((timestamp: number) => timestamp > windowStart);
+                        if (validTimestamps.length >= this.maxRequests) {
+                                return false;
+                        }
 
-			// Check if we're over the limit
-			if (validRequests.length >= this.maxRequests) {
-				return false;
-			}
+                        validTimestamps.push(now);
+                        await this.kv.set<RateLimitWindow>(
+                                key,
+                                { timestamps: validTimestamps },
+                                this.windowSizeSeconds + 10,
+                        );
 
-			// Add current request and store
-			validRequests.push(now);
-			await this.kv.put(countKey, JSON.stringify(validRequests), {
-				expirationTtl: this.windowSizeSeconds + 10
-			});
-
-			return true;
-		} catch (error) {
-			// If KV is down, allow the request (fail open)
-			console.error('Rate limiter error:', error);
-			return true;
-		}
-	}
+                        return true;
+                } catch (error) {
+                        console.error("Rate limiter error:", error);
+                        return true;
+                }
+        }
 }
