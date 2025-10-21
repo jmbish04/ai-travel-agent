@@ -107,6 +107,10 @@ export function createInMemoryStore(cfg: SessionConfig): SessionStore & { cleanu
       store.delete(id);
     },
 
+    async healthCheck(): Promise<boolean> {
+      return true;
+    },
+
     cleanup,
   };
 }
