@@ -12,7 +12,9 @@
 		"db:list": "wrangler d1 migrations list travel-agent-db",
 		"db:create": "wrangler d1 migrations create travel-agent-db",
 		"db:execute": "wrangler d1 execute travel-agent-db",
-		"db:status": "./migrate.sh status"
+		"db:status": "./migrate.sh status",
+		"db:inspect": "./inspect-db.sh",
+		"db:inspect-data": "./inspect-db.sh --with-data"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",

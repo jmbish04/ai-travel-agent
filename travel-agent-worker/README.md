@@ -17,6 +17,19 @@ This is the Cloudflare Workers implementation of the AI Tr4. **Initialize databa
 
 ## Database Management
 
+### Database Inspection (Important for AI Development)
+Before creating any new tables or modifying the database schema, always inspect the existing database:
+
+```bash
+# Check existing tables and schemas
+npm run db:inspect
+
+# Check existing tables with sample data
+npm run db:inspect-data
+```
+
+This is especially important for AI development agents to avoid creating duplicate tables or conflicting schemas.
+
 ### Migration Commands
 ```bash
 # Apply all pending migrations

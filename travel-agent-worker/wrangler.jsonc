@@ -11,6 +11,8 @@
 	},
 	/**
 	 * Environment Variables
+	 * Note: Environments (dev/staging/prod) are not used because Durable Objects
+	 * do not support environments. All resources are shared across deployments.
 	 */
 	"vars": {},
 	/**
