@@ -82,7 +82,7 @@ function resOnFinish(res: express.Response, cb: () => void) {
 
 app.get('/healthz', async (_req, res) => {
   let storeHealth = 'ok';
-  if (typeof sessionStore.healthCheck === 'function') {
+  if (sessionStore.healthCheck) {
     storeHealth = (await sessionStore.healthCheck()) ? 'ok' : 'degraded';
   }
   res.status(200).json({ ok: true, store: storeHealth });
