@@ -4,6 +4,8 @@ import type { WorkerEnv } from "../types/env";
 import type { QueueService } from "./queue-service";
 import type { ScrapingRequest } from "../types/queue-messages";
 import type { Logger } from "../utils/logger";
+import type { AgentResponse } from "../types/agent-types";
+import { AgentFactory } from "./agent-factory";
 
 interface ChatHandlerContext {
         env: WorkerEnv;
@@ -11,6 +13,7 @@ interface ChatHandlerContext {
         ctx: ExecutionContext;
         sessionStore: SessionStore;
         queueService?: QueueService;
+        agentFactory?: AgentFactory;
 }
 
 /**
@@ -18,7 +21,7 @@ interface ChatHandlerContext {
  * TODO: Migrate the actual chat logic from the original project
  */
 export async function handleChat(input: ChatInput, context: ChatHandlerContext): Promise<ChatOutput> {
-        const { sessionStore, log, queueService } = context;
+        const { sessionStore, log, queueService, agentFactory } = context;
 
         // Placeholder implementation
         // TODO: Integrate with Durable Objects for agent state
@@ -63,8 +66,57 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 );
         }
 
-        // Simple echo response for now
-        const reply = `Hello! You said: "${input.message}". This is a placeholder response from Cloudflare Workers.`;
+        let reply = `Hello! You said: "${input.message}". This is a placeholder response from Cloudflare Workers.`;
+        let orchestratedResponse: AgentResponse | null = null;
+
+        if (agentFactory) {
+                try {
+                        const conversationManager = await agentFactory.createConversationManager(session.id);
+                        await conversationManager.fetch("https://agent/message", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                        type: "start_conversation",
+                                        content: {},
+                                        context: {
+                                                sessionId: session.id,
+                                                threadId,
+                                                userId: input.userId,
+                                                locale: input.locale,
+                                                timezone: input.timezone,
+                                        },
+                                }),
+                        });
+
+                        const routed = await conversationManager.fetch("https://agent/message", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                        type: "route_message",
+                                        content: { message: input.message },
+                                        context: {
+                                                sessionId: session.id,
+                                                threadId,
+                                                userId: input.userId,
+                                                locale: input.locale,
+                                                timezone: input.timezone,
+                                        },
+                                }),
+                        });
+
+                        if (routed.ok) {
+                                orchestratedResponse = (await routed.json()) as AgentResponse;
+                                const content = orchestratedResponse.content;
+                                if (typeof content === "string") {
+                                        reply = content;
+                                } else if (content && typeof content === "object") {
+                                        reply = JSON.stringify(content);
+                                }
+                        } else {
+                                log.warn({ status: routed.status }, "Conversation manager response not ok");
+                        }
+                } catch (error) {
+                        log.error({ error }, "Agent orchestration failed, falling back to echo");
+                }
+        }
 
         const now = Date.now();
         const userMessage: SessionMessage = {
@@ -79,6 +131,13 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 role: "assistant",
                 content: reply,
                 timestamp: Date.now(),
+                metadata: orchestratedResponse
+                        ? {
+                                  agentType: orchestratedResponse.metadata?.intent?.type,
+                                  toolsUsed: orchestratedResponse.metadata?.toolsUsed,
+                                  confidence: orchestratedResponse.confidence,
+                          }
+                        : undefined,
         };
 
         await sessionStore.appendMessages(session.id, [userMessage, assistantMessage]);
@@ -95,6 +154,13 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 reply,
                 threadId,
                 sessionId: session.id,
+                metadata: orchestratedResponse
+                        ? {
+                                  confidence: orchestratedResponse.confidence,
+                                  sources: orchestratedResponse.sources,
+                                  intent: orchestratedResponse.metadata?.intent,
+                          }
+                        : undefined,
         };
 }
 

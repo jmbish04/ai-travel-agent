@@ -11,20 +11,24 @@ export interface WorkerEnv extends Env {
         CACHE_BUCKET: R2Bucket;
         SCRAPING_QUEUE: Queue;
         PRIORITY_SCRAPING_QUEUE: Queue;
+        TRAVEL_AGENT: DurableObjectNamespace;
+        SCRAPING_AGENT: DurableObjectNamespace;
+        CONVERSATION_MANAGER: DurableObjectNamespace;
+        SESSION_MANAGER: DurableObjectNamespace;
 }
 
 /**
  * Vectorize document structure
  */
 export interface VectorizeDocument {
-	id: string;
-	values: number[];
-	metadata?: {
-		type: 'hotel' | 'attraction' | 'review' | 'content';
-		title?: string;
-		description?: string;
-		location?: string;
-		tags?: string[];
-		[key: string]: unknown;
-	};
+        id: string;
+        values: number[];
+        metadata?: {
+                type: 'hotel' | 'attraction' | 'review' | 'content';
+                title?: string;
+                description?: string;
+                location?: string;
+                tags?: string[];
+                [key: string]: unknown;
+        };
 }
