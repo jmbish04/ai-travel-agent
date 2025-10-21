@@ -92,23 +92,18 @@
 	/**
 	 * Queue Bindings
 	 */
-	"queues": {
-		"producers": [
-			{
-				"binding": "SCRAPING_QUEUE",
-				"queue": "scraping-tasks"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "scraping-tasks",
-				"max_batch_size": 5,
-				"max_batch_timeout": 30,
-				"max_retries": 3,
-				"dead_letter_queue": "scraping-dlq"
-			}
-		]
-	},
+        "queues": {
+                "producers": [
+                        {
+                                "binding": "SCRAPING_QUEUE",
+                                "queue": "scraping-tasks"
+                        },
+                        {
+                                "binding": "PRIORITY_SCRAPING_QUEUE",
+                                "queue": "scraping-priority"
+                        }
+                ]
+        },
 	/**
 	 * AI Bindings
 	 */
