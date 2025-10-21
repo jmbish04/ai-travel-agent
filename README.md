@@ -4,6 +4,30 @@ Single meta‑agent pipeline that plans tool calls, executes, writes receipts,
 and verifies before reply. Built for fast, trustworthy answers with clear
 provenance and resilient I/O.
 
+## Implementations
+
+This repository contains two implementations:
+
+### 🌐 Cloudflare Workers Implementation (New)
+**Location**: `travel-agent-worker/`
+
+Serverless, edge-computing implementation using Cloudflare's platform:
+- **Cloudflare Workers**: Main API endpoints
+- **Durable Objects**: Stateful agent instances  
+- **D1 Database**: Structured data storage
+- **R2**: File storage for scraped content
+- **KV**: Fast caching and sessions
+- **Vectorize**: Vector database for semantic search
+- **Browser Rendering**: Web scraping capabilities
+- **Queues**: Async task processing
+
+See `travel-agent-worker/README.md` for setup and deployment instructions.
+
+### 🖥️ Node.js Implementation (Original)
+**Location**: `root/`
+
+Traditional Node.js/Express backend with Redis storage.
+
 Quick start: `cd root && npm install && npm run build && npm run start`.
 For CLI: `cd root && npm run cli`. Minimal env: `LLM_PROVIDER_BASEURL` +
 `LLM_API_KEY` (or `OPENROUTER_API_KEY`), plus optional Amadeus/Vectara/Search
