@@ -1,97 +1,107 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "travel-agent-worker",
-	"main": "src/index.ts",
-	"compatibility_date": "2025-10-11",
-	"observability": {
-		"enabled": true
-	},
-	"placement": {
-		"mode": "smart"
-	},
-	/**
-	 * Environment Variables
-	 * Note: Environments (dev/staging/prod) are not used because Durable Objects
-	 * do not support environments. All resources are shared across deployments.
-	 */
-	"vars": {},
-	/**
-	 * Browser Rendering Binding
-	 */
-	"browser": {
-		"binding": "BROWSER"
-	},
-	/**
-	 * Durable Objects Bindings
-	 */
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "TRAVEL_AGENT",
-				"class_name": "TravelAgent",
-				"script_name": "travel-agent-worker"
-			},
-			{
-				"name": "SCRAPING_AGENT",
-				"class_name": "ScrapingAgent",
-				"script_name": "travel-agent-worker"
-			}
-		]
-	},
-	/**
-	 * D1 Database Bindings
-	 */
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "travel-agent-db",
-			"database_id": "69777f92-2c68-4634-bb8f-ac7fe15704ea",
-			"migrations_dir": "./migrations"
-		}
-	],
-	/**
-	 * R2 Object Storage Bindings
-	 */
-	"r2_buckets": [
-		{
-			"binding": "SCRAPED_DATA",
-			"bucket_name": "travel-agent-scraped-data"
-		},
-		{
-			"binding": "USER_UPLOADS",
-			"bucket_name": "travel-agent-user-uploads"
-		},
-		{
-			"binding": "CACHE_BUCKET",
-			"bucket_name": "travel-agent-cache"
-		}
-	],
-	/**
-	 * KV Storage Bindings
-	 */
-	"kv_namespaces": [
-		{
-			"binding": "CACHE",
-			"id": "fc75338297b74cd089fb79cb9a25fd07"
-		},
-		{
-			"binding": "SESSIONS",
-			"id": "fe337d119200415d81f6f6190e391712"
-		}
-	],
-	/**
-	 * Vectorize Bindings
-	 * npx wrangler vectorize create travel-content-embeddings --preset  @cf/baai/bge-large-en-v1.5
-	 */
-	"vectorize": [
-		{
-			"binding": "VECTORIZE_INDEX",
-			"index_name": "travel-content-embeddings"
-		}
-	],
-	/**
-	 * Queue Bindings
-	 */
+        "$schema": "node_modules/wrangler/config-schema.json",
+        "name": "travel-agent-worker",
+        "main": "src/index.ts",
+        "compatibility_date": "2025-10-11",
+        "observability": {
+                "enabled": true
+        },
+        "placement": {
+                "mode": "smart"
+        },
+        /**
+         * Environment Variables
+         * Note: Environments (dev/staging/prod) are not used because Durable Objects
+         * do not support environments. All resources are shared across deployments.
+         */
+        "vars": {},
+        /**
+         * Browser Rendering Binding
+         */
+        "browser": {
+                "binding": "BROWSER"
+        },
+        /**
+         * Durable Objects Bindings
+         */
+        "durable_objects": {
+                "bindings": [
+                        {
+                                "name": "TRAVEL_AGENT",
+                                "class_name": "TravelAgentDO",
+                                "script_name": "travel-agent-worker"
+                        },
+                        {
+                                "name": "SCRAPING_AGENT",
+                                "class_name": "ScrapingAgentDO",
+                                "script_name": "travel-agent-worker"
+                        },
+                        {
+                                "name": "CONVERSATION_MANAGER",
+                                "class_name": "ConversationManagerDO",
+                                "script_name": "travel-agent-worker"
+                        },
+                        {
+                                "name": "SESSION_MANAGER",
+                                "class_name": "SessionManagerDO",
+                                "script_name": "travel-agent-worker"
+                        }
+                ]
+        },
+        /**
+         * D1 Database Bindings
+         */
+        "d1_databases": [
+                {
+                        "binding": "DB",
+                        "database_name": "travel-agent-db",
+                        "database_id": "69777f92-2c68-4634-bb8f-ac7fe15704ea",
+                        "migrations_dir": "./migrations"
+                }
+        ],
+        /**
+         * R2 Object Storage Bindings
+         */
+        "r2_buckets": [
+                {
+                        "binding": "SCRAPED_DATA",
+                        "bucket_name": "travel-agent-scraped-data"
+                },
+                {
+                        "binding": "USER_UPLOADS",
+                        "bucket_name": "travel-agent-user-uploads"
+                },
+                {
+                        "binding": "CACHE_BUCKET",
+                        "bucket_name": "travel-agent-cache"
+                }
+        ],
+        /**
+         * KV Storage Bindings
+         */
+        "kv_namespaces": [
+                {
+                        "binding": "CACHE",
+                        "id": "fc75338297b74cd089fb79cb9a25fd07"
+                },
+                {
+                        "binding": "SESSIONS",
+                        "id": "fe337d119200415d81f6f6190e391712"
+                }
+        ],
+        /**
+         * Vectorize Bindings
+         * npx wrangler vectorize create travel-content-embeddings --preset  @cf/baai/bge-large-en-v1.5
+         */
+        "vectorize": [
+                {
+                        "binding": "VECTORIZE_INDEX",
+                        "index_name": "travel-content-embeddings"
+                }
+        ],
+        /**
+         * Queue Bindings
+         */
         "queues": {
                 "producers": [
                         {
@@ -104,10 +114,10 @@
                         }
                 ]
         },
-	/**
-	 * AI Bindings
-	 */
-	"ai": {
-		"binding": "AI"
-	}
+        /**
+         * AI Bindings
+         */
+        "ai": {
+                "binding": "AI"
+        }
 }

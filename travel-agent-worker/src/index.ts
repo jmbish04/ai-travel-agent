@@ -5,6 +5,7 @@ import { QueueService } from "./core/queue-service";
 import { R2StorageService } from "./core/r2-storage";
 import { SessionKvStore } from "./core/session-kv-store";
 import { Router } from "./router";
+import { AgentFactory } from "./core/agent-factory";
 import { ChatInput, ChatOutput } from "./schemas/chat";
 import type { ScrapedMetadata } from "./types/database";
 import type { WorkerEnv } from "./types/env";
@@ -18,6 +19,11 @@ const CORS_HEADERS = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
+
+export { TravelAgentDO } from "./durable-objects/travel-agent-do";
+export { ScrapingAgentDO } from "./durable-objects/scraping-agent-do";
+export { ConversationManagerDO } from "./durable-objects/conversation-manager-do";
+export { SessionManagerDO } from "./durable-objects/session-manager-do";
 
 export default {
         async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
@@ -85,12 +91,14 @@ export default {
                                 }
 
                                 const t0 = Date.now();
+                                const agentFactory = new AgentFactory(env);
                                 const result = await handleChat(parsed.data, {
                                         env,
                                         log,
                                         ctx,
                                         sessionStore,
                                         queueService,
+                                        agentFactory,
                                 });
                                 const latency = Date.now() - t0;
                                 log.info({ latency }, "Chat request completed");
