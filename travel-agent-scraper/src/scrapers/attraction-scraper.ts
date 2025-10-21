@@ -86,11 +86,11 @@ export class AttractionScraper extends BaseScraper {
     for (const row of rows) {
       const day = await row
         .$('[data-testid="day"], th, .day')
-        .then((element) => element?.textContent?.trim())
+        .then((element) => element?.textContent())
         .catch(() => undefined);
       const time = await row
         .$('[data-testid="time"], td, .time')
-        .then((element) => element?.textContent?.trim())
+        .then((element) => element?.textContent())
         .catch(() => undefined);
       if (day && time) {
         hours[day] = sanitizeText(time) ?? time;
