@@ -69,7 +69,7 @@ async function processMessage(
       url: normalizedUrl,
       type: scrapeMessage.type,
       html: result.html,
-      extractedAt: Date.now(),
+      extractedAt: metadata.scrapedAt,
       data: {
         ...result.data,
         title: result.title,
