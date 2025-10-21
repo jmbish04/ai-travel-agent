@@ -28,7 +28,8 @@ export class RateLimiter {
                 const windowStart = now - this.windowSizeSeconds;
 
                 try {
-                        const record = (await this.kv.get<RateLimitWindow>(key)) ?? { timestamps: [] };
+                        const record = await this.kv.get<RateLimitWindow>(key);
+                        const validTimestamps = record ? record.timestamps.filter((timestamp) => timestamp > windowStart) : [];
                         const validTimestamps = record.timestamps.filter((timestamp) => timestamp > windowStart);
 
                         if (validTimestamps.length >= this.maxRequests) {
