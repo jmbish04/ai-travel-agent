@@ -4,18 +4,22 @@
  */
 
 import type {
-    EmbeddingMetadata,
-    Message,
-    Metric,
-    QueueLog,
-    ScrapedData,
-    Session,
-    Slot,
-    ThreadState,
-    TravelBooking,
-    UserProfile,
-    Verification,
+        EmbeddingMetadata,
+        Message,
+        Metric,
+        QueueLog,
+        ScrapedData,
+        Session,
+        Slot,
+        ThreadState,
+        TravelBooking,
+        UserProfile,
+        Verification,
 } from "../types/database";
+
+type ScrapedDataInput = Omit<ScrapedData, "created_at" | "metadata"> & {
+        metadata?: string | Record<string, unknown> | null;
+};
 
 export class D1Repository {
 	constructor(private db: D1Database) {}
@@ -241,31 +245,70 @@ export class D1Repository {
 	}
 
 	// Scraped data operations
-	async addScrapedData(data: Omit<ScrapedData, "created_at">): Promise<void> {
-		await this.db
-			.prepare(`
-				INSERT INTO scraped_data (id, url, scrape_type, r2_key, metadata, user_id, session_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
-			`)
-			.bind(
-				data.id,
-				data.url,
-				data.scrape_type,
-				data.r2_key,
-				data.metadata,
-				data.user_id,
-				data.session_id,
-			)
-			.run();
-	}
+        async addScrapedData(data: ScrapedDataInput): Promise<void> {
+                const metadata =
+                        typeof data.metadata === "string"
+                                ? data.metadata
+                                : data.metadata
+                                        ? JSON.stringify(data.metadata)
+                                        : null;
 
-	async getScrapedData(id: string): Promise<ScrapedData | null> {
-		const result = await this.db
-			.prepare("SELECT * FROM scraped_data WHERE id = ?")
-			.bind(id)
-			.first<ScrapedData>();
-		return result || null;
-	}
+                await this.db
+                        .prepare(`
+                                INSERT INTO scraped_data (id, url, scrape_type, r2_key, metadata, user_id, session_id)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                        `)
+                        .bind(
+                                data.id,
+                                data.url,
+                                data.scrape_type,
+                                data.r2_key,
+                                metadata,
+                                data.user_id,
+                                data.session_id,
+                        )
+                        .run();
+        }
+
+        async getScrapedData(id: string): Promise<ScrapedData | null> {
+                const result = await this.db
+                        .prepare("SELECT * FROM scraped_data WHERE id = ?")
+                        .bind(id)
+                        .first<ScrapedData>();
+                return result || null;
+        }
+
+        async addScrapedDataRecord(data: {
+                id?: string;
+                url: string;
+                scrapeType: ScrapedData["scrape_type"];
+                r2Key: string;
+                metadata?: Record<string, unknown>;
+                userId?: string;
+                sessionId?: string;
+        }): Promise<string> {
+                const recordId = data.id ?? crypto.randomUUID();
+                await this.addScrapedData({
+                        id: recordId,
+                        url: data.url,
+                        scrape_type: data.scrapeType,
+                        r2_key: data.r2Key,
+                        metadata: data.metadata ?? null,
+                        user_id: data.userId,
+                        session_id: data.sessionId,
+                });
+                return recordId;
+        }
+
+        async updateScrapedDataMetadata(
+                id: string,
+                metadata: Record<string, unknown>,
+        ): Promise<void> {
+                await this.db
+                        .prepare("UPDATE scraped_data SET metadata = ? WHERE id = ?")
+                        .bind(JSON.stringify(metadata), id)
+                        .run();
+        }
 
 	// User profile operations
 	async setUserProfile(
