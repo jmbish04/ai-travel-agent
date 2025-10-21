@@ -1,6 +1,55 @@
 # Travel Agent Backend - Cloudflare Workers
 
-This is the Cloudflare Workers implementation of the AI Travel Agent Backend, migrated from the original Node.js/Express architecture to a serverless, edge-computing solution.
+This is the Cloudflare Workers implementation of the AI Tr4. **Initialize database with migrations:**
+   ```bash
+   npm run db:migrate
+   ```
+
+   Or apply the initial schema directly:
+   ```bash
+   npm run db:execute -- --file=./migrations/001_initial_schema.sql
+   ```
+
+5. **Generate types:**
+   ```bash
+   npm run cf-typegen
+   ```
+
+## Database Management
+
+### Migration Commands
+```bash
+# Apply all pending migrations
+npm run db:migrate
+
+# List applied migrations
+npm run db:list
+
+# Create a new migration
+npm run db:create <migration-name>
+
+# Execute a SQL file directly
+npm run db:execute -- --file=<path-to-sql-file>
+
+# Check migration status
+npm run db:status
+```
+
+### Migration Helper Script
+You can also use the migration helper script for more advanced operations:
+```bash
+# Apply migrations
+./migrate.sh apply
+
+# Create new migration
+./migrate.sh create add_user_preferences
+
+# Check status
+./migrate.sh status
+
+# See all commands
+./migrate.sh help
+```t Backend, migrated from the original Node.js/Express architecture to a serverless, edge-computing solution.
 
 ## Architecture
 

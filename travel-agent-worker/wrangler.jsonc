@@ -43,7 +43,8 @@
 		{
 			"binding": "DB",
 			"database_name": "travel-agent-db",
-			"database_id": "69777f92-2c68-4634-bb8f-ac7fe15704ea"
+			"database_id": "69777f92-2c68-4634-bb8f-ac7fe15704ea",
+			"migrations_dir": "./migrations"
 		}
 	],
 	/**
@@ -78,6 +79,7 @@
 	],
 	/**
 	 * Vectorize Bindings
+	 * npx wrangler vectorize create travel-content-embeddings --preset  @cf/baai/bge-large-en-v1.5
 	 */
 	"vectorize": [
 		{
