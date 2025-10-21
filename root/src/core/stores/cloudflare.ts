@@ -13,7 +13,7 @@ export function createCloudflareStore(
   deps: CloudflareStoreDependencies,
 ): SessionStore {
   if (!deps.adapter && !deps.bindings) {
-    throw new Error('Cloudflare storage requires bindings or an adapter instance');
+    console.warn('Cloudflare storage requires bindings or an adapter instance. Ensure these are correctly configured.');
   }
 
   const adapter = deps.adapter ?? new CloudflareStorageAdapter(deps.bindings!, { ttlSec: cfg.ttlSec });
