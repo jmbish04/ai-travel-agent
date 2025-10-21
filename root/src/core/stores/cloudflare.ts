@@ -18,7 +18,7 @@ export function createCloudflareStore(
 
   const adapter = deps.adapter ?? new CloudflareStorageAdapter(deps.bindings!, { ttlSec: cfg.ttlSec });
 
-  const withThreadSession = async (threadId: string): Promise<void> => {
+  const ensureThreadSession = async (threadId: string): Promise<void> => {
     const existing = await adapter.getSession(threadId);
     if (!existing) {
       await adapter.createSession({
@@ -31,6 +31,12 @@ export function createCloudflareStore(
     } else {
       await adapter.updateSession(threadId, { lastAccessedAt: Date.now() });
     }
+  };
+
+  return {
+    async getMsgs(id: string, limit?: number): Promise<Msg[]> {
+      await ensureThreadSession(id);
+      return adapter.getMessages(id, limit);
   };
 
   return {
