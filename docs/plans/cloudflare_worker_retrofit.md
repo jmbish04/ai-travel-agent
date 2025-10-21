@@ -94,8 +94,8 @@ Semantic search and recommendation features will be implemented using Cloudflare
 -   [x] Configure `wrangler.toml` with all necessary bindings
 -   [x] Migrate Express routes to Worker `fetch` handler
 -   [x] Create D1 database schemas
--   [ ] Create R2 buckets
--   [ ] Create KV namespaces
+-   [x] Create R2 buckets
+-   [x] Create KV namespaces
 -   [ ] Replace all Redis calls with Cloudflare storage clients
 -   [ ] Create scraping consumer Worker
 -   [ ] Set up scraping Queue
