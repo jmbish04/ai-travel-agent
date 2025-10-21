@@ -37,7 +37,8 @@ export default {
                 const router = new Router();
 
                 const rateLimiterKv = new KVService(env.CACHE, { prefix: "rate_limit:" });
-                const rateLimiter = new RateLimiter(rateLimiterKv);
+const RATE_LIMIT_PREFIX = "rate_limit:";
+const rateLimiterKv = new KVService(env.CACHE, { prefix: RATE_LIMIT_PREFIX });
                 const cacheMetadataKv = new KVService(env.CACHE, { prefix: "cache_pointer:" });
                 const sessionKv = new KVService(env.SESSIONS, { prefix: "session:" });
                 const sessionStore = new SessionKvStore(sessionKv);
