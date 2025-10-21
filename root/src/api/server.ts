@@ -8,7 +8,6 @@ import { RateLimiter } from '../core/rate-limiter.js';
 import { RATE_LIMITER_CONFIG } from '../config/resilience.js';
 import { loadSessionConfig } from '../config/session.js';
 import { createStore, initSessionStore } from '../core/session_store.js';
-import { ping } from '../core/stores/redis.js';
 
 const log = createLogger();
 const app = express();
@@ -83,9 +82,8 @@ function resOnFinish(res: express.Response, cb: () => void) {
 
 app.get('/healthz', async (_req, res) => {
   let storeHealth = 'ok';
-  if (sessionConfig.kind === 'redis') {
-    const isHealthy = await ping(sessionConfig);
-    storeHealth = isHealthy ? 'ok' : 'degraded';
+  if (sessionStore.healthCheck) {
+    storeHealth = (await sessionStore.healthCheck()) ? 'ok' : 'degraded';
   }
   res.status(200).json({ ok: true, store: storeHealth });
 });

@@ -1,7 +1,6 @@
 import type { SessionConfig } from '../config/session.js';
 import { createInMemoryStore } from './stores/inmemory.js';
-import { createRedisStore } from './stores/redis.js';
-import type { RedisClientType } from 'redis';
+import { createCloudflareStore, type CloudflareStoreDependencies } from './stores/cloudflare.js';
 
 export type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
 
@@ -14,6 +13,7 @@ export interface SessionStore {
   setJson<T = unknown>(key: string, id: string, value: T): Promise<void>;
   expire(id: string, ttlSec: number): Promise<void>;
   clear(id: string): Promise<void>;
+  healthCheck?(): Promise<boolean>;
 }
 
 const rawMax = Number(process.env.SESSION_MAX_MESSAGES ?? '0');
@@ -24,11 +24,17 @@ let globalStore: SessionStore | undefined;
 
 export function createStore(
   cfg: SessionConfig,
-  deps?: { redisClient?: RedisClientType },
+  deps?: { cloudflare?: CloudflareStoreDependencies },
 ): SessionStore {
-  return cfg.kind === 'redis'
-    ? createRedisStore(cfg, deps?.redisClient)
-    : createInMemoryStore(cfg);
+  if (cfg.kind === 'cloudflare') {
+    if (!deps?.cloudflare) {
+      console.warn('Cloudflare session store requested but no bindings provided. Falling back to in-memory store.');
+      return createInMemoryStore(cfg);
+    }
+    return createCloudflareStore(cfg, deps.cloudflare);
+  }
+
+  return createInMemoryStore(cfg);
 }
 
 export function initSessionStore(store: SessionStore): void {
