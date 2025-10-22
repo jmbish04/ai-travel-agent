@@ -30,7 +30,6 @@ export class RateLimiter {
                 try {
                         const record = await this.kv.get<RateLimitWindow>(key);
                         const validTimestamps = record ? record.timestamps.filter((timestamp) => timestamp > windowStart) : [];
-                        const validTimestamps = record.timestamps.filter((timestamp) => timestamp > windowStart);
 
                         if (validTimestamps.length >= this.maxRequests) {
                                 return false;
