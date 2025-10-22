@@ -16,6 +16,11 @@ import { decodeBase64 } from "./utils/serialization";
 import { handleQueue } from "./scraping/handler";
 import type { QueueMessage } from "./scraping/types/messages";
 
+export { TravelAgentDO } from "./durable-objects/travel-agent-do";
+export { ScrapingAgentDO } from "./durable-objects/scraping-agent-do";
+export { ConversationManagerDO } from "./durable-objects/conversation-manager-do";
+export { SessionManagerDO } from "./durable-objects/session-manager-do";
+
 const CORS_HEADERS = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

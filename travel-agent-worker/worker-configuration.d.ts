@@ -9,8 +9,10 @@ declare namespace Cloudflare {
 		CACHE: KVNamespace;
 		SESSIONS: KVNamespace;
 		ENVIRONMENT: "development";
-		TRAVEL_AGENT: DurableObjectNamespace /* TravelAgent from travel-agent-worker */;
-		SCRAPING_AGENT: DurableObjectNamespace /* ScrapingAgent from travel-agent-worker */;
+                TRAVEL_AGENT: DurableObjectNamespace /* TravelAgent from travel-agent-worker */;
+                SCRAPING_AGENT: DurableObjectNamespace /* ScrapingAgent from travel-agent-worker */;
+                CONVERSATION_MANAGER: DurableObjectNamespace /* ConversationManager from travel-agent-worker */;
+                SESSION_MANAGER: DurableObjectNamespace /* SessionManager from travel-agent-worker */;
 		SCRAPED_DATA: R2Bucket;
 		USER_UPLOADS: R2Bucket;
 		DB: D1Database;

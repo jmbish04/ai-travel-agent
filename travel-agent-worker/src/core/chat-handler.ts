@@ -4,6 +4,8 @@ import type { WorkerEnv } from "../types/env";
 import type { QueueService } from "./queue-service";
 import type { ScrapingRequest } from "../types/queue-messages";
 import type { Logger } from "../utils/logger";
+import type { AgentResponse } from "../types/durable-object-types";
+import { AgentFactory } from "./agent-factory";
 
 interface ChatHandlerContext {
         env: WorkerEnv;
@@ -18,7 +20,7 @@ interface ChatHandlerContext {
  * TODO: Migrate the actual chat logic from the original project
  */
 export async function handleChat(input: ChatInput, context: ChatHandlerContext): Promise<ChatOutput> {
-        const { sessionStore, log, queueService } = context;
+        const { sessionStore, log, queueService, env } = context;
 
         // Placeholder implementation
         // TODO: Integrate with Durable Objects for agent state
@@ -63,8 +65,62 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 );
         }
 
-        // Simple echo response for now
-        const reply = `Hello! You said: "${input.message}". This is a placeholder response from Cloudflare Workers.`;
+        const agentFactory = new AgentFactory(env);
+        const conversationId = (session.metadata.conversationId as string | undefined) ?? session.id;
+        const conversationManager = agentFactory.createConversationManager(conversationId);
+
+        let conversationActive = Boolean(session.metadata.conversationActive);
+        if (!conversationActive) {
+                try {
+                        await conversationManager.fetch(
+                                new Request("https://agent/message", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                                type: "start_conversation",
+                                                content: { conversationId },
+                                                context: { userId: input.userId, sessionId: session.id, threadId },
+                                        }),
+                                }),
+                        );
+                        conversationActive = true;
+                } catch (error) {
+                        log.warn({ error }, "Failed to initialize conversation manager durable object");
+                }
+        }
+
+        let agentResponse: AgentResponse | null = null;
+        try {
+                const routed = await conversationManager.fetch(
+                        new Request("https://agent/message", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                        type: "route_message",
+                                        content: { message: input.message, conversationId },
+                                        context: { userId: input.userId, sessionId: session.id, threadId },
+                                }),
+                        }),
+                );
+
+                if (routed.ok) {
+                        agentResponse = (await routed.json()) as AgentResponse;
+                } else {
+                        log.warn({ status: routed.status }, "Conversation manager returned non-OK status");
+                }
+        } catch (error) {
+                log.error({ error }, "Failed to route message to conversation manager");
+        }
+
+        const fallbackReply = `Hello! You said: "${input.message}". This is a placeholder response from Cloudflare Workers.`;
+        const serializedResponseContent =
+                agentResponse && typeof agentResponse.content !== "string"
+                        ? JSON.stringify(agentResponse.content)
+                        : undefined;
+        const reply =
+                typeof agentResponse?.content === "string"
+                        ? agentResponse.content
+                        : serializedResponseContent ?? fallbackReply;
 
         const now = Date.now();
         const userMessage: SessionMessage = {
@@ -72,6 +128,10 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 role: "user",
                 content: input.message,
                 timestamp: now,
+                metadata: {
+                        conversationId,
+                        routedThroughAgent: true,
+                },
         };
 
         const assistantMessage: SessionMessage = {
@@ -79,6 +139,10 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 role: "assistant",
                 content: reply,
                 timestamp: Date.now(),
+                metadata: {
+                        conversationId,
+                        agentResponse,
+                },
         };
 
         await sessionStore.appendMessages(session.id, [userMessage, assistantMessage]);
@@ -87,6 +151,11 @@ export async function handleChat(input: ChatInput, context: ChatHandlerContext):
                 lastAccessedAt: Date.now(),
                 metadata: {
                         ...session.metadata,
+                        conversationId,
+                        conversationActive,
+                        lastAgentType:
+                                (agentResponse?.metadata?.targetAgent as string | undefined) ??
+                                (agentResponse?.type ?? "travel"),
                         lastReplyPreview: reply.slice(0, 160),
                 },
         });
