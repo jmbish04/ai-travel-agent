@@ -1,6 +1,6 @@
 {
         "$schema": "node_modules/wrangler/config-schema.json",
-        "name": "travel-agent-worker",
+        "name": "ai-travel-agent-api",
         "main": "src/index.ts",
         "compatibility_date": "2025-10-11",
         "observability": {
