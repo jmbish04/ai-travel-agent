@@ -1,3 +1,4 @@
+import type { MessageBatch } from "@cloudflare/workers-types";
 import { D1Repository } from "./core/d1-repository";
 import { handleChat } from "./core/chat-handler";
 import { KVService } from "./core/kv-service";
@@ -13,6 +14,8 @@ import type { CachePointer, R2BucketTarget } from "./types/r2";
 import { createLogger } from "./utils/logger";
 import { RateLimiter } from "./utils/rate-limiter";
 import { decodeBase64 } from "./utils/serialization";
+import { handleQueue } from "./scraping/handler";
+import type { QueueMessage } from "./scraping/types/messages";
 
 const CORS_HEADERS = {
         "Access-Control-Allow-Origin": "*",
@@ -418,5 +421,13 @@ export default {
                                 headers: { "Content-Type": "application/json", ...CORS_HEADERS },
                         });
                 }
+        },
+
+        async queue(
+                batch: MessageBatch<QueueMessage>,
+                env: WorkerEnv,
+                _ctx: ExecutionContext,
+        ): Promise<void> {
+                await handleQueue(batch, env);
         },
 } satisfies ExportedHandler<WorkerEnv>;
