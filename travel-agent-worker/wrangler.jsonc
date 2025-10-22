@@ -103,6 +103,21 @@
          * Queue Bindings
          */
         "queues": {
+                "consumers": [
+                        {
+                                "queue": "scraping-tasks",
+                                "max_batch_size": 5,
+                                "max_batch_timeout": 30,
+                                "max_retries": 3,
+                                "dead_letter_queue": "scraping-dlq"
+                        },
+                        {
+                                "queue": "scraping-priority",
+                                "max_batch_size": 2,
+                                "max_batch_timeout": 10,
+                                "max_retries": 5
+                        }
+                ],
                 "producers": [
                         {
                                 "binding": "SCRAPING_QUEUE",
