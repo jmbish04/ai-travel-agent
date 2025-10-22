@@ -1,8 +1,30 @@
 {
-  "devDependencies": {
-    "concurrently": "^9.2.1"
-  },
-  "dependencies": {
-    "typescript": "^5.9.2"
-  }
+	"name": "ai-travel-agent-api",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"build": "tsc",
+		"deploy": "npm run migrate:remote && wrangler deploy",
+		"migrate:remote": "wrangler d1 migrations apply travel-agent-db",
+		"migrate:local": "wrangler d1 migrations apply travel-agent-db --local",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"db:list": "wrangler d1 migrations list travel-agent-db",
+		"db:create": "wrangler d1 migrations create travel-agent-db",
+		"db:execute": "wrangler d1 execute travel-agent-db",
+		"db:status": "./migrate.sh status",
+		"db:inspect": "./inspect-db.sh",
+		"db:inspect-data": "./inspect-db.sh --with-data"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.43.0"
+	},
+	"dependencies": {
+		"zod": "^4.1.12"
+	}
 }
