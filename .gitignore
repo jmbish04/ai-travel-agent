@@ -10,6 +10,7 @@ docs/.dev/*
 /root/models/*
 node_modules/*
 package-lock.json
+!travel-agent-worker/package-lock.json
 *debug*
 root/dist/*
 *deprecated*
