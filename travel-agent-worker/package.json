@@ -1,28 +1,30 @@
 {
-	"name": "travel-agent-worker",
+	"name": "ai-travel-agent-api",
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
+		"deploy": "npm run db:migrate && wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
 		"cf-typegen": "wrangler types",
-		"db:migrate": "wrangler d1 migrations apply travel-agent-db",
-		"db:list": "wrangler d1 migrations list travel-agent-db",
-		"db:create": "wrangler d1 migrations create travel-agent-db",
-		"db:execute": "wrangler d1 execute travel-agent-db",
+		"db:migrate": "wrangler d1 migrations apply DB --remote",
+		"db:list": "wrangler d1 migrations list DB --remote",
+		"db:create": "wrangler d1 migrations create DB --remote",
+		"db:execute": "wrangler d1 execute DB --remote",
 		"db:status": "./migrate.sh status",
 		"db:inspect": "./inspect-db.sh",
 		"db:inspect-data": "./inspect-db.sh --with-data"
 	},
-	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.8.19",
-		"typescript": "^5.5.2",
-		"vitest": "~3.2.0",
-		"wrangler": "^4.43.0"
-	},
-	"dependencies": {
-		"zod": "^4.1.12"
-	}
+        "devDependencies": {
+                "@cloudflare/vitest-pool-workers": "^0.8.19",
+                "@cloudflare/workers-types": "^4.20250129.0",
+                "typescript": "^5.5.2",
+                "vitest": "~3.2.0",
+                "wrangler": "^4.43.0"
+        },
+        "dependencies": {
+                "@cloudflare/playwright": "^1.41.2",
+                "zod": "^4.1.12"
+        }
 }

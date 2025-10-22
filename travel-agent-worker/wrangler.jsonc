@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "travel-agent-worker",
+	"name": "ai-travel-agent-api", // Kept from 'main' branch
 	"main": "src/index.ts",
 	"compatibility_date": "2025-10-11",
 	"observability": {
@@ -26,15 +26,26 @@
 	 */
 	"durable_objects": {
 		"bindings": [
+			// Combined from 'main', updated script_name
 			{
 				"name": "TRAVEL_AGENT",
-				"class_name": "TravelAgent",
-				"script_name": "travel-agent-worker"
+				"class_name": "TravelAgentDO",
+				"script_name": "ai-travel-agent-api" // Corrected to match worker name
 			},
 			{
 				"name": "SCRAPING_AGENT",
-				"class_name": "ScrapingAgent",
-				"script_name": "travel-agent-worker"
+				"class_name": "ScrapingAgentDO",
+				"script_name": "ai-travel-agent-api" // Corrected to match worker name
+			},
+			{
+				"name": "CONVERSATION_MANAGER",
+				"class_name": "ConversationManagerDO",
+				"script_name": "ai-travel-agent-api" // Corrected to match worker name
+			},
+			{
+				"name": "SESSION_MANAGER",
+				"class_name": "SessionManagerDO",
+				"script_name": "ai-travel-agent-api" // Corrected to match worker name
 			}
 		]
 	},
@@ -81,7 +92,7 @@
 	],
 	/**
 	 * Vectorize Bindings
-	 * npx wrangler vectorize create travel-content-embeddings --preset  @cf/baai/bge-large-en-v1.5
+	 * npx wrangler vectorize create travel-content-embeddings --preset  @cf/baai/bge-large-en-v1.5
 	 */
 	"vectorize": [
 		{
@@ -92,22 +103,39 @@
 	/**
 	 * Queue Bindings
 	 */
-        "queues": {
-                "producers": [
-                        {
-                                "binding": "SCRAPING_QUEUE",
-                                "queue": "scraping-tasks"
-                        },
-                        {
-                                "binding": "PRIORITY_SCRAPING_QUEUE",
-                                "queue": "scraping-priority"
-                        }
-                ]
-        },
+	"queues": {
+		"consumers": [
+			{
+				"queue": "scraping-tasks",
+				"max_batch_size": 5,
+				"max_batch_timeout": 30,
+				"max_retries": 3,
+				"dead_letter_queue": "scraping-dlq"
+			},
+			{
+				"queue": "scraping-priority",
+				"max_batch_size": 2,
+				"max_batch_timeout": 10,
+				"max_retries": 5
+				// Note: Dead letter queue wasn't defined for priority, added based on pattern if needed
+				// "dead_letter_queue": "scraping-priority-dlq"
+			}
+		],
+		"producers": [
+			{
+				"binding": "SCRAPING_QUEUE",
+				"queue": "scraping-tasks"
+			},
+			{
+				"binding": "PRIORITY_SCRAPING_QUEUE",
+				"queue": "scraping-priority"
+			}
+		]
+	},
 	/**
 	 * AI Bindings
 	 */
-	"ai": {
+	"ai": { // Added from revert branch
 		"binding": "AI"
 	}
 }
