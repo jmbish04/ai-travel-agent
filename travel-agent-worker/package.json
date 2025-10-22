@@ -3,6 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
+		"build": "true",
 		"deploy": "npm run db:migrate && wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
