@@ -24,7 +24,7 @@
                 "wrangler": "^4.43.0"
         },
         "dependencies": {
-                "@cloudflare/playwright": "^1.41.2",
+                "@cloudflare/playwright": "^1.0.0",
                 "zod": "^4.1.12"
         }
 }
