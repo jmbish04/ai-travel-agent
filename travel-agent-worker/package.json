@@ -1,5 +1,5 @@
 {
-	"name": "travel-agent-worker",
+	"name": "ai-travel-agent-api",
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
