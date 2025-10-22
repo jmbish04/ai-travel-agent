@@ -55,7 +55,15 @@ async function processMessage(
           error: (browserError as Error).message,
         });
         fallbackUsed = true;
-        return fallbackScrape(scrapeMessage.type, normalizedUrl);
+        try {
+          return await fallbackScrape(scrapeMessage.type, normalizedUrl);
+        } catch (fallbackError) {
+          console.error("Fallback scraping failed", {
+            id: queueMessage.id,
+            error: (fallbackError as Error).message,
+          });
+          throw fallbackError; // Re-throw the error to be caught by the outer catch block
+        }
       });
 
     const metadata = {
